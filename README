@@ -1,0 +1,18 @@
+https://chatgpt.com/c/03ab40c8-cce8-474d-8fbd-e1298fa68d0b
+
+Now convert the code to go
+
+have the server handle all of the collisions 
+we done for now beacuse of finals 
+could have first touch, speed, shot power and more for every player be unique 
+Make server and could have options for players 
+use interfaces in go to do polymorphism 
+
+Make a goal map of vectors 
+use Ebiten
+
+
+
+ALso have mass as the ball does push the player back way to much
+
+also have like cone or smth like that
