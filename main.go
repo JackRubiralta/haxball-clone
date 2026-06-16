@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"image/color"
 	"log"
 )
@@ -16,6 +17,10 @@ type Game struct {
 
 // Update updates the game state.
 func (g *Game) Update() error {
+	// Aim the player toward the mouse cursor.
+	cursorX, cursorY := ebiten.CursorPosition()
+	g.Player.FaceTowards(NewVec(float64(cursorX), float64(cursorY)))
+
 	keys := map[ebiten.Key]struct{}{}
 	if ebiten.IsKeyPressed(ebiten.KeyW) {
 		keys[ebiten.KeyW] = struct{}{}
@@ -29,7 +34,7 @@ func (g *Game) Update() error {
 	if ebiten.IsKeyPressed(ebiten.KeyD) {
 		keys[ebiten.KeyD] = struct{}{}
 	}
-	if ebiten.IsKeyPressed(ebiten.KeySpace) {
+	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
 		shoot(g.Player, g.Ball)
 	}
 
@@ -39,11 +44,10 @@ func (g *Game) Update() error {
 	g.Player.Move(keys, deltaTime)
 	g.Player.Update(deltaTime)
 
-	// Handle collisions
+	// Handle collisions and the ball-player interaction (bounce + dribble).
 	handleBallToBoxCollision(g.Ball, g.Box)
-	handleBallToPlayerCollision(g.Ball, g.Player)
+	handleBallToPlayerInteraction(g.Ball, g.Player, deltaTime)
 	handlePlayerToBoxCollision(g.Player, g.Box)
-	attractBall(g.Player, g.Ball)
 
 	return nil
 }
@@ -54,7 +58,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.Box.Render(screen)
 	g.Ball.Draw(screen)
 	g.Player.Draw(screen)
-	ebitenutil.DebugPrint(screen, "Use WASD to move. Press Space to shoot.")
+	ebitenutil.DebugPrint(screen, "Use WASD to move, aim with the mouse, press Space to shoot.")
 }
 
 // Layout sets the screen layout.
@@ -63,7 +67,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
-	player := NewPlayer(NewVec(100, 300), 20, 9, 1) // shoot_force set to 9
+	player := NewPlayer(NewVec(100, 300), 20, 500, 1) // shoot speed (px/s) along the facing direction
 	ball := NewBall(NewVec(400, 300), 10)
 
 	// Get the screen size in fullscreen mode

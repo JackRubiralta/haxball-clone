@@ -14,16 +14,18 @@ type Disc struct {
 	Velocity     Vec
 	Acceleration Vec
 	Friction     float64
+	Mass         float64
 }
 
 // NewDisc creates a new disc.
-func NewDisc(position Vec, radius float64, friction float64) *Disc {
+func NewDisc(position Vec, radius float64, friction float64, mass float64) *Disc {
 	return &Disc{
 		Position:     position,
 		Radius:       radius,
 		Velocity:     NewVec(0, 0),
 		Acceleration: NewVec(0, 0),
 		Friction:     friction,
+		Mass:         mass,
 	}
 }
 

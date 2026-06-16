@@ -13,7 +13,7 @@ type Ball struct {
 
 // NewBall creates a new ball.
 func NewBall(position Vec, radius float64) *Ball {
-	return &Ball{NewDisc(position, radius, -0.3)}
+	return &Ball{NewDisc(position, radius, -0.3, 1)}
 }
 
 // Draw draws the ball on the screen with a black outline and white fill.
