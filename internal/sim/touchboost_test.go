@@ -33,6 +33,14 @@ func firstOn(m *Match, side Side) *Player {
 	return nil
 }
 
+// buildToFull holds the ball with `holder` long enough to drive its team's charge to full.
+func buildToFull(m *Match, holder *Player, dt float64) {
+	onlyToucher(m, holder)
+	for i := 0; i < int(teamBuildSeconds/dt)+5; i++ {
+		m.advanceTeamPossession(dt)
+	}
+}
+
 // TestTeamBuildCurve pins the build ramp: 0->0, 1->1, monotonic, and ACCELERATING (weaker
 // than linear early, so the rate increases toward the end).
 func TestTeamBuildCurve(t *testing.T) {
@@ -147,17 +155,18 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 		}
 	}
 
-	// A holds the ball for ~0.75s, building the team charge to ~0.75 progress.
+	// A holds the ball long enough to build the team charge to ~0.75 progress.
+	buildTo := 0.75
 	onlyToucher(m, a)
-	for i := 0; i < 45; i++ {
+	for i := 0; i < int(buildTo*teamBuildSeconds/dt); i++ {
 		m.advanceTeamPossession(dt)
 	}
 	if m.possSide != SideLeft {
 		t.Fatalf("the left team should own the charge, got %v", m.possSide)
 	}
 	built := m.possProgress
-	if math.Abs(built-0.75) > 0.03 {
-		t.Fatalf("progress after 0.75s should be ~0.75, got %.3f", built)
+	if math.Abs(built-buildTo) > 0.03 {
+		t.Fatalf("progress should be ~%.2f, got %.3f", buildTo, built)
 	}
 	heldStrength := m.teamPossessionStrength(SideLeft)
 
@@ -178,18 +187,21 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 	}
 
 	// Teammate B receives and CONTINUES the build: it should reach full in the remaining
-	// ~0.25s (about 15 ticks), far short of a fresh second (60 ticks).
+	// (1-built) of the build window, far short of a fresh full build (which would mean it
+	// restarted from zero).
+	fullBuildTicks := int(teamBuildSeconds / dt)
 	onlyToucher(m, b)
 	ticks := 0
-	for m.possProgress < 1 && ticks < 60 {
+	for m.possProgress < 1 && ticks < fullBuildTicks+5 {
 		m.advanceTeamPossession(dt)
 		ticks++
 	}
-	if ticks >= 60 {
-		t.Fatalf("the receiver never finished the build (restarted from zero?)")
+	if ticks >= fullBuildTicks {
+		t.Fatalf("the receiver never finished the inherited build (restarted from zero?)")
 	}
-	if ticks > 20 {
-		t.Errorf("the receiver should finish the inherited build in ~0.25s, took %d ticks", ticks)
+	// The remaining build is ~(1-built); allow a little slack but it must be well under a full build.
+	if want := int((1 - built) * teamBuildSeconds / dt); ticks > want+10 {
+		t.Errorf("the receiver should finish the inherited build in ~%d ticks, took %d", want, ticks)
 	}
 	if m.possSide != SideLeft {
 		t.Errorf("ownership should stay with the left team through the pass, got %v", m.possSide)
@@ -203,10 +215,7 @@ func TestTeamChargeResetByOpponent(t *testing.T) {
 	const dt = 1.0 / 60
 	left, right := firstOn(m, SideLeft), firstOn(m, SideRight)
 
-	onlyToucher(m, left)
-	for i := 0; i < 60; i++ {
-		m.advanceTeamPossession(dt)
-	}
+	buildToFull(m, left, dt)
 	if m.possSide != SideLeft || m.possProgress < 0.99 {
 		t.Fatalf("the left team should be fully charged, side=%v progress=%.3f", m.possSide, m.possProgress)
 	}
@@ -228,10 +237,7 @@ func TestTeamChargeExpiresAfterDecayWindow(t *testing.T) {
 	const dt = 1.0 / 60
 	left := firstOn(m, SideLeft)
 
-	onlyToucher(m, left)
-	for i := 0; i < 60; i++ {
-		m.advanceTeamPossession(dt)
-	}
+	buildToFull(m, left, dt)
 	onlyToucher(m, nil) // release: ball in flight
 
 	for i := 0; i < int((teamHoldSeconds*0.8)/dt); i++ { // inside the hold
@@ -268,10 +274,7 @@ func TestTeamChargeDecaysAndRebuildsOnLateReception(t *testing.T) {
 	}
 
 	// A builds the charge to full.
-	onlyToucher(m, a)
-	for i := 0; i < int(1.2/dt); i++ {
-		m.advanceTeamPossession(dt)
-	}
+	buildToFull(m, a, dt)
 	if m.possProgress < 0.999 {
 		t.Fatalf("the charge should be fully built, got progress %.3f", m.possProgress)
 	}

@@ -223,24 +223,26 @@ func (m *Match) teamFor(side Side) *Team {
 // ball, then after a release (nobody touching) HOLDS at its built strength for
 // teamHoldSeconds and DECAYS to zero by teamDecaySeconds.
 const (
-	teamBuildSeconds = 1.0 // seconds of team possession to build the charge to full
-	teamHoldSeconds  = 1.5 // seconds the charge holds at full strength after release (no touch)
-	teamDecaySeconds = 3.5 // seconds until the charge has fully decayed after release (no touch)
+	teamBuildSeconds  = 1.5 // seconds of team possession to build the charge to full
+	teamHoldSeconds   = 1.5 // seconds the charge holds at full strength after release (no touch)
+	teamDecaySeconds  = 3.5 // seconds until the charge has fully decayed after release (no touch)
+	teamBuildExponent = 3.0 // build-curve exponent: higher = stays low for most of the build, spiking near the end
 )
 
-// teamBuildCurve maps build progress (0..1, the held-time fraction) to charge strength on an
-// ACCELERATING ramp -- weak early, steepening toward full (the user's "much weaker at the
-// start, the rate increases toward the end"). Quadratic: strength = progress^2.
+// teamBuildCurve maps build progress (0..1, the held-time fraction) to charge strength on a
+// strongly ACCELERATING ramp -- it stays LOW for the majority of the build and shoots up only
+// in the last portion (the user's "lower for most of the start, increases a lot at the end").
+// strength = progress^teamBuildExponent (cubic), so full strength is reached only near the end
+// of the (deliberately long) build window.
 func teamBuildCurve(progress float64) float64 {
-	p := clampUnit(progress)
-	return p * p
+	return math.Pow(clampUnit(progress), teamBuildExponent)
 }
 
 // teamBuildCurveInv inverts teamBuildCurve: the build progress that yields a given charge
 // strength. Used when a teammate receives a (possibly decayed) charge -- the decayed strength
 // is baked back into the progress so the build resumes from that point, not from full.
 func teamBuildCurveInv(strength float64) float64 {
-	return math.Sqrt(clampUnit(strength))
+	return math.Pow(clampUnit(strength), 1.0/teamBuildExponent)
 }
 
 // teamCoastEnvelope maps seconds-since-last-touch to a 0..1 fade applied after a release: full
