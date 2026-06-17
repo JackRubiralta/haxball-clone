@@ -248,16 +248,18 @@ func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA)
 	// their goal-line edge does not double up on the boundary near each goal. Heights
 	// are fixed (not tied to the goal mouth), so shrinking the goal doesn't shrink the
 	// boxes; the depths extend well out from the goal line.
-	penaltyH := 330.0
+	penaltyH := 330.0 // outer penalty area -- unchanged
 	penaltyD := 150.0
-	areaH := 240.0
+	areaH := 150.0 // inner goal area -- kept narrow (clearly less wide than the penalty area)
 	areaD := 75.0
 	c.openBox(x, cy, penaltyD, penaltyH, markingWidth, lineColor)
 	c.openBox(x+w, cy, -penaltyD, penaltyH, markingWidth, lineColor)
 	c.openBox(x, cy, areaD, areaH, markingWidth, lineColor)
 	c.openBox(x+w, cy, -areaD, areaH, markingWidth, lineColor)
-	c.fillCircle(x+penaltyD*0.66, cy, 4, lineColor)
-	c.fillCircle(x+w-penaltyD*0.66, cy, 4, lineColor)
+	// Penalty spot: midway between the goal-area edge and the penalty-area edge.
+	spotD := (areaD + penaltyD) / 2
+	c.fillCircle(x+spotD, cy, 4, lineColor)
+	c.fillCircle(x+w-spotD, cy, 4, lineColor)
 
 	drawGoal(c, f.LeftGoal, f.GoalWidth, leftColor)
 	drawGoal(c, f.RightGoal, f.GoalWidth, rightColor)
@@ -391,22 +393,21 @@ func drawTrapAura(c canvas, pos geom.Vec, radius, trap float64, body color.RGBA)
 	if trap <= 0 {
 		return
 	}
-	// A very faint glow that grows with the trap charge, drawn as a stack of thin
-	// concentric bands. Each band's opacity is set directly from a smooth gradient --
-	// highest (but still very low) right at the body and easing to zero at the outer rim
-	// -- so it never accumulates into a bright blob and the ball stays clearly visible
-	// through it. Because the alpha is taken straight from the gradient (not summed),
-	// the glow also fades in smoothly from the very start of the charge instead of
-	// popping in. Peaks at only ~4% opacity at full charge.
-	const bands = 18
-	const peak = 11.0                       // peak band opacity at the body, full charge (~4% of 255)
+	// A glow drawn as a stack of thin concentric bands whose opacity runs as a smooth
+	// LINEAR gradient from the inner edge out: 75 (of 255) right at the body, falling
+	// to 10 at the outer rim. The alpha is read straight from the gradient (not summed
+	// across bands), so it stays a clean halo the ball reads through rather than a
+	// bright blob. The whole gradient scales with the trap charge, so it fades in as the
+	// charge builds instead of popping in, and the reach grows with the charge too.
+	const bands = 24
+	const innerAlpha = 75.0 // opacity at the body (inner edge), at full charge
+	const outerAlpha = 10.0 // opacity at the outer rim, at full charge
 	reach := 4 + 16*trap                    // how far the glow reaches past the body, grows with charge
 	width := reach / float64(bands-1) * 1.1 // thin bands with a hair of overlap so they meet seamlessly
 	for i := 0; i < bands; i++ {
 		t := float64(i) / float64(bands-1) // 0 at the body, 1 at the outer rim
 		r := radius + reach*t
-		ease := (1 - t) * (1 - t) // quadratic falloff: soft toward the rim
-		a := uint8(peak * trap * ease)
+		a := uint8((innerAlpha + (outerAlpha-innerAlpha)*t) * trap) // linear 75 -> 10, scaled by charge
 		if a == 0 {
 			continue
 		}

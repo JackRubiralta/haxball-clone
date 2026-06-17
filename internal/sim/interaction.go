@@ -162,8 +162,32 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// established one holds firmly. Below the cap the separation is cancelled (the
 		// ball clings); a push past it -- a shot or a hard bump -- frees the ball with
 		// the excess. Strongest at the front, zero at the back.
-		if separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal); separating > 0 {
-			hold := player.Stats.Stickiness.Eval(angle) * grip * deltaTime
+		separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal)
+		holdCap := player.Stats.Stickiness.Eval(angle) * grip * deltaTime
+
+		// RETENTION measures how well the player's FULL hold contains the ball this
+		// frame: the sticky cap above PLUS the centripetal stick's full inward pull
+		// (which scales with how fast the ball is orbiting). It is 1 whenever that hold
+		// can contain the ball, so every case the player keeps the ball -- including a
+		// very fast rotation -- behaves EXACTLY as before: the centripetal stick keeps
+		// its full strength and the settling forces run in full. Only once the ball
+		// overcomes the WHOLE hold -- genuinely flinging off faster than even the
+		// centripetal stick can arrest -- does retention ease below 1, and then it fades
+		// ONLY the settling forces (roll-to-front, sideways damping, seat), never the
+		// centripetal pull itself. So the anti-fling keeps its original strength while a
+		// ball that truly breaks away leaves carrying its orbital momentum instead of
+		// having it bled off at the surface as it goes.
+		orbitVel := ball.Velocity.Sub(player.Velocity)
+		orbitSpeed := geom.Norm(orbitVel.Sub(normal.Scale(geom.Dot(orbitVel, normal))))
+		bindCap := holdCap + player.Stats.OrbitStick*orbitSpeed*deltaTime
+		retention := 1.0
+		if separating > bindCap {
+			retention = bindCap / separating
+		}
+
+		// Apply the sticky hold (cancel the outward radial speed up to the cap).
+		if separating > 0 {
+			hold := holdCap
 			if hold > separating {
 				hold = separating
 			}
@@ -173,9 +197,11 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// Control (tangential): roll the ball around to the front (0 deg), then damp
 		// the sideways (orbital) velocity so it settles there instead of oscillating.
 		// Trapping strengthens this, snapping the ball to the front for a clean touch.
+		// Both fade with retention, so a ball that is decisively breaking away is neither
+		// steered toward the front nor slowed -- it keeps the orbital momentum it has.
 		strength := player.Stats.Control.Eval(angle) * (1 + player.Stats.TrapControlBonus*player.trapCharge)
 		tangential := player.Facing.Sub(normal.Scale(cos))
-		ball.Velocity = ball.Velocity.Add(tangential.Scale(strength * deltaTime))
+		ball.Velocity = ball.Velocity.Add(tangential.Scale(strength * deltaTime * retention))
 
 		relative := ball.Velocity.Sub(player.Velocity)
 		sideways := relative.Sub(normal.Scale(geom.Dot(relative, normal)))
@@ -183,21 +209,25 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		if damping > 1 {
 			damping = 1
 		}
-		ball.Velocity = ball.Velocity.Sub(sideways.Scale(damping))
+		ball.Velocity = ball.Velocity.Sub(sideways.Scale(damping * retention))
 
 		// Centripetal stick: pull the ball inward in proportion to how fast it is still
-		// orbiting the player, so a hard turn curves the ball around the player instead
-		// of flinging it off the surface. It vanishes once the ball settles (orbit -> 0),
-		// so it never disturbs a resting ball.
+		// orbiting the player, so a hard/fast turn curves the ball around the player
+		// instead of flinging it off the surface. FULL strength always -- this IS the
+		// anti-fling and keeps its original holding power (never scaled down). It
+		// vanishes on its own once the ball settles (orbit -> 0), so it never disturbs a
+		// resting ball.
 		orbit := ball.Velocity.Sub(player.Velocity)
-		orbitSpeed := geom.Norm(orbit.Sub(normal.Scale(geom.Dot(orbit, normal))))
-		ball.Velocity = ball.Velocity.Sub(normal.Scale(player.Stats.OrbitStick * orbitSpeed * deltaTime))
+		orbitNow := geom.Norm(orbit.Sub(normal.Scale(geom.Dot(orbit, normal))))
+		ball.Velocity = ball.Velocity.Sub(normal.Scale(player.Stats.OrbitStick * orbitNow * deltaTime))
 
 		// Seat: gently draw the ball flush to the surface so there is no visible gap.
 		// Position-based and proportional to the gap, so it vanishes at the surface (no
-		// constant inward pull -> no jitter), and capped so it never creates overlap.
+		// constant inward pull -> no jitter), capped so it never creates overlap, and
+		// faded with retention so a ball that is leaving is not re-seated against the
+		// player.
 		if gap > 0 {
-			seat := gap * player.Stats.SeatStrength * deltaTime
+			seat := gap * player.Stats.SeatStrength * deltaTime * retention
 			if seat > gap {
 				seat = gap
 			}
