@@ -1,13 +1,16 @@
-// curves.go
-package main
+// Package sim is the headless gameplay layer: entities, per-player stats, the
+// ball/dribble/shoot rules, scoring, and the deterministic Match.Step that advances
+// one tick. It imports physics and geom but never Ebiten, so the authoritative
+// server runs the same simulation as the local client.
+package sim
 
 import "math"
 
 // AngleCurve maps an angle within [startAngle, endAngle] to a value within
 // [startValue, endValue] using some shape. Every curve shares this signature, so a
-// Player can pick which one drives each angle-dependent quantity (restitution, the
-// front pull, shot power, ...). startValue is returned at startAngle and endValue at
-// endAngle; the named curves differ only in how they move between the two.
+// PlayerStats can pick which one drives each angle-dependent quantity (restitution,
+// the front pull, shot power, ...). startValue is returned at startAngle and endValue
+// at endAngle; the named curves differ only in how they move between the two.
 type AngleCurve func(startValue, endValue, startAngle, endAngle, angle float64) float64
 
 // ExponentialSteepness controls how sharply ExponentialCurve bends.
