@@ -169,6 +169,11 @@ type TouchQuality struct {
 
 	RestitutionWorst float64 // restitution multiplier at coefficient -1 (> 1: bouncier, ball flies)
 	RestitutionBest  float64 // restitution multiplier at coefficient +1 (< 1: deader, ball sticks)
+
+	// ConeBonusRadians widens (or, for the conceding team, narrows) the reliable capture cone
+	// by ConeBonusRadians*coefficient -- so built-up team possession also makes receiving a
+	// touch more angle-forgiving. Kept small (a slight buff).
+	ConeBonusRadians float64
 }
 
 // captureMul maps a coefficient in [-1,1] to the capture-speed multiplier (1.0 at 0).
@@ -225,6 +230,17 @@ func (s PlayerStats) stickinessGrip(possession float64) float64 {
 	return 1 - s.StickinessPossessionDebuff*possession
 }
 
+// captureConeRadians is the reliable-capture cone half-angle adjusted by the touch
+// coefficient: the team possession buff WIDENS the cone for the owning team (better, more
+// angle-forgiving receiving) and narrows it for the conceding team, by ConeBonusRadians per
+// unit coefficient. Never negative.
+func (s PlayerStats) captureConeRadians(coef float64) float64 {
+	if r := s.CaptureConeRadians + s.TouchQuality.ConeBonusRadians*coef; r > 0 {
+		return r
+	}
+	return 0
+}
+
 // aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle`
 // radians off the facing direction: ShootAimAssist within the front cone, decaying
 // linearly to zero across the soft band, and zero beyond (side/back shots fire purely
@@ -269,20 +285,20 @@ func DefaultStats(shootForce float64) PlayerStats {
 		Friction:       -1.5,
 		MaxSpeed:       140,
 		Acceleration:   300,
-		TurnRate:       14, // quite fast, not instant: a full 180 reversal takes ~0.22s
+		TurnRate:       14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
 		TouchRange:     2,
 		PullRange:      6,
 		Restitution:    CurveSpec{InverseQuadraticCurve, 0.05, 0.25}, // less bouncy ball off a player (front/back lowered)
-		CaptureSpeed:   CurveSpec{LinearCurve, 320, 70},
-		CenterPull:     CurveSpec{InverseQuadraticCurve, 950, 0},  // front nerfed a touch (1000 -> 950)
-		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30}, // front restored to 420; small baseline hold at the back (0 -> 30)
+		CaptureSpeed:   CurveSpec{LinearCurve, 280, 70},              // front lowered (320 -> 280): the cone helps less
+		CenterPull:     CurveSpec{InverseQuadraticCurve, 950, 0},     // front nerfed a touch (1000 -> 950)
+		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
 		Control:        CurveSpec{LinearCurve, 1500, 300},
 		Shoot:          CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping: 11,
 		OrbitStick:     8,
 
-		CaptureConeRadians: 0.2792526803190927, // ~16deg (widened a touch from 15deg)
-		CaptureConeSoft:    0.4363323129985824, // ~25deg
+		CaptureConeRadians: 0.3839724354387525, // ~22deg (widened: bigger cone)
+		CaptureConeSoft:    0.5235987755982988, // ~30deg (wider falloff)
 
 		SeatStrength: 14,
 
@@ -312,17 +328,18 @@ func DefaultStats(shootForce float64) PlayerStats {
 		TrapStickinessBonus:   0.5, // a held trap stiffens the sticky hold (up to +50% at full trap)
 		TrapAccelFactor:       0.55,
 		TrapSpeedFactor:       0.5,
-		TrapCaptureBonus:      190, // reduced a bit (was 220)
+		TrapCaptureBonus:      60, // small capture bump; the trap now relies on deadening the bounce
 		TrapRadiusBonus:       0,
-		TrapRestitutionFactor: 1.15, // a held trap deadens the bounce, fully by ~0.87 trap charge
+		TrapRestitutionFactor: 2.0, // a held trap deadens the bounce strongly -- fully killed by half charge (better receiving)
 
 		TouchQuality: TouchQuality{
-			OwnTeamMax:       1.0,  // owning team at full charge -> the cleanest touch
-			OtherTeam:        -0.8, // other team at the owner's full charge -> ball flies off them (stronger debuff)
-			CaptureWorst:     0.7,  // -30% capture at the worst (ball harder to absorb)
-			CaptureBest:      1.35, // +35% capture at full charge (sticks at higher speed)
-			RestitutionWorst: 1.5,  // +50% bounce at the worst (blocks/lunges fly further)
-			RestitutionBest:  0.45, // -55% bounce at full charge (received passes stay dead)
+			OwnTeamMax:       1.0,                 // owning team at full charge -> the cleanest touch
+			OtherTeam:        -0.8,                // other team at the owner's full charge -> ball flies off them (stronger debuff)
+			CaptureWorst:     0.7,                 // -30% capture at the worst (ball harder to absorb)
+			CaptureBest:      1.142857142857143,   // at full charge restores capture to the OLD cone power (280 * 8/7 = 320)
+			RestitutionWorst: 1.5,                 // +50% bounce at the worst (blocks/lunges fly further)
+			RestitutionBest:  0.45,                // -55% bounce at full charge (received passes stay dead)
+			ConeBonusRadians: 0.05235987755982988, // ~3deg: a slight cone widening at full team charge
 		},
 	}
 }

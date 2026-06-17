@@ -173,8 +173,10 @@ speed → apply friction → move position.
 
 ### Player runtime state (`sim.Player`)
 
-- **Facing** — instant aim direction (cursor/AI target). **moveHeading** — actual steering
-  direction, which *rotates toward* `Move` at `TurnRate` (this is what makes turning
+- **Facing** — aim direction. The AI's aim applies instantly (it is already smoothed in the
+  control layer); a human's **cursor** aim *rotates toward* the cursor at `TurnRate` (via the
+  `AimFromCursor` intent flag) so the disk can't instantly snap around. **moveHeading** —
+  actual steering direction, which *rotates toward* `Move` at `TurnRate` (turning is
   non-instant). **possession** (0–1), **control** (0–1), **touchCoef** (−1..1, this tick),
   **shootCharge** (sec), **trapCharge** (0–1) — see below. Charge timing: full shot at `shootChargeMax = 1.0s`; full trap at
   `trapChargeTime = 1.0s`; trap decays at `trapChargeDecay = 4.0/s`.
@@ -183,8 +185,8 @@ speed → apply friction → move position.
 
 - **Radius** `18` — body size. **Mass** `20` — heavier player shoves the ball more.
   **Friction** `-1.5` — high drag, so players stop quickly. **MaxSpeed** `140`.
-  **Acceleration** `300`. **TurnRate** `14 rad/s` — max turn rate of the movement heading
-  (a 180° reverse takes ~0.22s; `0` = instant).
+  **Acceleration** `300`. **TurnRate** `14 rad/s` — max turn rate of the movement heading AND
+  the human cursor aim (a 180° turn takes ~0.22s; snappy but non-instant; `0` = instant).
 
 ### `PlayerStats` — ball-control geometry (surface gaps, units)
 
@@ -199,8 +201,9 @@ Exponential.
 
 - **Restitution** `0.05 / 0.25` (InvQuad) — bounciness on a *hard* contact; soft in front,
   springier behind.
-- **CaptureSpeed** `320 / 70` (Linear) — impact speed *below which the ball sticks*
-  (restitution 0) instead of bouncing.
+- **CaptureSpeed** `280 / 70` (Linear) — impact speed *below which the ball sticks*
+  (restitution 0) instead of bouncing. Front lowered from 320, so the in-cone capture (the
+  receiving "boost") is weaker.
 - **CenterPull** `950 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
   make contact.
 - **Stickiness** `420 / 30` (InvQuad) — capped adhesion holding a touching ball until a
@@ -218,10 +221,11 @@ Exponential.
 
 ### `PlayerStats` — capture cone
 
-- **CaptureConeRadians** `0.279` (≈16°) — within ±16° of facing the ball reliably sticks
-  (widened a touch from 15°).
-- **CaptureConeSoft** `0.436` (≈25°) — over the next ~25° capture decays to the back floor;
-  beyond, side/back hits bounce.
+- **CaptureConeRadians** `0.384` (≈22°) — within ±22° of facing the ball reliably sticks
+  (a bigger cone). The trade-off: the in-cone capture peak is lower (CaptureSpeed front 280),
+  so the cone covers more angle but holds less firmly.
+- **CaptureConeSoft** `0.524` (≈30°) — over the next ~30° capture decays to the back floor;
+  beyond ~52° total, side/back hits bounce.
 
 ### Possession mechanics
 
@@ -296,14 +300,19 @@ away the moment you move the ball on.
 which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQuality`, in
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
-  sticky touches that scale up as the charge builds.
+  sticky touches that scale up as the charge builds. At full charge the capture is restored to
+  the **old cone power** (front 280 × `CaptureBest` 8/7 ≈ 320), so a fully-built possession
+  receives as firmly as the cone did before it was weakened.
 - **Other team** → `OtherTeam·strength` (down to **−0.8**): capture down, bounce up → the
   ball springs off them, more so the more possession you've built (so a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
+- **Capture cone** → the owning team's reliable cone widens slightly (and the conceding
+  team's narrows) by `ConeBonusRadians·coefficient` (≈3° at full charge), so built-up
+  possession also makes receiving a touch more angle-forgiving.
 
 *Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−0.8`, and the multiplier endpoints
-(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.7 / 1.35`,
-**RestitutionWorst/Best** `1.5 / 0.45`.
+(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.7 / 1.143` (best restores the old
+320 capture), **RestitutionWorst/Best** `1.5 / 0.45`.
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding
@@ -329,12 +338,12 @@ side); toggle with `render.ShowPossessionBars`.
 - **TrapControlBonus** `1.25` — stronger roll-to-front (snaps the ball to the front).
 - **TrapStickinessBonus** `0.5` — stiffens the sticky hold while trapping (`Stickiness ×
   (1 + TrapStickinessBonus·trapCharge)`, up to +50% at full trap).
-- **TrapCaptureBonus** `190` — raises capture speed by up to +190 (a damped first touch /
-  save).
-- **TrapRestitutionFactor** `1.15` — how strongly trap *deadens the bounce*: restitution is
-  scaled by `1 - min(1, trapCharge·TrapRestitutionFactor)`, so a held trap stops the ball
-  bouncing entirely by ~0.87 charge (on top of the higher capture speed). `0` = trap never
-  affects bounce.
+- **TrapCaptureBonus** `60` — small capture-speed bump (+60 at full trap); the trap now relies
+  mainly on deadening the bounce rather than a big capture lift.
+- **TrapRestitutionFactor** `2.0` — how strongly trap *deadens the bounce*: restitution is
+  scaled by `1 - min(1, trapCharge·TrapRestitutionFactor)`, so a held trap kills the bounce
+  entirely by **half** charge — the main way a trap receives a fast ball cleanly. `0` = trap
+  never affects bounce.
 - **TrapSpeedFactor** `0.5` / **TrapAccelFactor** `0.55` — speed/accel at full trap (trapping
   is slow). **TrapRadiusBonus** `0` — grow while trapping (off).
 

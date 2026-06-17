@@ -160,7 +160,11 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 // integrate the body (step 2 does). Shared by normal play and the penalty shootout.
 func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	if in.Aim != (geom.Vec{}) {
-		p.FaceTowards(in.Aim)
+		if in.AimFromCursor {
+			p.faceTowardLimited(in.Aim, deltaTime) // human cursor: turn at TurnRate, no instant snap
+		} else {
+			p.FaceTowards(in.Aim) // AI (already smoothed) / network: instant
+		}
 	}
 
 	// Shoot charge: accumulate while held (capped); fire on the release edge. A cancel
@@ -189,10 +193,8 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	}
 	p.shootHeldPrev = in.ShootHeld
 
-	// Trap charge: build toward 1 while held, decay otherwise.
-	if in.Trap && !p.trapHeldPrev {
-		m.emit(SoundTrap, 1, p.Position) // rising edge of the trap button
-	}
+	// Trap charge: build toward 1 while held, decay otherwise. (No sound on the trap/right-click
+	// rising edge -- the trap is silent by request.)
 	p.trapHeldPrev = in.Trap
 	if in.Trap {
 		p.trapCharge += deltaTime / trapChargeTime
@@ -233,10 +235,11 @@ func (m *Match) teamFor(side Side) *Team {
 // ball, then after a release (nobody touching) HOLDS at its built strength for
 // teamHoldSeconds and DECAYS to zero by teamDecaySeconds.
 const (
-	teamBuildSeconds  = 1.5 // seconds of team possession to build the charge to full
-	teamHoldSeconds   = 1.5 // seconds the charge holds at full strength after release (no touch)
-	teamDecaySeconds  = 3.5 // seconds until the charge has fully decayed after release (no touch)
-	teamBuildExponent = 3.0 // build-curve exponent: higher = stays low for most of the build, spiking near the end
+	teamBuildSeconds   = 1.5 // seconds of team possession to build the charge to full
+	teamHoldSeconds    = 1.5 // seconds the charge holds at full strength after release (no touch)
+	teamDecaySeconds   = 3.5 // seconds until the charge has fully decayed after release (no touch)
+	teamBuildExponent  = 3.0 // build-curve exponent: higher = stays low for most of the build, spiking near the end
+	teamDrainPerSecond = 1.0 // build-progress drained per second while the carrier is challenged by an opponent
 )
 
 // teamBuildCurve maps build progress (0..1, the held-time fraction) to charge strength on a
@@ -295,6 +298,19 @@ func (m *Match) resetTeamPossession() {
 	m.possCoast = 0
 	for _, p := range m.Players {
 		p.touchCoef = 0
+	}
+}
+
+// drainTeamPossession bleeds the team possession charge DOWN over time (rather than zeroing
+// it), used while the ball carrier is being physically challenged by an opponent: the build
+// progress drops at teamDrainPerSecond, so sustained pressure wears the boost away while a
+// glancing bump only nicks it. The owner keeps the ball, rebuilding from whatever is left.
+func (m *Match) drainTeamPossession(deltaTime float64) {
+	if m.possSide == SideNone {
+		return
+	}
+	if m.possProgress -= teamDrainPerSecond * deltaTime; m.possProgress < 0 {
+		m.possProgress = 0
 	}
 }
 
@@ -452,20 +468,24 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 		}
 	}
 
+	challenged := false
 	for i := 0; i < len(m.Players); i++ {
 		for j := i + 1; j < len(m.Players); j++ {
 			pi, pj := m.Players[i], m.Players[j]
 			// A collision between OPPOSING players where one of them is IN CONTACT WITH THE BALL
-			// resets the team possession charge -- a physical challenge on the ball breaks up the
-			// build-up. Detected before Resolve pushes them apart; an off-ball bump does nothing.
-			challenge := pi.Team.Side != pj.Team.Side &&
+			// is a challenge on the ball: it DRAINS the team possession charge (rather than
+			// zeroing it), so sustained pressure wears the boost away while a glancing bump only
+			// nicks it. Detected before Resolve pushes them apart; an off-ball bump does nothing.
+			if pi.Team.Side != pj.Team.Side &&
 				geom.Dist(pi.Position, pj.Position) < pi.Radius()+pj.Radius() &&
-				(m.touching(pi) || m.touching(pj))
-			physics.Resolve(pi.Body, pj.Body)
-			if challenge {
-				m.resetTeamPossession()
+				(m.touching(pi) || m.touching(pj)) {
+				challenged = true
 			}
+			physics.Resolve(pi.Body, pj.Body)
 		}
+	}
+	if challenged {
+		m.drainTeamPossession(deltaTime)
 	}
 	for _, p := range m.Players {
 		for _, o := range m.Field.Obstacles {

@@ -58,23 +58,27 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 		if relativeNormal < 0 {
 			approachSpeed := -relativeNormal
 
-			// Cone factor: 1 inside the reliable capture cone, ramping to 0 over the
-			// soft falloff past it. Outside the cone the effective capture speed drops
-			// to the side/back floor, so the ball bounces off; trapping raises it back.
-			cone := 1.0
-			if over := angle - player.Stats.CaptureConeRadians; over > 0 {
-				if player.Stats.CaptureConeSoft <= 0 {
-					cone = 0
-				} else if cone = 1 - over/player.Stats.CaptureConeSoft; cone < 0 {
-					cone = 0
-				}
-			}
 			// Touch quality: the team possession charge scales how cleanly this contact is
 			// taken (published per-tick into player.touchCoef). A clean touch (the owning team
 			// receiving/carrying its built-up possession) absorbs at a higher speed and bounces
 			// off less; the conceding team's touch (an opponent blocking a shot) captures less
 			// and springs off harder, so the ball flies further. Coefficient 0 = baseline.
 			quality := player.touchCoef
+
+			// Cone factor: 1 inside the reliable capture cone, ramping to 0 over the
+			// soft falloff past it. Outside the cone the effective capture speed drops
+			// to the side/back floor, so the ball bounces off; trapping raises it back.
+			// The team possession buff widens the cone slightly for the owning team (and
+			// narrows it for the conceding team) via the touch coefficient.
+			coneRadians := player.Stats.captureConeRadians(quality)
+			cone := 1.0
+			if over := angle - coneRadians; over > 0 {
+				if player.Stats.CaptureConeSoft <= 0 {
+					cone = 0
+				} else if cone = 1 - over/player.Stats.CaptureConeSoft; cone < 0 {
+					cone = 0
+				}
+			}
 
 			side := player.Stats.CaptureSpeed.Back
 			captureSpeed := side + (player.Stats.CaptureSpeed.Eval(angle)-side)*cone

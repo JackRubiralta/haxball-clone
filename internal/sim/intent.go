@@ -17,4 +17,8 @@ type Intent struct {
 	// rising edge of the cancel (right-click); the AI never sets it, so its own trap-while-
 	// charging recover move can never be mistaken for a cancel.
 	CancelCharge bool
+	// AimFromCursor marks Aim as a raw human cursor target, so the sim turns the facing toward
+	// it at the player's TurnRate (the disk can't instantly snap to the cursor). The AI leaves
+	// it false: its Aim is already rate-limited in the control layer and should apply instantly.
+	AimFromCursor bool
 }

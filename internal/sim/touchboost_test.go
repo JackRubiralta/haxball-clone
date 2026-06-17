@@ -128,6 +128,25 @@ func TestPossessionControlBonusAndCone(t *testing.T) {
 	}
 }
 
+// TestTeamChargeWidensCone: the team possession buff slightly widens the capture cone for the
+// owning team (positive coefficient) and narrows it for the conceding team, never going below 0.
+func TestTeamChargeWidensCone(t *testing.T) {
+	s := DefaultStats(500)
+	base := s.CaptureConeRadians
+	if got := s.captureConeRadians(0); math.Abs(got-base) > 1e-9 {
+		t.Errorf("a neutral coefficient should leave the cone unchanged: %.5f vs %.5f", got, base)
+	}
+	if !(s.captureConeRadians(1) > base) {
+		t.Errorf("the owning-team buff should widen the cone: %.5f should exceed %.5f", s.captureConeRadians(1), base)
+	}
+	if !(s.captureConeRadians(-0.8) < base) {
+		t.Errorf("the conceding team should get a narrower cone: %.5f should be below %.5f", s.captureConeRadians(-0.8), base)
+	}
+	if s.captureConeRadians(-100) < 0 {
+		t.Errorf("the cone must never go negative")
+	}
+}
+
 // TestPossessionNotStolenAfterPass: a passed ball carries no possession (shoot zeros it), so a
 // receiving player gets no head start from the passer.
 func TestPossessionNotStolenAfterPass(t *testing.T) {
@@ -265,7 +284,8 @@ func TestTouchQualityMultipliers(t *testing.T) {
 // team the most. This is "better touches for my team, the ball flies off the other team".
 func TestTeamChargeShapesContact(t *testing.T) {
 	const ballRadius = 10
-	tq := DefaultStats(500).TouchQuality
+	s := DefaultStats(500)
+	tq := s.TouchQuality
 
 	// A head-on front contact; only the touch coefficient varies. Returns ball velocity after.
 	contact := func(impact, coef float64) geom.Vec {
@@ -278,18 +298,25 @@ func TestTeamChargeShapesContact(t *testing.T) {
 		return b.Velocity
 	}
 
-	own := contact(380, tq.OwnTeamMax)
-	base := contact(380, 0)
-	other := contact(380, tq.OtherTeam)
+	// An impact midway between the baseline front capture (cone=1, coef 0) and the boosted
+	// capture (×CaptureBest): the owning team at full charge absorbs it, baseline/conceding
+	// bounce it. Derived from CaptureBest so it tracks retuning of the buff.
+	mid := s.CaptureSpeed.Front * (1 + (tq.CaptureBest-1)*0.5)
+	own := contact(mid, tq.OwnTeamMax)
+	base := contact(mid, 0)
+	other := contact(mid, tq.OtherTeam)
 	if math.Abs(own.X) > 5 {
-		t.Errorf("owning team at full charge should capture a 380 ball (vx ~ 0), got %.2f", own.X)
+		t.Errorf("owning team at full charge should capture a %.0f ball (vx ~ 0), got %.2f", mid, own.X)
 	}
 	if !(other.X > base.X && base.X >= 0) {
 		t.Errorf("conceding team should bounce a ball further than baseline: other=%.2f base=%.2f", other.X, base.X)
 	}
 
-	hardOther := contact(700, tq.OtherTeam)
-	hardBase := contact(700, 0)
+	// A hard contact, well above any capture threshold: bounces off both, but more off the
+	// conceding team.
+	hard := s.CaptureSpeed.Front * 2.5
+	hardOther := contact(hard, tq.OtherTeam)
+	hardBase := contact(hard, 0)
 	if hardOther.X <= hardBase.X {
 		t.Errorf("a blocked shot should fly off the conceding team more: other=%.2f base=%.2f", hardOther.X, hardBase.X)
 	}

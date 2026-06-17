@@ -146,13 +146,32 @@ func rotateToward(from, to geom.Vec, maxRad float64) geom.Vec {
 	return from.Rotate(step, geom.Vec{})
 }
 
-// FaceTowards points the player toward the given point (the cursor for a human, the
-// ball or a goal for the AI).
+// FaceTowards points the player instantly toward the given point. Used directly by the AI
+// (whose aim is already smoothed in the control layer) and as the snap path for a human; the
+// rate-limited human cursor aim goes through faceTowardLimited in applyIntent instead.
 func (p *Player) FaceTowards(point geom.Vec) {
 	direction := point.Sub(p.Position)
 	if length := geom.Norm(direction); length > 0 {
 		p.Facing = direction.Scale(1 / length)
 	}
+}
+
+// faceTowardLimited rotates the facing toward point at up to TurnRate radians/sec, so a human's
+// cursor aim turns at a limited rate instead of snapping (the disk can't instantly re-orient).
+// With TurnRate 0 or no current facing it snaps. The AI does NOT use this -- its aim is already
+// rate-limited in the control layer, and double-limiting it makes the facing jitter.
+func (p *Player) faceTowardLimited(point geom.Vec, deltaTime float64) {
+	direction := point.Sub(p.Position)
+	length := geom.Norm(direction)
+	if length == 0 {
+		return
+	}
+	desired := direction.Scale(1 / length)
+	if p.Stats.TurnRate <= 0 || p.Facing == (geom.Vec{}) {
+		p.Facing = desired
+		return
+	}
+	p.Facing = rotateToward(p.Facing, desired, p.Stats.TurnRate*deltaTime)
 }
 
 // Obstacle is a fixed, immovable shape (such as a cone) that the ball and players

@@ -45,11 +45,12 @@ func (h *Human) Intent(_ sim.View) sim.Intent {
 
 	cursorX, cursorY := ebiten.CursorPosition()
 	return sim.Intent{
-		Move:         move,
-		Throttle:     throttle,
-		Aim:          render.ScreenToWorld(cursorX, cursorY),
-		ShootHeld:    ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft),
-		Trap:         ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight),
-		CancelCharge: inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight),
+		Move:          move,
+		Throttle:      throttle,
+		Aim:           render.ScreenToWorld(cursorX, cursorY),
+		AimFromCursor: true, // turn toward the cursor at TurnRate -- no instant snap of the disk
+		ShootHeld:     ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft),
+		Trap:          ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight),
+		CancelCharge:  inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight),
 	}
 }
