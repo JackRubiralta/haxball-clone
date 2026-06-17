@@ -245,11 +245,13 @@ func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA)
 	c.fillCircle(cx, cy, 5, lineColor)
 
 	// Penalty boxes and goal areas: drawn open on the goal-line side (three sides) so
-	// their goal-line edge does not double up on the boundary near each goal.
-	penaltyH := gh + 130
-	penaltyD := 96.0
-	areaH := gh + 40
-	areaD := 44.0
+	// their goal-line edge does not double up on the boundary near each goal. Heights
+	// are fixed (not tied to the goal mouth), so shrinking the goal doesn't shrink the
+	// boxes; the depths extend well out from the goal line.
+	penaltyH := 330.0
+	penaltyD := 150.0
+	areaH := 240.0
+	areaD := 75.0
 	c.openBox(x, cy, penaltyD, penaltyH, markingWidth, lineColor)
 	c.openBox(x+w, cy, -penaltyD, penaltyH, markingWidth, lineColor)
 	c.openBox(x, cy, areaD, areaH, markingWidth, lineColor)
@@ -319,10 +321,15 @@ func drawGoal(c canvas, goal *sim.Goal, goalWidth float64, col color.RGBA) {
 	// Goal line closing the mouth, drawn on the post line itself.
 	c.line(top.X, top.Y, bot.X, bot.Y, fieldLineWidth, lineColor)
 
-	// Posts (no outline), centred on the physical post so the circle sits on the post
-	// and on the goal line.
+	// Posts (no outline): the team-coloured caps at the mouth corners. Offset outward by
+	// half the frame width (the same offset as the net frame) so each cap is centred on
+	// the post/frame corner instead of sitting a bit inside the mouth.
 	for _, post := range goal.Posts {
-		c.fillCircle(post.Position.X, post.Position.Y, post.Radius(), col)
+		oy := fo
+		if post.Position.Y < goal.Center.Y {
+			oy = -fo
+		}
+		c.fillCircle(post.Position.X, post.Position.Y+oy, post.Radius(), col)
 	}
 }
 
@@ -384,12 +391,27 @@ func drawTrapAura(c canvas, pos geom.Vec, radius, trap float64, body color.RGBA)
 	if trap <= 0 {
 		return
 	}
-	// A soft glow (no ring) that grows in size AND intensifies the longer the trap is
-	// held. Two layers give a gradient with a stronger, growing inner core.
-	outer := color.RGBA{body.R, body.G, body.B, uint8(40 * trap)}
-	c.fillCircle(pos.X, pos.Y, radius+4+18*trap, outer)
-	inner := color.RGBA{body.R, body.G, body.B, uint8(110 * trap)}
-	c.fillCircle(pos.X, pos.Y, radius+2+9*trap, inner)
+	// A very faint glow that grows with the trap charge, drawn as a stack of thin
+	// concentric bands. Each band's opacity is set directly from a smooth gradient --
+	// highest (but still very low) right at the body and easing to zero at the outer rim
+	// -- so it never accumulates into a bright blob and the ball stays clearly visible
+	// through it. Because the alpha is taken straight from the gradient (not summed),
+	// the glow also fades in smoothly from the very start of the charge instead of
+	// popping in. Peaks at only ~4% opacity at full charge.
+	const bands = 18
+	const peak = 11.0                       // peak band opacity at the body, full charge (~4% of 255)
+	reach := 4 + 16*trap                    // how far the glow reaches past the body, grows with charge
+	width := reach / float64(bands-1) * 1.1 // thin bands with a hair of overlap so they meet seamlessly
+	for i := 0; i < bands; i++ {
+		t := float64(i) / float64(bands-1) // 0 at the body, 1 at the outer rim
+		r := radius + reach*t
+		ease := (1 - t) * (1 - t) // quadratic falloff: soft toward the rim
+		a := uint8(peak * trap * ease)
+		if a == 0 {
+			continue
+		}
+		c.strokeCircle(pos.X, pos.Y, r, width, color.RGBA{body.R, body.G, body.B, a})
+	}
 }
 
 // drawShootCharge draws a radial power gauge around a player that fills from the top

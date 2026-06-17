@@ -88,12 +88,12 @@ type PlayerStats struct {
 func DefaultStats(shootForce float64) PlayerStats {
 	return PlayerStats{
 		Radius:          18,
-		Mass:            30,
+		Mass:            20,
 		Friction:        -1.5,
 		MaxSpeed:        140,
 		Acceleration:    300,
 		TouchRange:      2,
-		PullRange:       8,
+		PullRange:       6,
 		Restitution:     CurveSpec{InverseQuadraticCurve, 0.08, 0.80},
 		CaptureSpeed:    CurveSpec{LinearCurve, 320, 70},
 		CenterPull:      CurveSpec{InverseQuadraticCurve, 1000, 0},
@@ -118,7 +118,7 @@ func DefaultStats(shootForce float64) PlayerStats {
 		ShootAccelFactor: 0.4,
 
 		TrapPullBonus:    1.5,
-		TrapRangeBonus:   14,
+		TrapRangeBonus:   10,
 		TrapControlBonus: 1.2,
 		TrapAccelFactor:  0.55,
 		TrapSpeedFactor:  0.5,

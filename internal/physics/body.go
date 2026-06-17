@@ -68,6 +68,9 @@ func (b *Body) SetRadius(r float64) {
 	}
 }
 
+// Mass returns the body's mass (the reciprocal of its inverse mass).
+func (b *Body) Mass() float64 { return 1 / b.InvMass }
+
 // Update integrates the body forward by deltaTime: acceleration, optional speed cap,
 // friction, then position, in that order.
 func (b *Body) Update(deltaTime float64) {

@@ -77,6 +77,11 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 		shootCharge := NormShootCharge(p.shootCharge)
 		speedMul := (1 - p.trapCharge*(1-p.Stats.TrapSpeedFactor)) * (1 - shootCharge*(1-p.Stats.ShootSpeedFactor))
 		accelMul := (1 - p.trapCharge*(1-p.Stats.TrapAccelFactor)) * (1 - shootCharge*(1-p.Stats.ShootAccelFactor))
+		// Carrying the ball adds its inertia to the player, so the player accelerates a
+		// little slower while the ball is at its feet (touching).
+		if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange {
+			accelMul *= p.Stats.Mass / (p.Stats.Mass + m.Ball.Mass())
+		}
 		p.Body.MaxSpeed = p.Stats.MaxSpeed * speedMul
 		p.Move(in.Move, in.Throttle*accelMul, deltaTime)
 	}

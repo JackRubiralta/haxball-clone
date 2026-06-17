@@ -24,7 +24,7 @@ const GoalPostRadius = 6
 // NewStandardField builds the default pitch in fixed logical coordinates, so the
 // world (and therefore a client's aim) is identical on every machine.
 func NewStandardField() *Field {
-	return NewField(geom.NewVec(60, 100), geom.NewVec(940, 580), 40, 200)
+	return NewField(geom.NewVec(60, 100), geom.NewVec(940, 580), 40, 100)
 }
 
 // NewField builds a field spanning min..max with a goal of the given mouth size on

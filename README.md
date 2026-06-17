@@ -54,3 +54,10 @@ Key ideas:
 - **Per-player stats** (`sim.PlayerStats` + role presets): a goalkeeper bounces less
   and is less sticky, a midfielder shoots harder, a striker is faster — all built on
   swappable angle-response curves.
+
+## Saved tuning values (in case)
+
+Previous values for knobs that were changed, kept here so they can be restored:
+
+- `PullRange`: `8` (now `6`)
+- `TrapRangeBonus`: `14` (now `10`)
