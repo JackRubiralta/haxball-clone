@@ -89,6 +89,21 @@ func jerseyFace(sizePx int) font.Face {
 // invert a cursor position. It is refreshed every time a frame is drawn.
 var view = canvas{scale: 1}
 
+// worldW and worldH are the logical world size the canvas fits to the window. They
+// default to the standard surface and are set from the field's geometry whenever a
+// field is drawn, so a pitch of any size is letterboxed correctly.
+var worldW, worldH float64 = ScreenWidth, ScreenHeight
+
+// Camera state. When camActive is set (during Frame's world pass), newCanvas applies a
+// pan/zoom transform centred on camCenter; otherwise it fits the world to the window
+// (the original look, used for the HUD and the network client). Either way it refreshes
+// view, so ScreenToWorld inverts whichever transform is current and aim stays correct.
+var (
+	camActive bool
+	camCenter geom.Vec
+	camZoom   = 1.0
+)
+
 // canvas maps the fixed world coordinates onto an offscreen image of any resolution,
 // scaling the world to fit and centring it (letterboxing as needed). Drawing through
 // it rasterises every vector shape at the framebuffer's full resolution, so circles
@@ -102,18 +117,34 @@ type canvas struct {
 func newCanvas(dst *ebiten.Image) canvas {
 	w := float64(dst.Bounds().Dx())
 	h := float64(dst.Bounds().Dy())
-	scale := math.Min(w/ScreenWidth, h/ScreenHeight)
-	if scale <= 0 {
-		scale = 1
+	base := math.Min(w/worldW, h/worldH)
+	if base <= 0 {
+		base = 1
 	}
-	c := canvas{
-		dst:   dst,
-		scale: scale,
-		ox:    (w - ScreenWidth*scale) / 2,
-		oy:    (h - ScreenHeight*scale) / 2,
+	var c canvas
+	if camActive {
+		// Pan/zoom: scale by zoom and centre the view on camCenter. At zoom 1 with
+		// camCenter at the world centre this is identical to the fit transform below.
+		scale := base * camZoom
+		c = canvas{dst: dst, scale: scale, ox: w/2 - camCenter.X*scale, oy: h/2 - camCenter.Y*scale}
+	} else {
+		c = canvas{dst: dst, scale: base, ox: (w - worldW*base) / 2, oy: (h - worldH*base) / 2}
 	}
 	view = c
 	return c
+}
+
+// newHUDCanvas builds a fit-to-window canvas for the HUD. It never pans or zooms and,
+// crucially, does NOT touch view -- so a HUD drawn after the world leaves view holding
+// the world (camera) transform that ScreenToWorld inverts for aim.
+func newHUDCanvas(dst *ebiten.Image) canvas {
+	w := float64(dst.Bounds().Dx())
+	h := float64(dst.Bounds().Dy())
+	base := math.Min(w/worldW, h/worldH)
+	if base <= 0 {
+		base = 1
+	}
+	return canvas{dst: dst, scale: base, ox: (w - worldW*base) / 2, oy: (h - worldH*base) / 2}
 }
 
 func (c canvas) px(x float64) float32 { return float32(x*c.scale + c.ox) }
@@ -176,6 +207,40 @@ func ScreenToWorld(x, y int) geom.Vec {
 	return geom.NewVec((float64(x)-view.ox)/view.scale, (float64(y)-view.oy)/view.scale)
 }
 
+// UIWidth and UIHeight are the fixed logical size menus lay out in, independent of the
+// pitch and scaled to the window exactly like the pitch is.
+const (
+	UIWidth  = 1000
+	UIHeight = 680
+)
+
+// UI is an immediate-mode drawing surface for menus, laid out in fixed UI coordinates
+// and scaled to the window. Menus draw through it so they never touch Ebiten or the
+// vector package directly, keeping the transform single-sourced.
+type UI struct{ c canvas }
+
+// BeginUI prepares a UI surface for this frame. It sets the transform that
+// ScreenToWorld inverts, so a menu can map the cursor into UI coordinates.
+func BeginUI(screen *ebiten.Image) UI {
+	worldW, worldH = UIWidth, UIHeight
+	return UI{c: newCanvas(screen)}
+}
+
+// Fill clears the whole surface to a colour.
+func (u UI) Fill(clr color.Color) { u.c.dst.Fill(clr) }
+
+// FillRect draws a filled rectangle in UI coordinates.
+func (u UI) FillRect(x, y, w, h float64, clr color.Color) { u.c.fillRect(x, y, w, h, clr) }
+
+// StrokeRect draws a rectangle outline in UI coordinates.
+func (u UI) StrokeRect(x, y, w, h, sw float64, clr color.Color) { u.c.strokeRect(x, y, w, h, sw, clr) }
+
+// Text draws left-aligned text at a UI position.
+func (u UI) Text(s string, x, y float64) { u.c.text(s, x, y, 0, 0) }
+
+// TextCentered draws text centred horizontally on cx.
+func (u UI) TextCentered(s string, cx, y float64) { u.c.text(s, cx, y, -len(s)*3, 0) }
+
 // Match draws a complete local match.
 func Match(screen *ebiten.Image, m *sim.Match) {
 	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
@@ -184,15 +249,110 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
 			sim.NormShootCharge(p.ShootCharge()), p.TrapCharge())
 	}
-	Scoreboard(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score)
-	if m.Celebrating() {
-		GoalBanner(screen)
+	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
+		m.ClockSeconds(), m.PhaseLabel())
+	if m.InShootout() {
+		lg, rg := m.ShootoutScore()
+		lt, rt := m.ShootoutTaken()
+		ShootoutPanel(screen, m.Teams[0].Name, lg, lt, m.Teams[1].Name, rg, rt)
+	}
+	switch {
+	case m.Paused:
+		CenterBanner(screen, "P A U S E D")
+	case m.Finished():
+		CenterBanner(screen, winnerMessage(m))
+	case m.Celebrating():
+		CenterBanner(screen, goalMessage(m))
+	}
+}
+
+// Frame draws a complete local match through a camera. The pitch, ball, and players go
+// through the camera transform (pan/zoom); the HUD is drawn fit-to-window so it never
+// pans or zooms. ScreenToWorld inverts the camera transform, so aim stays correct at any
+// zoom or pan.
+func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera) {
+	worldW, worldH = m.Field.Geo.ScreenWidth, m.Field.Geo.ScreenHeight
+	cam.prepare(worldW, worldH, m)
+
+	camActive, camCenter, camZoom = true, cam.center, cam.Zoom
+	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
+	BallAt(screen, m.Ball.Position, m.Ball.Radius())
+	for _, p := range m.Players {
+		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
+			sim.NormShootCharge(p.ShootCharge()), p.TrapCharge())
+	}
+	camActive = false
+
+	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
+		m.ClockSeconds(), m.PhaseLabel())
+	if m.InShootout() {
+		lg, rg := m.ShootoutScore()
+		lt, rt := m.ShootoutTaken()
+		ShootoutPanel(screen, m.Teams[0].Name, lg, lt, m.Teams[1].Name, rg, rt)
+	}
+	switch {
+	case m.Finished():
+		CenterBanner(screen, winnerMessage(m))
+	case m.Celebrating():
+		CenterBanner(screen, goalMessage(m))
+	}
+}
+
+// goalMessage describes the most recent goal (scorer, assist, own goal, deflection).
+func goalMessage(m *sim.Match) string {
+	g := m.LastGoal
+	if g == nil {
+		return "G O A L !"
+	}
+	team := teamName(m, g.Team)
+	if g.OwnGoal {
+		return "OWN GOAL  " + team + scorerSuffix(m, g.HasScorer, g.Scorer)
+	}
+	msg := "GOAL!  " + team + scorerSuffix(m, g.HasScorer, g.Scorer)
+	if g.HasAssist {
+		if p := m.PlayerByID(g.Assist); p != nil {
+			msg += " (assist #" + itoa(p.Number) + ")"
+		}
+	}
+	if g.Deflected {
+		msg += " (deflected)"
+	}
+	return msg
+}
+
+func scorerSuffix(m *sim.Match, has bool, id int) string {
+	if !has {
+		return ""
+	}
+	if p := m.PlayerByID(id); p != nil {
+		return " #" + itoa(p.Number)
+	}
+	return ""
+}
+
+func teamName(m *sim.Match, side sim.Side) string {
+	if m.Teams[0].Side == side {
+		return m.Teams[0].Name
+	}
+	return m.Teams[1].Name
+}
+
+// winnerMessage describes a finished match's result.
+func winnerMessage(m *sim.Match) string {
+	switch m.Winner() {
+	case sim.SideLeft:
+		return m.Teams[0].Name + " WINS"
+	case sim.SideRight:
+		return m.Teams[1].Name + " WINS"
+	default:
+		return "DRAW"
 	}
 }
 
 // Field draws the pitch: a striped lawn, boundary and markings, the two goals with
 // nets, and any obstacles.
 func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA) {
+	worldW, worldH = f.Geo.ScreenWidth, f.Geo.ScreenHeight
 	screen.Fill(stadiumColor)
 	c := newCanvas(screen)
 
@@ -239,27 +399,27 @@ func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA)
 	c.fillCircle(lX, bY, o, lineColor)
 	c.fillCircle(rX, bY, o, lineColor)
 
-	// Halfway line, centre circle and spot.
+	// Halfway line, centre circle and spot -- sizes from the geometry.
 	c.line(cx, y, cx, y+h, markingWidth, lineColor)
-	c.strokeCircle(cx, cy, 72, markingWidth, lineColor)
-	c.fillCircle(cx, cy, 5, lineColor)
+	c.strokeCircle(cx, cy, f.Geo.CenterCircleRadius, markingWidth, lineColor)
+	c.fillCircle(cx, cy, f.Geo.CenterSpotMarkRadius, lineColor)
 
-	// Penalty boxes and goal areas: drawn open on the goal-line side (three sides) so
-	// their goal-line edge does not double up on the boundary near each goal. Heights
-	// are fixed (not tied to the goal mouth), so shrinking the goal doesn't shrink the
-	// boxes; the depths extend well out from the goal line.
-	penaltyH := 330.0 // outer penalty area -- unchanged
-	penaltyD := 150.0
-	areaH := 150.0 // inner goal area -- kept narrow (clearly less wide than the penalty area)
-	areaD := 75.0
+	// Penalty boxes and goal areas, drawn open on the goal-line side (three sides) so
+	// their goal-line edge does not double up on the boundary near each goal. All sizes
+	// come from the geometry -- the single source of truth the simulation uses too -- so
+	// the markings always match the pitch.
+	penaltyH := f.Geo.PenaltyWidth
+	penaltyD := f.Geo.PenaltyDepth
+	areaH := f.Geo.GoalAreaWidth
+	areaD := f.Geo.GoalAreaDepth
 	c.openBox(x, cy, penaltyD, penaltyH, markingWidth, lineColor)
 	c.openBox(x+w, cy, -penaltyD, penaltyH, markingWidth, lineColor)
 	c.openBox(x, cy, areaD, areaH, markingWidth, lineColor)
 	c.openBox(x+w, cy, -areaD, areaH, markingWidth, lineColor)
 	// Penalty spot: midway between the goal-area edge and the penalty-area edge.
 	spotD := (areaD + penaltyD) / 2
-	c.fillCircle(x+spotD, cy, 4, lineColor)
-	c.fillCircle(x+w-spotD, cy, 4, lineColor)
+	c.fillCircle(x+spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
+	c.fillCircle(x+w-spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
 
 	drawGoal(c, f.LeftGoal, f.GoalWidth, leftColor)
 	drawGoal(c, f.RightGoal, f.GoalWidth, rightColor)
@@ -442,18 +602,58 @@ func strokeArc(c canvas, center geom.Vec, r, a0, a1, w float64, clr color.Color)
 
 // Scoreboard draws a HUD bar with the score and the controls hint.
 func Scoreboard(screen *ebiten.Image, leftName string, leftScore int, rightName string, rightScore int) {
-	c := newCanvas(screen)
-	c.fillRect(0, 0, ScreenWidth, 28, hudColor)
+	c := newHUDCanvas(screen)
+	c.fillRect(0, 0, worldW, 28, hudColor)
 	score := leftName + " " + itoa(leftScore) + "   -   " + itoa(rightScore) + " " + rightName
-	c.text(score, ScreenWidth/2, 7, -len(score)*3, 0)
-	c.text("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap", 10, ScreenHeight-22, 0, 0)
+	c.text(score, worldW/2, 7, -len(score)*3, 0)
+	c.text("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap", 10, worldH-22, 0, 0)
+}
+
+// ScoreboardWithClock draws the HUD bar with the score centred, the match clock on the
+// left, and the current phase label on the right.
+func ScoreboardWithClock(screen *ebiten.Image, leftName string, leftScore int, rightName string, rightScore int, clockSeconds float64, phase string) {
+	c := newHUDCanvas(screen)
+	c.fillRect(0, 0, worldW, 28, hudColor)
+	score := leftName + " " + itoa(leftScore) + "   -   " + itoa(rightScore) + " " + rightName
+	c.text(score, worldW/2, 7, -len(score)*3, 0)
+	c.text(formatClock(clockSeconds), 0, 7, 12, 0)
+	if phase != "" {
+		c.text(phase, worldW, 7, -len(phase)*7-12, 0)
+	}
+	c.text("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap  -  Esc pause", 10, worldH-22, 0, 0)
+}
+
+// ShootoutPanel draws a sub-bar with the penalty tally: goals/kicks taken per side.
+func ShootoutPanel(screen *ebiten.Image, leftName string, lg, lt int, rightName string, rg, rt int) {
+	c := newHUDCanvas(screen)
+	c.fillRect(0, 28, worldW, 22, hudColor)
+	s := "PENALTIES   " + leftName + " " + itoa(lg) + "/" + itoa(lt) + "   -   " + itoa(rg) + "/" + itoa(rt) + " " + rightName
+	c.text(s, worldW/2, 33, -len(s)*3, 0)
 }
 
 // GoalBanner draws the "GOAL!" overlay shown after a goal.
-func GoalBanner(screen *ebiten.Image) {
-	c := newCanvas(screen)
-	c.fillRect(0, ScreenHeight/2-26, ScreenWidth, 52, bannerColor)
-	c.text("G O A L !", ScreenWidth/2, ScreenHeight/2-4, -24, 0)
+func GoalBanner(screen *ebiten.Image) { CenterBanner(screen, "G O A L !") }
+
+// CenterBanner draws a centred overlay message (goal, pause, result).
+func CenterBanner(screen *ebiten.Image, message string) {
+	c := newHUDCanvas(screen)
+	c.fillRect(0, worldH/2-26, worldW, 52, bannerColor)
+	c.text(message, worldW/2, worldH/2-4, -len(message)*3, 0)
+}
+
+// formatClock renders seconds as mm:ss.
+func formatClock(sec float64) string {
+	if sec < 0 {
+		sec = 0
+	}
+	t := int(sec)
+	ss := t % 60
+	mm := t / 60
+	sstr := itoa(ss)
+	if ss < 10 {
+		sstr = "0" + sstr
+	}
+	return itoa(mm) + ":" + sstr
 }
 
 // regularPolygon returns the vertices of a regular polygon.

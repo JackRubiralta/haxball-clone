@@ -1,59 +1,38 @@
-// Command game runs phootball as a single local process: it owns the simulation,
-// drives one player from the keyboard/mouse and the rest with AI, and renders.
+// Command game runs phootball as a single local process. It opens on a menu (mode
+// selection, settings) and runs the chosen match, all driven by the menu state machine.
+// The fast-path flags (-solo, -duo, -ai-both) jump straight into a match. It exits
+// cleanly on SIGINT/SIGTERM and on the window closing.
 package main
 
 import (
-	"flag"
-	"log"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"phootball/internal/config"
 	"phootball/internal/control"
 	"phootball/internal/geom"
 	"phootball/internal/input"
-	"phootball/internal/render"
+	"phootball/internal/logging"
+	"phootball/internal/menu"
 	"phootball/internal/sim"
 )
 
-const deltaTime = 1.0 / 60.0
+// Game adapts the menu state machine to Ebiten.
+type Game struct{ app *menu.App }
 
-// Game adapts the headless simulation to Ebiten: gather intents, step, render.
-type Game struct {
-	match       *sim.Match
-	controllers map[int]control.Controller
+func (g *Game) Update() error            { return g.app.Update() }
+func (g *Game) Draw(screen *ebiten.Image) { g.app.Draw(screen) }
 
-	// Duo testing mode: the human controls one player at a time, switching with 1/2.
-	duo      bool
-	human    *input.Human
-	activeID int
-}
-
-func (g *Game) Update() error {
-	if g.duo {
-		if inpututil.IsKeyJustPressed(ebiten.KeyDigit1) {
-			g.activeID = 0
-		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyDigit2) {
-			g.activeID = 1
-		}
-		// Only the active player receives input; the other stays idle (zero intent).
-		g.match.Step(map[int]sim.Intent{g.activeID: g.human.Intent(g.match)}, deltaTime)
-		return nil
-	}
-
-	inputs := make(map[int]sim.Intent, len(g.controllers))
-	for id, c := range g.controllers {
-		inputs[id] = c.Intent(g.match)
-	}
-	g.match.Step(inputs, deltaTime)
-	return nil
-}
-
-func (g *Game) Draw(screen *ebiten.Image) { render.Match(screen, g.match) }
-
-// Layout renders the game at the display's physical pixel resolution so shapes stay
-// crisp on high-DPI / 4K screens. The render package scales the fixed world to fill it.
+// Layout renders at the display's physical pixel resolution so shapes stay crisp on
+// high-DPI / 4K screens. The render package scales the fixed world to fill it.
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	s := ebiten.DeviceScaleFactor()
 	if s <= 0 {
@@ -63,61 +42,103 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
-	teamSize := flag.Int("team-size", 3, "players per team")
-	aiBoth := flag.Bool("ai-both", false, "AI controls both teams (spectate)")
-	solo := flag.Bool("solo", false, "single human player + ball only, no opponents (for testing)")
-	duo := flag.Bool("duo", false, "two players you switch control of with 1 and 2 (for testing)")
-	flag.Parse()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	os.Exit(code(run(ctx, os.Args[0], os.Args[1:], os.Stderr)))
+}
 
-	field := sim.NewStandardField()
-
-	if *duo {
-		ebiten.SetWindowSize(1200, 816)
-		ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
-		ebiten.SetWindowTitle("phootball (duo)")
-		if err := ebiten.RunGame(&Game{match: sim.BuildDuo(field), duo: true, human: input.NewHuman()}); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-
-	var match *sim.Match
-	controllers := make(map[int]control.Controller)
-	if *solo {
-		match = sim.BuildSolo(field)
-		for _, p := range match.Players {
-			controllers[p.PlayerID] = input.NewHuman()
-		}
-	} else {
-		field.AddObstacle(sim.NewConeObstacle(geom.NewVec(field.CenterSpot.X, field.Min.Y+120), 14))
-		field.AddObstacle(sim.NewConeObstacle(geom.NewVec(field.CenterSpot.X, field.Max.Y-120), 14))
-		match = sim.BuildMatch(field, *teamSize)
-
-		humanID := -1
-		if !*aiBoth {
-			humanID = humanSlot(match.Teams[0]) // control an outfielder on the blue team
-		}
-		for _, p := range match.Players {
-			if p.PlayerID == humanID {
-				controllers[p.PlayerID] = input.NewHuman()
-			} else {
-				controllers[p.PlayerID] = control.NewAI(p.PlayerID)
-			}
-		}
-	}
-
-	ebiten.SetWindowSize(1200, 816)
-	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
-	ebiten.SetWindowTitle("phootball")
-	if err := ebiten.RunGame(&Game{match: match, controllers: controllers}); err != nil {
-		log.Fatal(err)
+func code(err error) int {
+	switch {
+	case err == nil || errors.Is(err, config.ErrHelp):
+		return 0
+	case errors.Is(err, config.ErrUsage):
+		return 2
+	default:
+		fmt.Fprintln(os.Stderr, "phootball:", err)
+		return 1
 	}
 }
 
-// humanSlot picks an outfielder (the keeper is index 0) for the human to control.
-func humanSlot(t *sim.Team) int {
-	if len(t.Players) > 1 {
-		return t.Players[1].PlayerID
+func run(ctx context.Context, name string, args []string, stderr io.Writer) error {
+	opts, err := config.ParseGame(name, args, stderr)
+	if err != nil {
+		return err
 	}
-	return t.Players[0].PlayerID
+	if opts.Version {
+		fmt.Fprintln(stderr, config.Version)
+		return nil
+	}
+	logger, err := logging.New(stderr, opts.Logging.Level, opts.Logging.Format)
+	if err != nil {
+		return fmt.Errorf("logging: %w", err)
+	}
+	slog.SetDefault(logger)
+
+	app := buildApp(ctx, opts)
+	app.ConfigureCamera(opts.Camera, opts.Zoom)
+	app.ConfigureAudio(opts.Volume, opts.Mute)
+	return runGame(&Game{app: app}, "phootball")
+}
+
+// buildApp opens the menu, or jumps straight into a match for the fast-path flags.
+func buildApp(ctx context.Context, opts config.GameOptions) *menu.App {
+	switch {
+	case opts.Solo:
+		field := sim.NewFieldFromGeometry(opts.Config.Geometry)
+		m := sim.BuildSolo(field)
+		ctrls := map[int]control.Controller{}
+		for _, p := range m.Players {
+			ctrls[p.PlayerID] = input.NewHuman()
+		}
+		return menu.NewPlayingApp(ctx, m, ctrls, true)
+	case opts.Duo:
+		field := sim.NewFieldFromGeometry(opts.Config.Geometry)
+		return menu.NewDuoApp(ctx, sim.BuildDuo(field))
+	case opts.AIBoth:
+		m, ctrls := vsAI(opts, false)
+		return menu.NewPlayingApp(ctx, m, ctrls, false)
+	default:
+		s := menu.DefaultSettings()
+		s.Field = opts.Config.Geometry.Name
+		s.TeamSize = opts.TeamSize
+		s.Seed = opts.Config.Seed
+		return menu.NewApp(ctx, s)
+	}
+}
+
+// vsAI builds a match against AI from the parsed CLI config, with a local human on the
+// blue team unless human is false.
+func vsAI(opts config.GameOptions, human bool) (*sim.Match, map[int]control.Controller) {
+	field := sim.NewFieldFromGeometry(opts.Config.Geometry)
+	field.AddObstacle(sim.NewConeObstacle(geom.NewVec(field.CenterSpot.X, field.Min.Y+120), 14))
+	field.AddObstacle(sim.NewConeObstacle(geom.NewVec(field.CenterSpot.X, field.Max.Y-120), 14))
+	m := sim.BuildMatchFromConfig(field, opts.TeamSize, opts.Config)
+	ctrls := map[int]control.Controller{}
+	humanID := -1
+	if human && len(m.Teams[0].Players) > 0 {
+		humanID = m.Teams[0].Players[0].PlayerID
+		if len(m.Teams[0].Players) > 1 {
+			humanID = m.Teams[0].Players[1].PlayerID
+		}
+	}
+	for _, p := range m.Players {
+		if p.PlayerID == humanID {
+			ctrls[p.PlayerID] = input.NewHuman()
+		} else {
+			ctrls[p.PlayerID] = control.NewAI(p.PlayerID)
+		}
+	}
+	return m, ctrls
+}
+
+// runGame opens the window and runs the Ebiten loop, treating a clean termination as
+// success.
+func runGame(g *Game, title string) error {
+	ebiten.SetWindowSize(1200, 816)
+	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	ebiten.SetWindowTitle(title)
+	if err := ebiten.RunGame(g); err != nil && !errors.Is(err, ebiten.Termination) {
+		return err
+	}
+	return nil
 }

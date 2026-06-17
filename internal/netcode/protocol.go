@@ -8,7 +8,9 @@ package netcode
 
 import (
 	"image/color"
+	"strconv"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 	"phootball/internal/sim"
 )
@@ -49,6 +51,24 @@ type Snapshot struct {
 	LeftScore   int
 	RightScore  int
 	Celebrating bool
+
+	// Full pitch geometry, so a client draws the boxes/markings and builds its field
+	// from one source of truth instead of the loose Field* fields above.
+	Geometry config.Geometry
+
+	// Match state for the HUD.
+	ClockSeconds float64
+	PhaseLabel   string
+	Finished     bool
+	WinnerText   string // result message when finished
+	GoalText     string // scorer/assist/own-goal message during a celebration
+
+	// Penalty shootout tally.
+	InShootout                                            bool
+	PenLeftGoals, PenLeftTaken, PenRightGoals, PenRightTaken int
+
+	// Sound events emitted this tick, played once by the client.
+	Sounds []sim.SoundEvent
 }
 
 // ClientMsg is what a client sends the server each tick.
@@ -71,6 +91,19 @@ func SnapshotOf(m *sim.Match) Snapshot {
 		LeftScore:   m.Teams[0].Score,
 		RightScore:  m.Teams[1].Score,
 		Celebrating: m.Celebrating(),
+
+		Geometry:     m.Field.Geo,
+		ClockSeconds: m.ClockSeconds(),
+		PhaseLabel:   m.PhaseLabel(),
+		Finished:     m.Finished(),
+		WinnerText:   winnerText(m),
+		GoalText:     goalText(m),
+		InShootout:   m.InShootout(),
+		Sounds:       m.Sounds(),
+	}
+	if m.InShootout() {
+		s.PenLeftGoals, s.PenRightGoals = m.ShootoutScore()
+		s.PenLeftTaken, s.PenRightTaken = m.ShootoutTaken()
 	}
 	s.Entities = append(s.Entities, EntityState{
 		Kind:     KindBall,
@@ -91,4 +124,57 @@ func SnapshotOf(m *sim.Match) Snapshot {
 		})
 	}
 	return s
+}
+
+// winnerText describes a finished match's result for the HUD.
+func winnerText(m *sim.Match) string {
+	if !m.Finished() {
+		return ""
+	}
+	switch m.Winner() {
+	case sim.SideLeft:
+		return m.Teams[0].Name + " WINS"
+	case sim.SideRight:
+		return m.Teams[1].Name + " WINS"
+	default:
+		return "DRAW"
+	}
+}
+
+// goalText describes the most recent goal during a celebration.
+func goalText(m *sim.Match) string {
+	if !m.Celebrating() || m.LastGoal == nil {
+		return ""
+	}
+	g := m.LastGoal
+	team := teamNameFor(m, g.Team)
+	scorer := ""
+	if g.HasScorer {
+		scorer = " #" + playerNumber(m, g.Scorer)
+	}
+	if g.OwnGoal {
+		return "OWN GOAL  " + team + scorer
+	}
+	msg := "GOAL!  " + team + scorer
+	if g.HasAssist {
+		msg += " (assist #" + playerNumber(m, g.Assist) + ")"
+	}
+	if g.Deflected {
+		msg += " (deflected)"
+	}
+	return msg
+}
+
+func teamNameFor(m *sim.Match, side sim.Side) string {
+	if m.Teams[0].Side == side {
+		return m.Teams[0].Name
+	}
+	return m.Teams[1].Name
+}
+
+func playerNumber(m *sim.Match, id int) string {
+	if p := m.PlayerByID(id); p != nil {
+		return strconv.Itoa(p.Number)
+	}
+	return "?"
 }

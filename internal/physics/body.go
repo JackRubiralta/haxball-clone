@@ -1,6 +1,10 @@
 package physics
 
-import "phootball/internal/geom"
+import (
+	"math"
+
+	"phootball/internal/geom"
+)
 
 // Body is the dynamic rigid-body state shared by every collidable in the game
 // (players, the ball, obstacles). Motion lives here; geometry is delegated to Shape.
@@ -68,8 +72,15 @@ func (b *Body) SetRadius(r float64) {
 	}
 }
 
-// Mass returns the body's mass (the reciprocal of its inverse mass).
-func (b *Body) Mass() float64 { return 1 / b.InvMass }
+// Mass returns the body's mass (the reciprocal of its inverse mass). An immovable body
+// (InvMass 0) reports an effectively infinite mass instead of dividing by zero, so any
+// mass-ratio arithmetic treats it as unbudgeable rather than producing NaN.
+func (b *Body) Mass() float64 {
+	if b.InvMass == 0 {
+		return math.MaxFloat64
+	}
+	return 1 / b.InvMass
+}
 
 // Update integrates the body forward by deltaTime: acceleration, optional speed cap,
 // friction, then position, in that order.

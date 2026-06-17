@@ -5,7 +5,9 @@ import (
 	"phootball/internal/physics"
 )
 
-// Ball is the game ball.
+// Ball is the game ball. It has a single mass (the Body's), used when resolving
+// collisions -- including the contact with a player, where a heavier ball takes less of
+// the impulse and so is harder to launch by a bump.
 type Ball struct {
 	*physics.Body
 }
@@ -33,6 +35,8 @@ type Player struct {
 	shootCharge   float64 // seconds the shoot button has been held this charge
 	trapCharge    float64 // 0..1 trap charge; built while the trap button is held
 	shootHeldPrev bool    // shoot-button state last tick, for release-edge detection
+	trapHeldPrev  bool    // trap-button state last tick, for the trap sound's rising edge
+	evictDwell    float64 // seconds spent violating a positional rule (warn-evict grace)
 }
 
 // Charge timing constants (seconds), shared by the sim and the renderer's gauges.

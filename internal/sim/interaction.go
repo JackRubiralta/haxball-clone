@@ -29,11 +29,14 @@ func ballAngleDegrees(normal, facing geom.Vec) float64 {
 // is absorbed completely, so the ball sticks on the first touch instead of bouncing a
 // few times before it settles; a faster contact bounces off with the angle's
 // restitution.
-func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64) {
+// It returns whether the ball was actually in contact this tick (a touch), and the
+// approach speed of a hard bounce (0 for a soft capture), so the caller can record the
+// touch for scoring and play a ball-hit sound scaled by the impact.
+func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64) (touched bool, bounce float64) {
 	toBall := ball.Position.Sub(player.Position)
 	distance := geom.Norm(toBall)
 	if distance == 0 {
-		return // sharing the same centre; nothing sensible to resolve
+		return false, 0 // sharing the same centre; nothing sensible to resolve
 	}
 	normal := toBall.Scale(1 / distance) // points from the player to the ball
 
@@ -77,10 +80,24 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 				if restitution > 0.95 {
 					restitution = 0.95
 				}
+				bounce = approachSpeed // a hard bounce, not a soft capture
 			}
-			ball.Velocity = ball.Velocity.Sub(normal.Scale((1 + restitution) * relativeNormal))
+
+			// Collision mass: in a real collision a stationary ball (mass m_b) struck by
+			// the player (mass m_p) only takes on a fraction m_p/(m_p+m_b) of the impulse,
+			// so a heavier ball is harder to launch by bumping it. That ratio is applied to
+			// the contact impulse, but ONLY off-front: inside the capture cone (cone->1) the
+			// full impulse is kept so a front touch still absorbs cleanly and sticks
+			// first-time; off-front (cone->0), where a lively bounce would otherwise FLING
+			// the ball, the mass ratio takes over (heavier ball = less fling off a back/side
+			// bump). The player is still never moved (only the ball's velocity changes).
+			massRatio := player.Stats.Mass / (player.Stats.Mass + ball.Mass())
+			impulseScale := massRatio + (1-massRatio)*cone
+			ball.Velocity = ball.Velocity.Sub(normal.Scale((1 + restitution) * relativeNormal * impulseScale))
 		}
+		return true, bounce
 	}
+	return false, 0
 }
 
 // handleBallToPlayerAttraction applies the dribbling forces to the ball (and only the
@@ -268,12 +285,14 @@ func updatePossession(ball *Ball, player *Player, deltaTime float64) {
 // close enough to be under control. Power comes from the shoot curve over the ball's
 // angle (front shots strongest) and is scaled by the charge between a tap
 // (MinShootFactor) and a full hold (full power).
-func shoot(player *Player, ball *Ball) {
+// It returns whether a kick was actually applied (the ball was close enough), so the
+// caller can record the kick as a touch for scoring attribution.
+func shoot(player *Player, ball *Ball) bool {
 	toBall := ball.Position.Sub(player.Position)
 	distance := geom.Norm(toBall)
 	gap := distance - player.Radius() - ball.Radius()
 	if gap >= player.Stats.TouchRange {
-		return
+		return false
 	}
 
 	dir := player.Facing // fallback if the ball sits exactly on the player centre
@@ -289,4 +308,5 @@ func shoot(player *Player, ball *Ball) {
 
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
+	return true
 }

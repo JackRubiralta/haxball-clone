@@ -63,6 +63,13 @@ type PlayerStats struct {
 	PossessionArcDegrees     float64
 	GripFloor                float64
 
+	// Possession movement penalty: while the player has the ball at its feet (touching
+	// it), it moves a little slower. These scale the (soft) top speed and the
+	// acceleration independently while in possession (separate vars so each tunes on its
+	// own). 0.925 = ~7.5% slower.
+	PossessionSpeedFactor float64
+	PossessionAccelFactor float64
+
 	// Charged shot: a tap fires at MinShootFactor of the angle power, a full charge at
 	// the full power. While charging, the player slows even more than while trapping --
 	// ShootSpeedFactor / ShootAccelFactor scale the (soft) top speed and acceleration
@@ -112,6 +119,9 @@ func DefaultStats(shootForce float64) PlayerStats {
 		PossessionReleaseSeconds: 0.4,
 		PossessionArcDegrees:     50,
 		GripFloor:                0.3,
+
+		PossessionSpeedFactor: 0.925, // ~7.5% slower top speed while carrying the ball
+		PossessionAccelFactor: 0.925, // ~7.5% slower acceleration while carrying the ball
 
 		MinShootFactor:   0.35,
 		ShootSpeedFactor: 0.35,

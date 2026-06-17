@@ -10,45 +10,38 @@ const (
 	RoleStriker
 )
 
-// GoalkeeperStats: less bounce everywhere, a weaker centre pull (less sticky), a
-// touch slower but larger to block shots, and a clearing rather than scoring shot.
-func GoalkeeperStats() PlayerStats {
-	s := DefaultStats(450)
-	s.Radius = 22
-	s.MaxSpeed = 126
-	s.Acceleration = 340
-	s.Restitution = CurveSpec{QuadraticCurve, 0.05, 0.35}
-	s.CaptureSpeed = CurveSpec{LinearCurve, 360, 60}
-	s.CenterPull = CurveSpec{QuadraticCurve, 500, 0}
-	s.Stickiness = CurveSpec{InverseQuadraticCurve, 260, 0}
-	s.Shoot = CurveSpec{LinearCurve, 450, 135}
-	s.CaptureConeDegrees = 22 // a keeper has "safe hands": a wider reliable catch cone
-	s.GripFloor = 0.45        // harder to dispossess a keeper holding the ball
-	s.TrapPullBonus = 1.0     // keepers don't dribble-steal
+// fieldPlayerStats is the single preset every position currently uses. The user asked
+// for all positions -- goalkeeper, midfielder, attacker (and a future defender) -- to
+// play IDENTICALLY for now, based on the field player being tuned in solo (plain
+// DefaultStats with shootForce 500). Each position-varying stat is written out and set
+// to that field-player value, with the per-position value to restore later in the
+// trailing comment, ordered [gk | mid | attack]. There is no separate defender role
+// yet; a defender would currently resolve to this same preset.
+func fieldPlayerStats() PlayerStats {
+	s := DefaultStats(500)
+	s.Radius = 18                                                // [gk 22 | mid 18 | attack 18]
+	s.MaxSpeed = 140                                             // [gk 126 | mid 147 | attack 168]
+	s.Acceleration = 300                                         // [gk 340 | mid 300 | attack 320]
+	s.Shoot = CurveSpec{LinearCurve, 500, 150}                   // [gk 450/135 | mid 620/200 | attack 560/168]
+	s.Restitution = CurveSpec{InverseQuadraticCurve, 0.08, 0.35} // [gk {Quad 0.05/0.35} | mid+attack {InvQuad 0.08/0.35}]
+	s.CaptureSpeed = CurveSpec{LinearCurve, 320, 70}             // [gk {Lin 360/60} | mid+attack {Lin 320/70}]
+	s.CenterPull = CurveSpec{InverseQuadraticCurve, 1000, 0}     // [gk {Quad 500/0} | mid {InvQuad 1000/0} | attack {Quad 1200/0}]
+	s.Stickiness = CurveSpec{InverseQuadraticCurve, 420, 0}      // [gk {InvQuad 260/0} | mid {InvQuad 420/0} | attack {InvQuad 520/0}]
+	s.Control = CurveSpec{LinearCurve, 1500, 300}                // [gk+mid {Lin 1500/300} | attack {Lin 1700/350}]
+	s.CaptureConeDegrees = 15                                    // [gk 22 | mid 15 | attack 15]
+	s.GripFloor = 0.30                                           // [gk 0.45 | mid 0.30 | attack 0.30]
+	s.TrapPullBonus = 1.5                                        // [gk 1.0 | mid 1.5 | attack 1.8]
+	s.TrapRangeBonus = 10                                        // [gk 10 | mid 10 | attack 18]
+	s.PossessionBuildSeconds = 1.5                               // [gk 1.5 | mid 1.5 | attack 1.2]
 	return s
 }
 
-// MidfielderStats: balanced, with a more powerful shot.
-func MidfielderStats() PlayerStats {
-	s := DefaultStats(620)
-	s.MaxSpeed = 147
-	s.Shoot = CurveSpec{LinearCurve, 620, 200}
-	return s
-}
-
-// StrikerStats: fast, with stickier control for dribbling and a strong front shot.
-func StrikerStats() PlayerStats {
-	s := DefaultStats(560)
-	s.MaxSpeed = 168
-	s.Acceleration = 320
-	s.CenterPull = CurveSpec{QuadraticCurve, 1200, 0}
-	s.Stickiness = CurveSpec{InverseQuadraticCurve, 520, 0}
-	s.Control = CurveSpec{LinearCurve, 1700, 350}
-	s.PossessionBuildSeconds = 1.2 // settles possession faster
-	s.TrapPullBonus = 1.8          // stronger steal pull
-	s.TrapRangeBonus = 18          // longer steal reach
-	return s
-}
+// GoalkeeperStats, MidfielderStats and StrikerStats all currently return the same shared
+// field-player preset (see fieldPlayerStats), so every position plays identically for
+// now. Re-differentiate the positions by restoring the per-position values noted there.
+func GoalkeeperStats() PlayerStats { return fieldPlayerStats() }
+func MidfielderStats() PlayerStats { return fieldPlayerStats() }
+func StrikerStats() PlayerStats    { return fieldPlayerStats() }
 
 // StatsForRole returns the stats preset for a role.
 func StatsForRole(r Role) PlayerStats {
