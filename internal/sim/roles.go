@@ -28,7 +28,7 @@ func fieldPlayerStats() PlayerStats {
 	s.CenterPull = CurveSpec{InverseQuadraticCurve, 1000, 0}     // [gk {Quad 500/0} | mid {InvQuad 1000/0} | attack {Quad 1200/0}]
 	s.Stickiness = CurveSpec{InverseQuadraticCurve, 420, 0}      // [gk {InvQuad 260/0} | mid {InvQuad 420/0} | attack {InvQuad 520/0}]
 	s.Control = CurveSpec{LinearCurve, 1500, 300}                // [gk+mid {Lin 1500/300} | attack {Lin 1700/350}]
-	s.CaptureConeDegrees = 15                                    // [gk 22 | mid 15 | attack 15]
+	s.CaptureConeRadians = 0.2617993877991494                    // ~15deg [gk ~22 | mid ~15 | attack ~15]
 	s.GripFloor = 0.30                                           // [gk 0.45 | mid 0.30 | attack 0.30]
 	s.TrapPullBonus = 1.5                                        // [gk 1.0 | mid 1.5 | attack 1.8]
 	s.TrapRangeBonus = 10                                        // [gk 10 | mid 10 | attack 18]

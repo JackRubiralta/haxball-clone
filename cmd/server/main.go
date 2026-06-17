@@ -67,9 +67,10 @@ func run(ctx context.Context, name string, args []string, stderr io.Writer) erro
 		}
 		humanIDs = append(humanIDs, t.Players[idx].PlayerID)
 	}
+	skill, _ := control.SkillFromString(opts.Difficulty)
 	bots := make(map[int]netcode.Bot, len(match.Players))
 	for _, p := range match.Players {
-		bots[p.PlayerID] = control.NewAI(p.PlayerID)
+		bots[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
 	}
 
 	server := netcode.NewServer(opts.Addr, match, bots, humanIDs)

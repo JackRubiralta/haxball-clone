@@ -67,6 +67,12 @@ type Snapshot struct {
 	InShootout                                            bool
 	PenLeftGoals, PenLeftTaken, PenRightGoals, PenRightTaken int
 
+	// Positional-rule state, so the client can draw the offside/box indicators.
+	OffsideEnabled       bool
+	OffsideFrac          float64
+	PenaltyBoxMaxPlayers int
+	GoalAreaMaxPlayers   int
+
 	// Sound events emitted this tick, played once by the client.
 	Sounds []sim.SoundEvent
 }
@@ -100,6 +106,11 @@ func SnapshotOf(m *sim.Match) Snapshot {
 		GoalText:     goalText(m),
 		InShootout:   m.InShootout(),
 		Sounds:       m.Sounds(),
+
+		OffsideEnabled:       m.Rules.OffsideEnabled,
+		OffsideFrac:          m.Rules.OffsideFrac,
+		PenaltyBoxMaxPlayers: m.Rules.PenaltyBoxMaxPlayers,
+		GoalAreaMaxPlayers:   m.Rules.GoalAreaMaxPlayers,
 	}
 	if m.InShootout() {
 		s.PenLeftGoals, s.PenRightGoals = m.ShootoutScore()

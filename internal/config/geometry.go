@@ -35,7 +35,11 @@ type Geometry struct {
 	GoalPocketDepth float64
 	PostRadius      float64
 
-	// The two boxes: the outer penalty area and the inner goal area.
+	// The two boxes: the outer penalty area and the inner goal area. The Has flags toggle
+	// each box's existence without losing its dimensions, so a box can be turned off and
+	// back on in the lobby.
+	HasPenaltyArea               bool
+	HasGoalArea                  bool
 	PenaltyWidth, PenaltyDepth   float64
 	GoalAreaWidth, GoalAreaDepth float64
 
@@ -76,6 +80,13 @@ func (g Geometry) Normalize() Geometry {
 	if min := g.PlayHeight + 80; g.ScreenHeight < min {
 		g.ScreenHeight = min
 	}
+	// A box flagged on but given no size cannot exist.
+	if g.HasPenaltyArea && (g.PenaltyWidth <= 0 || g.PenaltyDepth <= 0) {
+		g.HasPenaltyArea = false
+	}
+	if g.HasGoalArea && (g.GoalAreaWidth <= 0 || g.GoalAreaDepth <= 0) {
+		g.HasGoalArea = false
+	}
 	return g
 }
 
@@ -92,6 +103,8 @@ func StandardGeometry() Geometry {
 		GoalMouthWidth:        100,
 		GoalPocketDepth:       40,
 		PostRadius:            6,
+		HasPenaltyArea:        true,
+		HasGoalArea:           true,
 		PenaltyWidth:          330,
 		PenaltyDepth:          150,
 		GoalAreaWidth:         150,

@@ -15,7 +15,7 @@ import (
 // Bot is anything that can produce an Intent from match state -- control.AI
 // satisfies it structurally, so netcode need not import the control package.
 type Bot interface {
-	Intent(view *sim.Match) sim.Intent
+	Intent(view sim.View) sim.Intent
 }
 
 // Server runs the authoritative simulation. It steps the match at a fixed rate,
@@ -195,7 +195,7 @@ func (s *Server) tickLoop(ctx context.Context) {
 			if s.assigned[p.PlayerID] {
 				inputs[p.PlayerID] = s.intents[p.PlayerID] // a client controls this player
 			} else if bot, ok := s.bots[p.PlayerID]; ok {
-				inputs[p.PlayerID] = bot.Intent(s.match) // AI until a client claims the slot
+				inputs[p.PlayerID] = bot.Intent(s.match.View()) // AI until a client claims the slot
 			}
 		}
 		s.match.Step(inputs, dt)

@@ -1,6 +1,12 @@
 package sim
 
-// CurveSpec binds an AngleCurve to its front (0 deg) and back (180 deg) endpoints,
+import (
+	"math"
+
+	"phootball/internal/geom"
+)
+
+// CurveSpec binds an AngleCurve to its front (0 rad) and back (pi rad) endpoints,
 // so a single value fully describes an angle-dependent quantity.
 type CurveSpec struct {
 	Curve AngleCurve
@@ -8,10 +14,10 @@ type CurveSpec struct {
 	Back  float64
 }
 
-// Eval evaluates the quantity at the given angle, where 0 deg is dead in front of
-// the player and 180 deg is directly behind.
+// Eval evaluates the quantity at the given angle in RADIANS, where 0 is dead in front of
+// the player and pi is directly behind.
 func (s CurveSpec) Eval(angle float64) float64 {
-	return s.Curve(s.Front, s.Back, 0, 180, angle)
+	return s.Curve(s.Front, s.Back, 0, math.Pi, angle)
 }
 
 // PlayerStats is the full per-player tuning. A role preset is simply a PlayerStats
@@ -26,6 +32,7 @@ type PlayerStats struct {
 	Friction     float64
 	MaxSpeed     float64
 	Acceleration float64
+	TurnRate     float64 // max radians/sec the movement heading can rotate (0 = instant)
 
 	// Ball-control geometry (surface gaps).
 	TouchRange float64
@@ -44,23 +51,25 @@ type PlayerStats struct {
 	OrbitStick     float64 // inward hold proportional to the ball's orbital speed around the
 	// player, so a hard turn curves the ball around it instead of flinging it off (touching only)
 
-	// Front-cone capture: the ball reliably sticks only within CaptureConeDegrees of
-	// the facing direction; over the next CaptureConeSoft degrees capture decays to the
+	// Front-cone capture (radians): the ball reliably sticks only within CaptureConeRadians
+	// of the facing direction; over the next CaptureConeSoft radians capture decays to the
 	// CaptureSpeed.Back floor, so side/back hits bounce off.
-	CaptureConeDegrees float64
-	CaptureConeSoft    float64
+	CaptureConeRadians float64
+	CaptureConeSoft    float64 // radians
 
 	// Ball seating: per-second rate a touching ball is drawn flush to the surface.
 	SeatStrength float64
 
-	// Possession build-up: while controlling the ball within PossessionArcDegrees of
-	// the front, possession grows to 1 over PossessionBuildSeconds and decays over
-	// PossessionReleaseSeconds otherwise. A grip multiplier (GripFloor at a fresh
-	// touch, 1 at full possession) scales the centre-pull and stickiness, so a fresh
-	// touch is easily stolen and established possession survives quick turns.
+	// Possession / control build-up: possession grows to 1 over PossessionBuildSeconds
+	// while the ball is touching ANYWHERE (and decays over PossessionReleaseSeconds
+	// otherwise); control uses the same timing but builds only while the ball is touching
+	// within PossessionArcRadians of the front. A grip multiplier (GripFloor at a fresh
+	// touch, 1 at full possession) scales the centre-pull and stickiness, so a fresh touch
+	// is easily stolen and established possession survives quick turns. PossessionArcRadians
+	// now gates only the (currently unused) control state, not possession.
 	PossessionBuildSeconds   float64
 	PossessionReleaseSeconds float64
-	PossessionArcDegrees     float64
+	PossessionArcRadians     float64
 	GripFloor                float64
 
 	// Possession movement penalty: while the player has the ball at its feet (touching
@@ -70,6 +79,13 @@ type PlayerStats struct {
 	PossessionSpeedFactor float64
 	PossessionAccelFactor float64
 
+	// PossessionControlBonus is a small PER-PLAYER (not team) boost to the Control force
+	// (the tangential roll-to-front), scaled by the player's own possession: the Control
+	// strength is multiplied by (1 + PossessionControlBonus*possession), so a settled
+	// carrier rolls the ball to its front a touch more crisply. 0.05 = up to +5% at full
+	// possession.
+	PossessionControlBonus float64
+
 	// Charged shot: a tap fires at MinShootFactor of the angle power, a full charge at
 	// the full power. While charging, the player slows even more than while trapping --
 	// ShootSpeedFactor / ShootAccelFactor scale the (soft) top speed and acceleration
@@ -77,6 +93,18 @@ type PlayerStats struct {
 	MinShootFactor   float64
 	ShootSpeedFactor float64
 	ShootAccelFactor float64
+
+	// Aim assist: a shot is fired radially (player centre -> ball), but when the ball
+	// sits within the front cone the direction is nudged toward where the player is
+	// FACING, so the shot goes where the player aims even if the ball isn't perfectly
+	// centred. ShootAimAssist is the max blend weight (0 = pure radial, the raw physics;
+	// 1 = fire fully along the facing direction). The assist holds at full strength
+	// within ShootAimAssistConeRadians of the facing direction, then decays over the next
+	// ShootAimAssistSoftRadians to zero -- so a side- or back-of-the-body shot just fires
+	// straight out along the radial as before.
+	ShootAimAssist            float64
+	ShootAimAssistConeRadians float64
+	ShootAimAssistSoftRadians float64
 
 	// Trap ("good touch"): a 0..1 trap charge (built while the trap button is held)
 	// scales these -- a stronger, longer-reach centre-pull (to trap/steal a loose
@@ -89,50 +117,181 @@ type PlayerStats struct {
 	TrapSpeedFactor  float64 // max-speed multiplier at full trap (lower = slower top speed)
 	TrapCaptureBonus float64
 	TrapRadiusBonus  float64 // 0 = the player does not change size while trapping
+	// TrapRestitutionFactor is how strongly the trap charge SUPPRESSES the bounce on a hard
+	// contact: the bounce restitution is scaled by (1 - min(1, trapCharge*TrapRestitutionFactor)),
+	// so >1 makes the ball stop bouncing before a full trap (a held trap deadens the ball, on
+	// top of the higher capture speed). 1.0 = bounce only fully killed at a full trap; 0 = trap
+	// never affects bounce.
+	TrapRestitutionFactor float64
+
+	// TouchQuality folds a player's POSSESSION and the team RECEIVE-BOOST into how cleanly
+	// it takes an incoming ball (its capture speed and bounce). See the TouchQuality type.
+	TouchQuality TouchQuality
+}
+
+// TouchQuality tunes how the TEAM POSSESSION CHARGE modulates an incoming ball's capture
+// speed and restitution (bounce) for a player. The charge is a 0..1 strength owned by one
+// team (it builds while that team holds the ball and persists/decays after a pass -- see
+// Match.advanceTeamPossession). Each player's per-tick "quality coefficient" is derived from
+// it and folds into a single value in [-1, +1]:
+//
+//   - coefficient 0 reproduces the BASELINE -- the unscaled CaptureSpeed / Restitution
+//     curves (today's values). This is a loose ball, or either team at zero charge.
+//   - POSITIVE (the OWNING team, scaled by charge up to OwnTeamMax) is a cleaner touch: the
+//     ball sticks at higher impact speeds (capture up) and bounces off less (restitution
+//     down) -- so built-up possession is received and carried cleanly.
+//   - NEGATIVE (the OTHER team, scaled by the owner's charge down to OtherTeam) is a worse
+//     touch: harder to capture and springs off harder -- so a shot blocked by a team that
+//     has conceded possession flies further off them.
+//
+// Capture and restitution each map the coefficient through their own worst/best multipliers,
+// anchored at 1.0 for coefficient 0.
+type TouchQuality struct {
+	OwnTeamMax float64 // coefficient for the owning team at full charge (> 0: the cleanest touch)
+	OtherTeam  float64 // coefficient for the other team at the owner's full charge (< 0: ball flies off)
+
+	CaptureWorst float64 // capture-speed multiplier at coefficient -1 (< 1: harder to capture)
+	CaptureBest  float64 // capture-speed multiplier at coefficient +1 (> 1: sticks at higher speed)
+
+	RestitutionWorst float64 // restitution multiplier at coefficient -1 (> 1: bouncier, ball flies)
+	RestitutionBest  float64 // restitution multiplier at coefficient +1 (< 1: deader, ball sticks)
+}
+
+// captureMul maps a coefficient in [-1,1] to the capture-speed multiplier (1.0 at 0).
+func (tq TouchQuality) captureMul(coef float64) float64 {
+	return triLerp(tq.CaptureWorst, 1, tq.CaptureBest, clampUnitSigned(coef))
+}
+
+// restitutionMul maps a coefficient in [-1,1] to the restitution multiplier (1.0 at 0).
+func (tq TouchQuality) restitutionMul(coef float64) float64 {
+	return triLerp(tq.RestitutionWorst, 1, tq.RestitutionBest, clampUnitSigned(coef))
+}
+
+// triLerp interpolates a value across three anchor points by a parameter t in [-1, 1]:
+// worst at t=-1, mid at t=0, best at t=+1, linear on each side of the midpoint.
+func triLerp(worst, mid, best, t float64) float64 {
+	if t >= 0 {
+		return mid + (best-mid)*t
+	}
+	return mid + (mid-worst)*t
+}
+
+// clampUnitSigned clamps a value to [-1, 1]; clampUnit clamps to [0, 1].
+func clampUnitSigned(v float64) float64 {
+	if v > 1 {
+		return 1
+	}
+	if v < -1 {
+		return -1
+	}
+	return v
+}
+
+func clampUnit(v float64) float64 {
+	if v > 1 {
+		return 1
+	}
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+// aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle`
+// radians off the facing direction: ShootAimAssist within the front cone, decaying
+// linearly to zero across the soft band, and zero beyond (side/back shots fire purely
+// radially). Returns 0 when the assist is disabled (ShootAimAssist <= 0).
+func (s PlayerStats) aimAssistWeight(angle float64) float64 {
+	if s.ShootAimAssist <= 0 {
+		return 0
+	}
+	cone, soft := s.ShootAimAssistConeRadians, s.ShootAimAssistSoftRadians
+	switch {
+	case angle <= cone:
+		return s.ShootAimAssist
+	case soft <= 0 || angle >= cone+soft:
+		return 0
+	default:
+		return s.ShootAimAssist * (1 - (angle-cone)/soft)
+	}
+}
+
+// ShootDirection returns the actual launch direction of a shot: the radial direction
+// (player centre -> ball, the raw kick direction) blended toward `facing` by the aim
+// assist when the ball sits within the front cone. Both inputs must be unit vectors. This
+// is the single source of truth for the shot direction, used by the sim to fire and by the
+// AI to predict the launch so its aim matches the physics.
+func (s PlayerStats) ShootDirection(radial, facing geom.Vec) geom.Vec {
+	w := s.aimAssistWeight(ballAngle(radial, facing))
+	if w <= 0 {
+		return radial
+	}
+	blended := radial.Scale(1 - w).Add(facing.Scale(w))
+	if n := geom.Norm(blended); n > 0 {
+		return blended.Scale(1 / n)
+	}
+	return radial
 }
 
 // DefaultStats returns the baseline player tuning.
 func DefaultStats(shootForce float64) PlayerStats {
 	return PlayerStats{
-		Radius:          18,
-		Mass:            20,
-		Friction:        -1.5,
-		MaxSpeed:        140,
-		Acceleration:    300,
-		TouchRange:      2,
-		PullRange:       6,
-		Restitution:     CurveSpec{InverseQuadraticCurve, 0.08, 0.35},
-		CaptureSpeed:    CurveSpec{LinearCurve, 320, 70},
-		CenterPull:      CurveSpec{InverseQuadraticCurve, 1000, 0},
-		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 0},
-		Control:         CurveSpec{LinearCurve, 1500, 300},
-		Shoot:           CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
+		Radius:         18,
+		Mass:           20,
+		Friction:       -1.5,
+		MaxSpeed:       140,
+		Acceleration:   300,
+		TurnRate:       14, // quite fast, not instant: a full 180 reversal takes ~0.22s
+		TouchRange:     2,
+		PullRange:      6,
+		Restitution:    CurveSpec{InverseQuadraticCurve, 0.05, 0.25}, // less bouncy ball off a player (front/back lowered)
+		CaptureSpeed:   CurveSpec{LinearCurve, 320, 70},
+		CenterPull:     CurveSpec{InverseQuadraticCurve, 1000, 0},
+		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 0},
+		Control:        CurveSpec{LinearCurve, 1500, 300},
+		Shoot:          CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping: 11,
 		OrbitStick:     8,
 
-		CaptureConeDegrees: 15,
-		CaptureConeSoft:    25,
+		CaptureConeRadians: 0.2617993877991494, // ~15deg
+		CaptureConeSoft:    0.4363323129985824, // ~25deg
 
 		SeatStrength: 14,
 
 		PossessionBuildSeconds:   1.5,
 		PossessionReleaseSeconds: 0.4,
-		PossessionArcDegrees:     50,
+		PossessionArcRadians:     0.8726646259971648, // ~50deg
 		GripFloor:                0.3,
 
 		PossessionSpeedFactor: 0.925, // ~7.5% slower top speed while carrying the ball
 		PossessionAccelFactor: 0.925, // ~7.5% slower acceleration while carrying the ball
 
+		PossessionControlBonus: 0.05, // up to +5% roll-to-front control at full possession
+
 		MinShootFactor:   0.35,
 		ShootSpeedFactor: 0.35,
 		ShootAccelFactor: 0.4,
 
-		TrapPullBonus:    1.5,
-		TrapRangeBonus:   10,
-		TrapControlBonus: 1.2,
-		TrapAccelFactor:  0.55,
-		TrapSpeedFactor:  0.5,
-		TrapCaptureBonus: 220,
-		TrapRadiusBonus:  0,
+		ShootAimAssist:            1.0,                // full snap to the facing direction inside the cone
+		ShootAimAssistConeRadians: 0.2617993877991494, // ~15deg: full assist within the front cone either way
+		ShootAimAssistSoftRadians: 0,                  // no soft band (side/back = pure radial)
+
+		TrapPullBonus:         1.5,
+		TrapRangeBonus:        10,
+		TrapControlBonus:      1.2,
+		TrapAccelFactor:       0.55,
+		TrapSpeedFactor:       0.5,
+		TrapCaptureBonus:      220,
+		TrapRadiusBonus:       0,
+		TrapRestitutionFactor: 1.3, // a held trap deadens the bounce, fully by ~0.77 trap charge
+
+		TouchQuality: TouchQuality{
+			OwnTeamMax:       1.0,  // owning team at full charge -> the cleanest touch
+			OtherTeam:        -0.6, // other team at the owner's full charge -> ball flies off them
+			CaptureWorst:     0.7,  // -30% capture at the worst (ball harder to absorb)
+			CaptureBest:      1.35, // +35% capture at full charge (sticks at higher speed)
+			RestitutionWorst: 1.5,  // +50% bounce at the worst (blocks/lunges fly further)
+			RestitutionBest:  0.45, // -55% bounce at full charge (received passes stay dead)
+		},
 	}
 }

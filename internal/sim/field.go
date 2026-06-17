@@ -19,7 +19,7 @@ type Field struct {
 	CenterSpot geom.Vec
 	LeftGoal   *Goal
 	RightGoal  *Goal
-	Obstacles  []*Obstacle
+	Obstacles  []*Obstacle // fixed obstacles; no mode adds any today
 }
 
 // GoalPostRadius is the radius of the solid goal posts.
@@ -75,8 +75,8 @@ func NewFieldFromGeometry(g config.Geometry) *Field {
 		},
 		Net: []*physics.Body{
 			physics.NewStaticSegment(geom.NewVec(leftBack, top), geom.NewVec(leftBack, bot)), // back
-			physics.NewStaticSegment(geom.NewVec(leftBack, top), geom.NewVec(min.X, top)),     // top
-			physics.NewStaticSegment(geom.NewVec(leftBack, bot), geom.NewVec(min.X, bot)),     // bottom
+			physics.NewStaticSegment(geom.NewVec(leftBack, top), geom.NewVec(min.X, top)),    // top
+			physics.NewStaticSegment(geom.NewVec(leftBack, bot), geom.NewVec(min.X, bot)),    // bottom
 		},
 	}
 	rightBack := max.X + g.GoalPocketDepth
@@ -90,8 +90,8 @@ func NewFieldFromGeometry(g config.Geometry) *Field {
 		},
 		Net: []*physics.Body{
 			physics.NewStaticSegment(geom.NewVec(rightBack, top), geom.NewVec(rightBack, bot)), // back
-			physics.NewStaticSegment(geom.NewVec(max.X, top), geom.NewVec(rightBack, top)),       // top
-			physics.NewStaticSegment(geom.NewVec(max.X, bot), geom.NewVec(rightBack, bot)),       // bottom
+			physics.NewStaticSegment(geom.NewVec(max.X, top), geom.NewVec(rightBack, top)),     // top
+			physics.NewStaticSegment(geom.NewVec(max.X, bot), geom.NewVec(rightBack, bot)),     // bottom
 		},
 	}
 	return f
@@ -141,9 +141,24 @@ func (f *Field) PenaltySpot(side Side) geom.Vec {
 // CenterCircleRadius returns the centre-circle radius from the geometry.
 func (f *Field) CenterCircleRadius() float64 { return f.Geo.CenterCircleRadius }
 
-// GoalAreaBox returns the inner goal-area box as a ZoneRect for the positional rules.
+// GoalAreaBox returns the inner goal-area box as a ZoneRect for the positional rules, or
+// a degenerate (empty) rect when the goal area is disabled, so a cap on a non-existent
+// box is a no-op.
 func (f *Field) GoalAreaBox(side Side) ZoneRect {
+	if !f.Geo.HasGoalArea {
+		return ZoneRect{}
+	}
 	r := f.GoalArea(side)
+	return ZoneRect{Min: r.Min, Max: r.Max}
+}
+
+// PenaltyAreaBox returns the outer penalty box as a ZoneRect for the positional rules,
+// or a degenerate rect when the penalty area is disabled.
+func (f *Field) PenaltyAreaBox(side Side) ZoneRect {
+	if !f.Geo.HasPenaltyArea {
+		return ZoneRect{}
+	}
+	r := f.PenaltyArea(side)
 	return ZoneRect{Min: r.Min, Max: r.Max}
 }
 

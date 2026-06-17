@@ -5,116 +5,106 @@ import (
 	"phootball/internal/sim"
 )
 
-// AI is a headless, role-aware controller. The nearest teammate presses the ball,
-// the ball carrier drives at the enemy goal and shoots when lined up, the keeper
-// tracks its goal line and clears, and everyone else holds a ball-biased formation.
-// It produces the same Intent a human does, so the simulation cannot tell them apart.
+// AI is a headless, utility-based controller. Each tick it builds a read-only perception
+// of the match, derives a deterministic team plan (who presses, who supports), and then
+// scores and executes the best action for its player -- on the ball (shoot/pass/dribble/
+// clear/shield), off the ball (press/support/mark/hold shape), or in goal. It produces the
+// same Intent a human does, so the simulation cannot tell them apart, and it is fully
+// deterministic (no random source), so the server stays authoritative and tests replay.
 type AI struct {
-	ID          int
-	shootLatched bool // true once a shot has been asserted, until the urge clears (for tap shots)
+	ID     int
+	skill  Skill
+	params skillParams
+	tune   aiTuning
+
+	// Cross-tick state. None of it is shared between players, so coordination stays a pure
+	// function of the shared view (see teamplan.go).
+	cached         sim.Intent // last decided intent, reused during the reaction-delay window
+	nextDecision   uint64     // tick at which we re-decide (reaction latency)
+	haveCached     bool
+	charging       bool           // a shot charge is in progress (the charge controller's state)
+	shotTarget     geom.Vec       // committed aim point while charging
+	shotDesired    float64        // committed charge fraction to reach before releasing
+	shotAlignRad   float64        // committed base alignment tolerance (tight for shots/passes, wide for clears)
+	chargeStart    uint64         // tick the current charge began, for a give-up timeout
+	chargedAt      uint64         // tick the charge first reached target (0 = not yet), for aim-relax
+	passReceiver   sim.PlayerView // receiver of an in-progress pass, so its target tracks the runner
+	kickCooldown   uint64         // tick until which the player won't kick again (forces a real touch between kicks)
+	lastDribbleDir geom.Vec       // last dribble heading, for turn-rate limiting (ball retention)
+	lastOnBall     onBallKind     // last on-ball action, for decision hysteresis
+	runUntil       uint64         // tick until which, having just passed, the player makes a give-and-go run
+	recovering     bool           // hysteretic: facing the ball to scoop it back to the front (anti-jitter)
 }
 
-// NewAI creates an AI controller for the player with the given id.
-func NewAI(id int) *AI { return &AI{ID: id} }
+// NewAI creates an AI controller for the given player at the default skill tier.
+func NewAI(id int) *AI { return NewAISkill(id, DefaultSkill) }
 
-const (
-	aiShootRange   = 280 // distance to goal under which a lined-up carrier shoots
-	aiKeeperRush   = 4.0  // multiples of radius within which the keeper leaves its line
-	aiSupportBias  = 0.25 // how far off-position a supporter drifts toward the ball
-	aiArriveRadius = 6.0  // movement deadzone so players settle on their target
-)
+// NewAISkill creates an AI controller at a specific difficulty tier.
+func NewAISkill(id int, skill Skill) *AI {
+	return &AI{
+		ID:     id,
+		skill:  skill,
+		params: paramsForSkill(skill),
+		tune:   defaultAITuning(),
+	}
+}
 
 // Intent decides this player's action for the tick.
-func (a *AI) Intent(view *sim.Match) sim.Intent {
-	me := view.PlayerByID(a.ID)
-	if me == nil {
+func (a *AI) Intent(view sim.View) sim.Intent {
+	me, ok := view.Me(a.ID)
+	if !ok {
 		return sim.Intent{}
 	}
 
-	ballPos := view.Ball.Position
-	toBall := ballPos.Sub(me.Position)
-	gap := geom.Norm(toBall) - me.Radius() - view.Ball.Radius()
-	inControl := gap < me.Stats.TouchRange
-
-	enemyGoal := view.AttackingGoal(me.Team).Center
-	ownGoal := view.DefendingGoal(me.Team).Center
-
-	in := sim.Intent{Aim: ballPos}
-
-	switch me.Role {
-	case sim.RoleGoalkeeper:
-		guardY := clampFloat(ballPos.Y, view.Field.Min.Y+40, view.Field.Max.Y-40)
-		target := geom.NewVec(ownGoal.X+goalDepthOffset(me)*30, guardY)
-		if geom.Dist(me.Position, ballPos) < me.Radius()*aiKeeperRush {
-			target = ballPos
-		}
-		in.Move = target.Sub(me.Position)
-		in.Throttle = throttleToward(in.Move)
-		if inControl {
-			in.ShootHeld = true
-			in.Aim = geom.NewVec(view.Field.CenterSpot.X, ballPos.Y) // clear it up-field
-		}
-
-	default: // midfielder / striker
-		switch {
-		case inControl:
-			in.Aim = enemyGoal
-			in.Move = enemyGoal.Sub(me.Position)
-			in.Throttle = 1
-			if geom.Dist(me.Position, enemyGoal) < aiShootRange && facing(me.Facing, enemyGoal.Sub(me.Position)) {
-				in.ShootHeld = true
-			}
-		case view.ClosestToBall(me):
-			in.Move = toBall
-			in.Throttle = 1
-		default:
-			support := me.HomePosition.Add(ballPos.Sub(me.HomePosition).Scale(aiSupportBias))
-			in.Move = support.Sub(me.Position)
-			in.Throttle = throttleToward(in.Move)
-		}
+	// Reaction latency: only re-decide every reactTicks ticks, reusing the last intent in
+	// between. This models human reaction time and gives lower skill tiers a real handicap.
+	if a.haveCached && view.Tick() < a.nextDecision {
+		return a.cached
 	}
 
-	// Fire a single tap shot: hold the button for one tick, then release (the sim
-	// shoots on the release edge with minimal charge). Re-arms once the urge clears.
-	want := in.ShootHeld
-	in.ShootHeld = want && !a.shootLatched
-	a.shootLatched = want
+	p := perceive(view, me, a.dt(view))
+	plan := assignRoles(p, a.tune)
+
+	var in sim.Intent
+	switch {
+	case me.Role() == sim.RoleGoalkeeper:
+		in = a.keeper(p, plan)
+	case p.iControl:
+		in = a.onBall(p, plan)
+	case plan.presser == me.ID():
+		in = a.press(p, plan)
+	default:
+		in = a.offBall(p, plan)
+	}
+
+	in = a.applyMoveJitter(p, in)
+
+	a.cached = in
+	a.haveCached = true
+	step := a.params.reactTicks
+	if step < 1 {
+		step = 1
+	}
+	a.nextDecision = view.Tick() + uint64(step)
 	return in
 }
 
-// goalDepthOffset returns +1 if the player's own goal is on the left (so it stands
-// just in front of it, toward the pitch), -1 if on the right.
-func goalDepthOffset(p *sim.Player) float64 {
-	if p.Team.Side == sim.SideLeft {
-		return 1
+// dt estimates the simulation timestep from the match clock so ball prediction matches the
+// real tick rate (60Hz locally, configurable on the server). Falls back to 1/60 at start.
+func (a *AI) dt(view sim.View) float64 {
+	if view.Tick() > 0 && view.Clock() > 0 {
+		return view.Clock() / float64(view.Tick())
 	}
-	return -1
+	return 1.0 / 60.0
 }
 
-// throttleToward returns 0 inside a small deadzone so players settle on their
-// target, and full throttle otherwise.
-func throttleToward(move geom.Vec) float64 {
-	if geom.Norm(move) < aiArriveRadius {
-		return 0
+// applyMoveJitter adds a little skill-scaled wander to the movement direction, so players
+// don't track perfectly straight lines. It never touches the kick/trap buttons.
+func (a *AI) applyMoveJitter(p perception, in sim.Intent) sim.Intent {
+	if a.params.moveJitter <= 0 || in.Move == (sim.Intent{}).Move {
+		return in
 	}
-	return 1
-}
-
-// facing reports whether the player is aimed close enough at target to shoot.
-func facing(face, target geom.Vec) bool {
-	length := geom.Norm(target)
-	if length == 0 {
-		return true
-	}
-	return geom.Dot(face, target.Scale(1/length)) > 0.9
-}
-
-func clampFloat(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	j := a.params.moveJitter
+	in.Move = in.Move.Add(perp(geom.Unit(in.Move)).Scale(noise(a.ID, p.view.Tick(), 7^p.seed) * j))
+	return in
 }

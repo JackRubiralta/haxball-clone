@@ -18,7 +18,6 @@ import (
 
 	"phootball/internal/config"
 	"phootball/internal/control"
-	"phootball/internal/geom"
 	"phootball/internal/input"
 	"phootball/internal/logging"
 	"phootball/internal/menu"
@@ -28,7 +27,7 @@ import (
 // Game adapts the menu state machine to Ebiten.
 type Game struct{ app *menu.App }
 
-func (g *Game) Update() error            { return g.app.Update() }
+func (g *Game) Update() error             { return g.app.Update() }
 func (g *Game) Draw(screen *ebiten.Image) { g.app.Draw(screen) }
 
 // Layout renders at the display's physical pixel resolution so shapes stay crisp on
@@ -98,10 +97,12 @@ func buildApp(ctx context.Context, opts config.GameOptions) *menu.App {
 		m, ctrls := vsAI(opts, false)
 		return menu.NewPlayingApp(ctx, m, ctrls, false)
 	default:
+		// The lobby is where the pitch/rules are chosen, so seed only the seed and the
+		// AI difficulty from the CLI (field/size choices stay consistent in the lobby).
 		s := menu.DefaultSettings()
-		s.Field = opts.Config.Geometry.Name
 		s.TeamSize = opts.TeamSize
 		s.Seed = opts.Config.Seed
+		s.Difficulty = opts.Difficulty
 		return menu.NewApp(ctx, s)
 	}
 }
@@ -110,9 +111,8 @@ func buildApp(ctx context.Context, opts config.GameOptions) *menu.App {
 // blue team unless human is false.
 func vsAI(opts config.GameOptions, human bool) (*sim.Match, map[int]control.Controller) {
 	field := sim.NewFieldFromGeometry(opts.Config.Geometry)
-	field.AddObstacle(sim.NewConeObstacle(geom.NewVec(field.CenterSpot.X, field.Min.Y+120), 14))
-	field.AddObstacle(sim.NewConeObstacle(geom.NewVec(field.CenterSpot.X, field.Max.Y-120), 14))
 	m := sim.BuildMatchFromConfig(field, opts.TeamSize, opts.Config)
+	skill, _ := control.SkillFromString(opts.Difficulty)
 	ctrls := map[int]control.Controller{}
 	humanID := -1
 	if human && len(m.Teams[0].Players) > 0 {
@@ -125,7 +125,7 @@ func vsAI(opts config.GameOptions, human bool) (*sim.Match, map[int]control.Cont
 		if p.PlayerID == humanID {
 			ctrls[p.PlayerID] = input.NewHuman()
 		} else {
-			ctrls[p.PlayerID] = control.NewAI(p.PlayerID)
+			ctrls[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
 		}
 	}
 	return m, ctrls

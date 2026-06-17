@@ -77,6 +77,12 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			render.PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge)
 		}
 	}
+	render.ZoneIndicators(screen, g.field, config.Ruleset{
+		OffsideEnabled:       snap.OffsideEnabled,
+		OffsideFrac:          snap.OffsideFrac,
+		PenaltyBoxMaxPlayers: snap.PenaltyBoxMaxPlayers,
+		GoalAreaMaxPlayers:   snap.GoalAreaMaxPlayers,
+	})
 	render.ScoreboardWithClock(screen, snap.LeftName, snap.LeftScore, snap.RightName, snap.RightScore,
 		snap.ClockSeconds, snap.PhaseLabel)
 	if snap.InShootout {

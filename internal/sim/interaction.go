@@ -6,17 +6,17 @@ import (
 	"phootball/internal/geom"
 )
 
-// ballAngleDegrees returns the angle between the player's facing direction and the
-// direction from the player to the ball: 0 = dead in front, 180 = directly behind.
+// ballAngle returns the angle in radians between the player's facing direction and the
+// direction from the player to the ball: 0 = dead in front, pi = directly behind.
 // normal must be a unit vector pointing from the player to the ball.
-func ballAngleDegrees(normal, facing geom.Vec) float64 {
+func ballAngle(normal, facing geom.Vec) float64 {
 	cos := geom.Dot(normal, facing)
 	if cos > 1 {
 		cos = 1
 	} else if cos < -1 {
 		cos = -1
 	}
-	return math.Acos(cos) * 180 / math.Pi
+	return math.Acos(cos)
 }
 
 // handleBallToPlayerInteraction resolves everything between the ball and a player
@@ -45,7 +45,7 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 
 	overlap := (player.Radius() + ball.Radius()) - distance
 	if overlap > 0 {
-		angle := ballAngleDegrees(normal, player.Facing)
+		angle := ballAngle(normal, player.Facing)
 
 		// Push only the ball out of the overlap -- the player is never moved.
 		ball.Position = ball.Position.Add(normal.Scale(overlap))
@@ -62,21 +62,33 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			// soft falloff past it. Outside the cone the effective capture speed drops
 			// to the side/back floor, so the ball bounces off; trapping raises it back.
 			cone := 1.0
-			if over := angle - player.Stats.CaptureConeDegrees; over > 0 {
+			if over := angle - player.Stats.CaptureConeRadians; over > 0 {
 				if player.Stats.CaptureConeSoft <= 0 {
 					cone = 0
 				} else if cone = 1 - over/player.Stats.CaptureConeSoft; cone < 0 {
 					cone = 0
 				}
 			}
+			// Touch quality: the team possession charge scales how cleanly this contact is
+			// taken (published per-tick into player.touchCoef). A clean touch (the owning team
+			// receiving/carrying its built-up possession) absorbs at a higher speed and bounces
+			// off less; the conceding team's touch (an opponent blocking a shot) captures less
+			// and springs off harder, so the ball flies further. Coefficient 0 = baseline.
+			quality := player.touchCoef
+
 			side := player.Stats.CaptureSpeed.Back
 			captureSpeed := side + (player.Stats.CaptureSpeed.Eval(angle)-side)*cone
+			captureSpeed *= player.Stats.TouchQuality.captureMul(quality)
 			captureSpeed += player.Stats.TrapCaptureBonus * player.trapCharge
 
 			restitution := 0.0
 			if approachSpeed > captureSpeed {
-				// Bounce livelier the further off-front it is; a full trap never bounces.
-				restitution = player.Stats.Restitution.Eval(angle) * (1 + (1 - cone)) * (1 - player.trapCharge)
+				// Bounce livelier the further off-front it is; a held trap deadens the bounce
+				// (scaled by TrapRestitutionFactor, fully killing it before a full trap), and
+				// the touch quality scales it too -- a clean touch deadens it, a cold one livens it.
+				trapDeaden := 1 - math.Min(1, player.trapCharge*player.Stats.TrapRestitutionFactor)
+				restitution = player.Stats.Restitution.Eval(angle) * (1 + (1 - cone)) * trapDeaden
+				restitution *= player.Stats.TouchQuality.restitutionMul(quality)
 				if restitution > 0.95 {
 					restitution = 0.95
 				}
@@ -125,7 +137,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	} else if cos < -1 {
 		cos = -1
 	}
-	angle := math.Acos(cos) * 180 / math.Pi
+	angle := math.Acos(cos) // radians
 
 	// Possession grip (fresh touch weak, established possession firm) and the trap
 	// modifiers (a held trap strengthens and lengthens the centre-pull).
@@ -211,12 +223,17 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 			ball.Velocity = ball.Velocity.Sub(normal.Scale(hold))
 		}
 
-		// Control (tangential): roll the ball around to the front (0 deg), then damp
+		// Control (tangential): roll the ball around to the front (0 rad), then damp
 		// the sideways (orbital) velocity so it settles there instead of oscillating.
 		// Trapping strengthens this, snapping the ball to the front for a clean touch.
 		// Both fade with retention, so a ball that is decisively breaking away is neither
 		// steered toward the front nor slowed -- it keeps the orbital momentum it has.
-		strength := player.Stats.Control.Eval(angle) * (1 + player.Stats.TrapControlBonus*player.trapCharge)
+		// Control (roll-to-front) gets the trap bonus AND a small per-player possession boost
+		// (1 + PossessionControlBonus*possession), so a settled carrier rolls the ball to its
+		// front a touch more crisply -- a player boost, independent of the team charge.
+		strength := player.Stats.Control.Eval(angle) *
+			(1 + player.Stats.TrapControlBonus*player.trapCharge) *
+			(1 + player.Stats.PossessionControlBonus*player.possession)
 		tangential := player.Facing.Sub(normal.Scale(cos))
 		ball.Velocity = ball.Velocity.Add(tangential.Scale(strength * deltaTime * retention))
 
@@ -253,21 +270,32 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	}
 }
 
-// updatePossession builds a player's possession toward 1 while it controls the ball
-// within its front arc, and decays it otherwise. It writes only the player's
-// possession; the ball and the player body are untouched.
+// updatePossession maintains two related states from the ball's position relative to the
+// player, writing only the player (the ball and the body are untouched):
+//
+//   - possession: built toward 1 whenever the ball is TOUCHING the player anywhere (at any
+//     angle), decayed otherwise. This is the "ball at my feet" state -- it drives the grip
+//     on the ball (centre-pull and stickiness, so the ball sticks to the player) and pairs
+//     with the touch test in applyIntent for the carry slowdown. Its EFFECTS are unchanged;
+//     only its gate is the full touch range now, not the front arc.
+//   - control: built toward 1 while the ball is touching AND within the front
+//     PossessionArcRadians, decayed otherwise. This is the tighter "ball under control out
+//     in front" state. It is TRACKED but currently UNUSED -- no mechanic reads it yet.
 func updatePossession(ball *Ball, player *Player, deltaTime float64) {
 	toBall := ball.Position.Sub(player.Position)
 	dist := geom.Norm(toBall)
-	controlling := false
+	touching := false // ball in contact anywhere -> possession
+	inArc := false    // ball in contact within the front arc -> control
 	if dist > 0 {
 		gap := dist - player.Radius() - ball.Radius()
 		if gap < player.Stats.TouchRange {
-			angle := ballAngleDegrees(toBall.Scale(1/dist), player.Facing)
-			controlling = angle <= player.Stats.PossessionArcDegrees
+			touching = true
+			angle := ballAngle(toBall.Scale(1/dist), player.Facing)
+			inArc = angle <= player.Stats.PossessionArcRadians
 		}
 	}
-	if controlling {
+
+	if touching {
 		player.possession += deltaTime / player.Stats.PossessionBuildSeconds
 		if player.possession > 1 {
 			player.possession = 1
@@ -276,6 +304,18 @@ func updatePossession(ball *Ball, player *Player, deltaTime float64) {
 		player.possession -= deltaTime / player.Stats.PossessionReleaseSeconds
 		if player.possession < 0 {
 			player.possession = 0
+		}
+	}
+
+	if inArc {
+		player.control += deltaTime / player.Stats.PossessionBuildSeconds
+		if player.control > 1 {
+			player.control = 1
+		}
+	} else {
+		player.control -= deltaTime / player.Stats.PossessionReleaseSeconds
+		if player.control < 0 {
+			player.control = 0
 		}
 	}
 }
@@ -299,14 +339,21 @@ func shoot(player *Player, ball *Ball) bool {
 	angle := 0.0
 	if distance > 0 {
 		dir = toBall.Scale(1 / distance)
-		angle = ballAngleDegrees(dir, player.Facing)
+		angle = ballAngle(dir, player.Facing)
 	}
 
 	charge := NormShootCharge(player.shootCharge)
 	factor := player.Stats.MinShootFactor + (1-player.Stats.MinShootFactor)*charge
+	// Power follows the radial angle (front shots strongest); the LAUNCH DIRECTION is the
+	// radial nudged toward the facing by the aim assist, so the shot goes where the player
+	// aims when the ball is in the front cone and fires straight out (radial) at the side/back.
 	power := player.Stats.Shoot.Eval(angle) * factor
+	if distance > 0 {
+		dir = player.Stats.ShootDirection(dir, player.Facing)
+	}
 
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
+	player.control = 0
 	return true
 }

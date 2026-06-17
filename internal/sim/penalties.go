@@ -69,6 +69,10 @@ func (m *Match) beginShootout() {
 	m.shootout.taker = m.shootout.First
 	m.State.Phase = PhasePenalties
 	m.State.PhaseStart = m.Clock
+	// The shootout pipeline never advances the team possession charge, so make sure no stale
+	// charge from open play leaks into a penalty contact (resetTeamPossession also zeroes every
+	// player's published per-tick coefficient).
+	m.resetTeamPossession()
 	m.setupKick()
 	if m.shootout != nil {
 		m.shootout.kickState = kickReady

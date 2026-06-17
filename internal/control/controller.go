@@ -6,9 +6,10 @@ package control
 
 import "phootball/internal/sim"
 
-// Controller produces one Intent per tick for a single player. view exposes the
-// current match state so an AI can react to it; a human controller ignores it and
-// reads the keyboard and mouse instead.
+// Controller produces one Intent per tick for a single player. view is the read-only,
+// game-provided window onto the match: an AI reads it to react, a human controller
+// ignores it and reads the keyboard and mouse instead. A controller can only ever affect
+// the game through the Intent it returns -- it cannot reach or mutate raw sim state.
 type Controller interface {
-	Intent(view *sim.Match) sim.Intent
+	Intent(view sim.View) sim.Intent
 }

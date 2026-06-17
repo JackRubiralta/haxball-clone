@@ -60,13 +60,14 @@ type Ruleset struct {
 	GoldenGoalSeconds float64        // sudden-death time limit (0 = until a goal is scored)
 	Penalties         PenaltyRules
 
-	// Positional rules (off by default).
-	OffsideEnabled bool            // anti-camp: hold a player behind the offside line
-	OffsideFrac    float64         // line position as a fraction of the pitch from a team's own goal
-	GKBoxEnabled   bool            // limit how many of a team's players may sit in its goal area
-	GKBoxMax       int             // max players allowed in the goal area at once
-	Enforcement    EnforcementMode // how violations are corrected
-	EvictGrace     float64         // seconds of tolerance before a warn-evict clamp
+	// Positional rules (off by default). The box caps are per box, counting players of
+	// the same team; 0 means that box has no limit.
+	OffsideEnabled       bool            // anti-camp: hold a player behind the offside line
+	OffsideFrac          float64         // line position as a fraction of the pitch from a team's own goal
+	PenaltyBoxMaxPlayers int             // max same-team players allowed in the penalty area (0 = off)
+	GoalAreaMaxPlayers   int             // max same-team players allowed in the goal area (0 = off)
+	Enforcement          EnforcementMode // how violations are corrected
+	EvictGrace           float64         // seconds of tolerance before a warn-evict clamp
 }
 
 // DefaultRuleset returns the friendly, never-ending ruleset that matches the original

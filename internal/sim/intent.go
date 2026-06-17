@@ -12,4 +12,9 @@ type Intent struct {
 	Aim       geom.Vec // world point to face (cursor for a human, ball or goal for AI)
 	ShootHeld bool     // shoot button currently held; the sim charges while held and fires on release
 	Trap      bool     // trap ("good touch") button currently held; the sim builds trap charge while held
+	// CancelCharge cancels an in-progress shot charge this tick: the charge is dropped and
+	// the player will NOT fire when the shoot button is released. A human sets it on the
+	// rising edge of the cancel (right-click); the AI never sets it, so its own trap-while-
+	// charging recover move can never be mistaken for a cancel.
+	CancelCharge bool
 }

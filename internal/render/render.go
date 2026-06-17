@@ -16,6 +16,7 @@ import (
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/opentype"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 	"phootball/internal/sim"
 )
@@ -43,6 +44,8 @@ var (
 	coneInner    = color.RGBA{252, 206, 130, 255}
 	hudColor     = color.RGBA{0, 0, 0, 110}
 	bannerColor  = color.RGBA{0, 0, 0, 165}
+	offsideLine  = color.RGBA{235, 240, 235, 105} // translucent white anti-camp line
+	boxLimitFill = color.RGBA{235, 240, 235, 28}  // faint wash over a player-capped box
 )
 
 // Line widths (world units). The perimeter -- the boundary plus the goal line that
@@ -241,6 +244,23 @@ func (u UI) Text(s string, x, y float64) { u.c.text(s, x, y, 0, 0) }
 // TextCentered draws text centred horizontally on cx.
 func (u UI) TextCentered(s string, cx, y float64) { u.c.text(s, cx, y, -len(s)*3, 0) }
 
+// TextRight draws text ending near x (rough right alignment for the debug font).
+func (u UI) TextRight(s string, x, y float64) { u.c.text(s, x, y, -len(s)*6, 0) }
+
+// Panel draws a filled, outlined rounded-feel rectangle for a menu surface.
+func (u UI) Panel(x, y, w, h float64, fill, border color.Color) {
+	u.c.fillRect(x, y, w, h, fill)
+	u.c.strokeRect(x, y, w, h, 2, border)
+}
+
+// Line draws a line in UI coordinates.
+func (u UI) Line(x1, y1, x2, y2, w float64, clr color.Color) { u.c.line(x1, y1, x2, y2, w, clr) }
+
+// Title draws large, crisp vector text centred on cx (using the jersey font).
+func (u UI) Title(s string, cx, y, sizeWorld float64, clr color.Color) {
+	u.c.number(s, cx, y, sizeWorld, clr)
+}
+
 // Match draws a complete local match.
 func Match(screen *ebiten.Image, m *sim.Match) {
 	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
@@ -249,6 +269,7 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
 			sim.NormShootCharge(p.ShootCharge()), p.TrapCharge())
 	}
+	drawPossessionBarsAll(screen, m)
 	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
 		m.ClockSeconds(), m.PhaseLabel())
 	if m.InShootout() {
@@ -266,13 +287,47 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 	}
 }
 
+// ZoneIndicators draws the positional-rule indicators (offside lines, capped-box wash)
+// over an already-drawn field. The network client calls it from a ruleset rebuilt from
+// the snapshot, so the lines show on a remote client too.
+func ZoneIndicators(screen *ebiten.Image, f *sim.Field, r config.Ruleset) {
+	drawZoneIndicators(newCanvas(screen), f, r)
+}
+
+// drawZoneIndicators draws the offside line(s) as translucent white verticals and a
+// faint wash over any player-capped box, so the limits are always visible.
+func drawZoneIndicators(c canvas, f *sim.Field, r config.Ruleset) {
+	if r.OffsideEnabled {
+		frac := r.OffsideFrac
+		if frac <= 0 {
+			frac = 2.0 / 3.0
+		}
+		lx := f.OffsideLineX(sim.SideLeft, frac)
+		rx := f.OffsideLineX(sim.SideRight, frac)
+		c.line(lx, f.Min.Y, lx, f.Max.Y, markingWidth, offsideLine)
+		c.line(rx, f.Min.Y, rx, f.Max.Y, markingWidth, offsideLine)
+	}
+	if r.GoalAreaMaxPlayers > 0 && f.Geo.HasGoalArea {
+		for _, side := range [2]sim.Side{sim.SideLeft, sim.SideRight} {
+			b := f.GoalArea(side)
+			c.fillRect(b.Min.X, b.Min.Y, b.Max.X-b.Min.X, b.Max.Y-b.Min.Y, boxLimitFill)
+		}
+	}
+	if r.PenaltyBoxMaxPlayers > 0 && f.Geo.HasPenaltyArea {
+		for _, side := range [2]sim.Side{sim.SideLeft, sim.SideRight} {
+			b := f.PenaltyArea(side)
+			c.fillRect(b.Min.X, b.Min.Y, b.Max.X-b.Min.X, b.Max.Y-b.Min.Y, boxLimitFill)
+		}
+	}
+}
+
 // Frame draws a complete local match through a camera. The pitch, ball, and players go
 // through the camera transform (pan/zoom); the HUD is drawn fit-to-window so it never
 // pans or zooms. ScreenToWorld inverts the camera transform, so aim stays correct at any
 // zoom or pan.
-func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera) {
+func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 	worldW, worldH = m.Field.Geo.ScreenWidth, m.Field.Geo.ScreenHeight
-	cam.prepare(worldW, worldH, m)
+	cam.prepare(worldW, worldH, m, dt)
 
 	camActive, camCenter, camZoom = true, cam.center, cam.Zoom
 	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
@@ -281,6 +336,8 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera) {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
 			sim.NormShootCharge(p.ShootCharge()), p.TrapCharge())
 	}
+	drawPossessionBarsAll(screen, m)
+	drawZoneIndicators(newCanvas(screen), m.Field, m.Rules)
 	camActive = false
 
 	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
@@ -407,19 +464,22 @@ func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA)
 	// Penalty boxes and goal areas, drawn open on the goal-line side (three sides) so
 	// their goal-line edge does not double up on the boundary near each goal. All sizes
 	// come from the geometry -- the single source of truth the simulation uses too -- so
-	// the markings always match the pitch.
-	penaltyH := f.Geo.PenaltyWidth
+	// the markings always match the pitch. A box toggled off in the geometry is not drawn
+	// (and the simulation does not enforce it either).
 	penaltyD := f.Geo.PenaltyDepth
-	areaH := f.Geo.GoalAreaWidth
 	areaD := f.Geo.GoalAreaDepth
-	c.openBox(x, cy, penaltyD, penaltyH, markingWidth, lineColor)
-	c.openBox(x+w, cy, -penaltyD, penaltyH, markingWidth, lineColor)
-	c.openBox(x, cy, areaD, areaH, markingWidth, lineColor)
-	c.openBox(x+w, cy, -areaD, areaH, markingWidth, lineColor)
-	// Penalty spot: midway between the goal-area edge and the penalty-area edge.
-	spotD := (areaD + penaltyD) / 2
-	c.fillCircle(x+spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
-	c.fillCircle(x+w-spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
+	if f.Geo.HasPenaltyArea {
+		c.openBox(x, cy, penaltyD, f.Geo.PenaltyWidth, markingWidth, lineColor)
+		c.openBox(x+w, cy, -penaltyD, f.Geo.PenaltyWidth, markingWidth, lineColor)
+		// Penalty spot: midway between the goal-area edge and the penalty-area edge.
+		spotD := (areaD + penaltyD) / 2
+		c.fillCircle(x+spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
+		c.fillCircle(x+w-spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
+	}
+	if f.Geo.HasGoalArea {
+		c.openBox(x, cy, areaD, f.Geo.GoalAreaWidth, markingWidth, lineColor)
+		c.openBox(x+w, cy, -areaD, f.Geo.GoalAreaWidth, markingWidth, lineColor)
+	}
 
 	drawGoal(c, f.LeftGoal, f.GoalWidth, leftColor)
 	drawGoal(c, f.RightGoal, f.GoalWidth, rightColor)
@@ -560,8 +620,8 @@ func drawTrapAura(c canvas, pos geom.Vec, radius, trap float64, body color.RGBA)
 	// bright blob. The whole gradient scales with the trap charge, so it fades in as the
 	// charge builds instead of popping in, and the reach grows with the charge too.
 	const bands = 24
-	const innerAlpha = 75.0 // opacity at the body (inner edge), at full charge
-	const outerAlpha = 10.0 // opacity at the outer rim, at full charge
+	const innerAlpha = 75.0                 // opacity at the body (inner edge), at full charge
+	const outerAlpha = 10.0                 // opacity at the outer rim, at full charge
 	reach := 4 + 16*trap                    // how far the glow reaches past the body, grows with charge
 	width := reach / float64(bands-1) * 1.1 // thin bands with a hair of overlap so they meet seamlessly
 	for i := 0; i < bands; i++ {
@@ -573,6 +633,54 @@ func drawTrapAura(c canvas, pos geom.Vec, radius, trap float64, body color.RGBA)
 		}
 		c.strokeCircle(pos.X, pos.Y, r, width, color.RGBA{body.R, body.G, body.B, a})
 	}
+}
+
+// ShowPossessionBars toggles the on-screen test bars above each player (player possession +
+// team possession charge). On by default; flip to false to hide them.
+var ShowPossessionBars = true
+
+// drawPossessionBarsAll draws the per-player test bars over an already-drawn match: the
+// player's own possession and that player's team possession charge (the touch coefficient).
+func drawPossessionBarsAll(screen *ebiten.Image, m *sim.Match) {
+	if !ShowPossessionBars {
+		return
+	}
+	c := newCanvas(screen)
+	for _, p := range m.Players {
+		drawPossessionBars(c, p.Position, p.Radius(),
+			p.Possession(), m.PossessionCharge(p.Team.Side), p.TouchCoefficient())
+	}
+}
+
+// drawPossessionBars draws two small test bars above a player: the TOP bar is the player's own
+// possession (0..1, white), the BOTTOM bar is the team possession charge (0..1) tinted by the
+// touch coefficient -- green while the team is boosted (positive coefficient), red while it is
+// the conceding side (negative). For tuning/testing visibility of the possession mechanic.
+func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, teamCharge, coef float64) {
+	const w, h, gap = 26.0, 3.0, 1.5
+	clamp01 := func(v float64) float64 {
+		if v < 0 {
+			return 0
+		}
+		if v > 1 {
+			return 1
+		}
+		return v
+	}
+	x := pos.X - w/2
+	y := pos.Y - radius - 13
+	bg := color.RGBA{0, 0, 0, 130}
+
+	c.fillRect(x, y, w, h, bg)
+	c.fillRect(x, y, w*clamp01(playerPoss), h, color.RGBA{240, 240, 240, 225})
+
+	y2 := y + h + gap
+	c.fillRect(x, y2, w, h, bg)
+	fill := color.RGBA{90, 220, 100, 235} // green: this team is boosted
+	if coef < 0 {
+		fill = color.RGBA{225, 80, 80, 235} // red: this team is the conceding side
+	}
+	c.fillRect(x, y2, w*clamp01(teamCharge), h, fill)
 }
 
 // drawShootCharge draws a radial power gauge around a player that fills from the top

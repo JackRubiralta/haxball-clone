@@ -1,6 +1,8 @@
 package sim
 
 import (
+	"math"
+
 	"phootball/internal/geom"
 	"phootball/internal/physics"
 )
@@ -31,12 +33,16 @@ type Player struct {
 	HomePosition geom.Vec
 	WantsKick    bool
 
-	possession    float64 // 0..1 possession build-up; scales the grip on the ball
-	shootCharge   float64 // seconds the shoot button has been held this charge
-	trapCharge    float64 // 0..1 trap charge; built while the trap button is held
-	shootHeldPrev bool    // shoot-button state last tick, for release-edge detection
-	trapHeldPrev  bool    // trap-button state last tick, for the trap sound's rising edge
-	evictDwell    float64 // seconds spent violating a positional rule (warn-evict grace)
+	possession    float64  // 0..1 build-up while the ball is touching anywhere; scales the grip on the ball
+	control       float64  // 0..1 build-up while the ball is touching within the front arc; tracked but unused
+	touchCoef     float64  // -1..1 touch-quality coefficient this tick from the team possession charge
+	shootCharge   float64  // seconds the shoot button has been held this charge
+	trapCharge    float64  // 0..1 trap charge; built while the trap button is held
+	shootHeldPrev bool     // shoot-button state last tick, for release-edge detection
+	shootCanceled bool     // current shoot charge was canceled (by a trap-tap); suppress the release-edge kick
+	trapHeldPrev  bool     // trap-button state last tick, for the trap sound's rising edge
+	evictDwell    float64  // seconds spent violating a positional rule (warn-evict grace)
+	moveHeading   geom.Vec // current steering direction; rotates toward input at TurnRate
 }
 
 // Charge timing constants (seconds), shared by the sim and the renderer's gauges.
@@ -52,8 +58,18 @@ func (p *Player) ShootCharge() float64 { return p.shootCharge }
 // TrapCharge returns the current 0..1 trap charge.
 func (p *Player) TrapCharge() float64 { return p.trapCharge }
 
-// Possession returns the player's current 0..1 possession build-up.
+// Possession returns the player's current 0..1 possession build-up (ball touching anywhere).
 func (p *Player) Possession() float64 { return p.possession }
+
+// Control returns the player's current 0..1 control build-up (ball touching within the
+// front arc). It is tracked but not yet used by any mechanic.
+func (p *Player) Control() float64 { return p.control }
+
+// TouchCoefficient returns the player's current -1..1 touch-quality coefficient this tick,
+// derived from the team possession charge: positive (its team owns the charge) is a cleaner
+// touch -- higher capture, lower bounce; negative (the other team owns it) is a worse touch
+// so the ball flies off; 0 is the baseline. Exposed for the on-screen test bars.
+func (p *Player) TouchCoefficient() float64 { return p.touchCoef }
 
 // NormShootCharge maps held seconds to a 0..1 charge fraction.
 func NormShootCharge(seconds float64) float64 {
@@ -94,10 +110,40 @@ func (p *Player) Move(direction geom.Vec, throttle, deltaTime float64) {
 		throttle = 1
 	}
 	p.Acceleration = geom.NewVec(0, 0)
-	if length := geom.Norm(direction); length > 0 {
-		unit := direction.Scale(1 / length)
-		p.Acceleration = unit.Scale(p.Stats.Acceleration * throttle)
+	length := geom.Norm(direction)
+	if length == 0 {
+		return
 	}
+	desired := direction.Scale(1 / length)
+	// Rate-limit how fast the movement heading can swing, so a player cannot redirect
+	// instantly -- a hard reverse curves around instead of snapping. A fresh heading (or
+	// no turn limit) snaps straight to the input.
+	if p.Stats.TurnRate <= 0 || geom.Norm(p.moveHeading) == 0 {
+		p.moveHeading = desired
+	} else {
+		p.moveHeading = rotateToward(p.moveHeading, desired, p.Stats.TurnRate*deltaTime)
+	}
+	p.Acceleration = p.moveHeading.Scale(p.Stats.Acceleration * throttle)
+}
+
+// rotateToward rotates the unit vector from toward the unit vector to by at most maxRad
+// radians, snapping to to once within range. It picks the shorter direction via the
+// 2D cross product's sign.
+func rotateToward(from, to geom.Vec, maxRad float64) geom.Vec {
+	dot := geom.Dot(from, to)
+	if dot > 1 {
+		dot = 1
+	} else if dot < -1 {
+		dot = -1
+	}
+	if angle := math.Acos(dot); angle <= maxRad {
+		return to
+	}
+	step := maxRad
+	if from.X*to.Y-from.Y*to.X < 0 {
+		step = -maxRad
+	}
+	return from.Rotate(step, geom.Vec{})
 }
 
 // FaceTowards points the player toward the given point (the cursor for a human, the
@@ -110,7 +156,8 @@ func (p *Player) FaceTowards(point geom.Vec) {
 }
 
 // Obstacle is a fixed, immovable shape (such as a cone) that the ball and players
-// bounce off but never move.
+// bounce off but never move. No mode places obstacles today, but the capability is kept
+// so a field can add them.
 type Obstacle struct {
 	*physics.Body
 }

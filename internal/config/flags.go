@@ -57,7 +57,9 @@ type geomFlags struct {
 	field        string
 	playW, playH float64
 	goalW, goalD float64
+	penArea      bool
 	penW, penD   float64
+	goalArea     bool
 	gaW, gaD     float64
 }
 
@@ -68,42 +70,36 @@ func bindGeometry(fs *flag.FlagSet) *geomFlags {
 	fs.Float64Var(&gf.playH, "play-height", 0, "override play-area height (0 keeps the preset)")
 	fs.Float64Var(&gf.goalW, "goal-width", 0, "override goal mouth width (0 keeps the preset)")
 	fs.Float64Var(&gf.goalD, "goal-depth", 0, "override goal pocket depth (0 keeps the preset)")
+	fs.BoolVar(&gf.penArea, "penalty-area", true, "draw and enforce the penalty area")
 	fs.Float64Var(&gf.penW, "penalty-width", 0, "override penalty-area width (0 keeps the preset)")
 	fs.Float64Var(&gf.penD, "penalty-depth", 0, "override penalty-area depth (0 keeps the preset)")
+	fs.BoolVar(&gf.goalArea, "goal-area", true, "draw and enforce the goal area")
 	fs.Float64Var(&gf.gaW, "goalarea-width", 0, "override goal-area width (0 keeps the preset)")
 	fs.Float64Var(&gf.gaD, "goalarea-depth", 0, "override goal-area depth (0 keeps the preset)")
 	return gf
 }
 
-func (gf *geomFlags) geometry() (Geometry, error) {
-	g, ok := PresetByName(gf.field)
-	if !ok {
-		return Geometry{}, usagef("unknown field preset %q (want standard, small, or large)", gf.field)
-	}
-	overrides := []struct {
+// fill writes the geometry flags into a MatchSetup (the single mapping).
+func (gf *geomFlags) fill(s *MatchSetup) error {
+	for _, o := range []struct {
 		name string
 		v    float64
-		dst  *float64
 	}{
-		{"play-width", gf.playW, &g.PlayWidth},
-		{"play-height", gf.playH, &g.PlayHeight},
-		{"goal-width", gf.goalW, &g.GoalMouthWidth},
-		{"goal-depth", gf.goalD, &g.GoalPocketDepth},
-		{"penalty-width", gf.penW, &g.PenaltyWidth},
-		{"penalty-depth", gf.penD, &g.PenaltyDepth},
-		{"goalarea-width", gf.gaW, &g.GoalAreaWidth},
-		{"goalarea-depth", gf.gaD, &g.GoalAreaDepth},
-	}
-	for _, o := range overrides {
+		{"play-width", gf.playW}, {"play-height", gf.playH},
+		{"goal-width", gf.goalW}, {"goal-depth", gf.goalD},
+		{"penalty-width", gf.penW}, {"penalty-depth", gf.penD},
+		{"goalarea-width", gf.gaW}, {"goalarea-depth", gf.gaD},
+	} {
 		if o.v < 0 {
-			return Geometry{}, usagef("%s must be positive", o.name)
-		}
-		if o.v > 0 {
-			*o.dst = o.v
+			return usagef("%s must be positive", o.name)
 		}
 	}
-	// Normalize grows the logical surface to fit if an override enlarged the play area.
-	return g.Normalize(), nil
+	s.Field = gf.field
+	s.PlayWidth, s.PlayHeight = gf.playW, gf.playH
+	s.GoalWidth, s.GoalDepth = gf.goalW, gf.goalD
+	s.PenaltyArea, s.PenaltyWidth, s.PenaltyDepth = gf.penArea, gf.penW, gf.penD
+	s.GoalArea, s.GoalAreaWidth, s.GoalAreaDepth = gf.goalArea, gf.gaW, gf.gaD
+	return nil
 }
 
 // ruleFlags collects the match-mode flags shared by the game and server.
@@ -116,6 +112,8 @@ type ruleFlags struct {
 	penalties   bool
 	directPens  bool
 	offsideFrac float64
+	penBoxMax   int
+	goalAreaMax int
 	gkBoxMax    int
 	zoneEnforce string
 }
@@ -130,73 +128,58 @@ func bindRules(fs *flag.FlagSet) *ruleFlags {
 	fs.BoolVar(&rf.penalties, "penalties", false, "if a timed match is drawn, decide it on penalties")
 	fs.BoolVar(&rf.directPens, "direct-pens", false, "if a timed match is drawn, go straight to penalties")
 	fs.Float64Var(&rf.offsideFrac, "offside-frac", 0, "anti-camp line as a fraction of the pitch from a team's own goal (0 = off, e.g. 0.667)")
-	fs.IntVar(&rf.gkBoxMax, "gk-box-max", 0, "max players allowed in a team's goal area at once (0 = off)")
+	fs.IntVar(&rf.penBoxMax, "penalty-box-max", 0, "max same-team players allowed in the penalty area (0 = off)")
+	fs.IntVar(&rf.goalAreaMax, "goalarea-box-max", 0, "max same-team players allowed in the goal area (0 = off)")
+	fs.IntVar(&rf.gkBoxMax, "gk-box-max", 0, "deprecated alias for -goalarea-box-max")
 	fs.StringVar(&rf.zoneEnforce, "zone-enforce", "clamp", "positional-rule enforcement: clamp or evict")
 	return rf
 }
 
-func (rf *ruleFlags) ruleset() (Ruleset, error) {
+// fill writes the rule flags into a MatchSetup (the single mapping).
+func (rf *ruleFlags) fill(s *MatchSetup) error {
 	if rf.minutes < 0 {
-		return Ruleset{}, usagef("minutes must not be negative")
+		return usagef("minutes must not be negative")
 	}
 	if rf.winScore < 1 {
-		return Ruleset{}, usagef("win-score must be at least 1")
+		return usagef("win-score must be at least 1")
 	}
-	r, err := RulesetForMode(rf.mode, rf.minutes, rf.winScore)
-	if err != nil {
-		return Ruleset{}, usagef("%v", err)
-	}
-
-	// Draw-decider toggles assemble the OnDraw chain in football order. -direct-pens
-	// forces a straight shootout; otherwise any set toggle replaces the chain.
-	switch {
-	case rf.directPens:
-		r.OnDraw = []Continuation{ContinuePenalties}
-		r.Penalties = DefaultPenalties()
-	case rf.extraTime || rf.goldenGoal || rf.penalties:
-		r.OnDraw = nil
-		if rf.extraTime {
-			r.OnDraw = append(r.OnDraw, ContinueExtraTime)
-			if r.ExtraTimeSeconds == 0 {
-				r.ExtraTimeSeconds = (rf.minutes * 60) / 3
-			}
-		}
-		if rf.goldenGoal {
-			r.OnDraw = append(r.OnDraw, ContinueGoldenGoal)
-		}
-		if rf.penalties {
-			r.OnDraw = append(r.OnDraw, ContinuePenalties)
-			r.Penalties = DefaultPenalties()
-		}
-	}
-
-	// Positional rules.
 	if rf.offsideFrac < 0 || rf.offsideFrac > 1 {
-		return Ruleset{}, usagef("offside-frac must be between 0 and 1")
+		return usagef("offside-frac must be between 0 and 1")
 	}
-	if rf.gkBoxMax < 0 {
-		return Ruleset{}, usagef("gk-box-max must not be negative")
-	}
-	if rf.offsideFrac > 0 {
-		r.OffsideEnabled = true
-		r.OffsideFrac = rf.offsideFrac
-	}
-	if rf.gkBoxMax > 0 {
-		r.GKBoxEnabled = true
-		r.GKBoxMax = rf.gkBoxMax
+	if rf.penBoxMax < 0 || rf.goalAreaMax < 0 || rf.gkBoxMax < 0 {
+		return usagef("box-max players must not be negative")
 	}
 	switch strings.ToLower(strings.TrimSpace(rf.zoneEnforce)) {
 	case "", "clamp":
-		r.Enforcement = EnforceClamp
+		s.Enforcement = EnforceClamp
 	case "evict":
-		r.Enforcement = EnforceWarnEvict
-		if r.EvictGrace == 0 {
-			r.EvictGrace = 0.5
-		}
+		s.Enforcement = EnforceWarnEvict
+		s.EvictGrace = 0.5
 	default:
-		return Ruleset{}, usagef("unknown zone-enforce %q (want clamp or evict)", rf.zoneEnforce)
+		return usagef("unknown zone-enforce %q (want clamp or evict)", rf.zoneEnforce)
 	}
-	return r, nil
+	s.Mode, s.Minutes, s.WinScore = rf.mode, rf.minutes, rf.winScore
+	s.ExtraTime, s.GoldenGoal, s.Penalties, s.DirectPens = rf.extraTime, rf.goldenGoal, rf.penalties, rf.directPens
+	if rf.offsideFrac > 0 {
+		s.Offside, s.OffsideFrac = true, rf.offsideFrac
+	}
+	s.PenaltyBoxMax = rf.penBoxMax
+	s.GoalAreaMax = rf.goalAreaMax
+	if s.GoalAreaMax == 0 && rf.gkBoxMax > 0 {
+		s.GoalAreaMax = rf.gkBoxMax // deprecated -gk-box-max alias
+	}
+	return nil
+}
+
+// validDifficulty reports whether s names a known AI difficulty tier (matching
+// control.SkillFromString). Empty means "use the default tier".
+func validDifficulty(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "default", "easy", "normal", "medium", "hard", "pro", "impossible", "perfect":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseError(err error) error {
@@ -208,17 +191,18 @@ func parseError(err error) error {
 
 // GameOptions is the parsed configuration for the local game command.
 type GameOptions struct {
-	Config   Config
-	Logging  Logging
-	Version  bool
-	TeamSize int
-	AIBoth   bool
-	Solo     bool
-	Duo      bool
-	Zoom     float64
-	Camera   string
-	Mute     bool
-	Volume   float64
+	Config     Config
+	Logging    Logging
+	Version    bool
+	TeamSize   int
+	AIBoth     bool
+	Solo       bool
+	Duo        bool
+	Zoom       float64
+	Camera     string
+	Mute       bool
+	Volume     float64
+	Difficulty string // AI difficulty tier name (see control.SkillFromString)
 }
 
 // ParseGame parses the local game command's flags.
@@ -233,10 +217,11 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	aiBoth := fs.Bool("ai-both", false, "AI controls both teams (spectate)")
 	solo := fs.Bool("solo", false, "single human player + ball only, no opponents (for testing)")
 	duo := fs.Bool("duo", false, "two players you switch control of with 1 and 2 (for testing)")
-	zoom := fs.Float64("zoom", 1, "camera zoom (used with -camera ball; mouse wheel adjusts in game)")
-	camera := fs.String("camera", "fit", "camera mode: fit (whole pitch) or ball (follow)")
+	zoom := fs.Float64("zoom", 2, "camera zoom (used with -camera ball/player; mouse wheel adjusts in game)")
+	camera := fs.String("camera", "ball", "camera mode: ball (follow), player (follow you), or fit (whole pitch)")
 	mute := fs.Bool("mute", false, "silence all sound")
 	volume := fs.Float64("volume", 0.8, "master volume 0..1")
+	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, or impossible")
 	if err := fs.Parse(args); err != nil {
 		return GameOptions{}, parseError(err)
 	}
@@ -253,47 +238,51 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 		return GameOptions{}, usagef("zoom must be positive")
 	}
 	switch *camera {
-	case "fit", "ball", "follow":
+	case "fit", "ball", "follow", "player", "active":
 	default:
-		return GameOptions{}, usagef("unknown camera %q (want fit or ball)", *camera)
+		return GameOptions{}, usagef("unknown camera %q (want ball, player, or fit)", *camera)
 	}
 	if *volume < 0 || *volume > 1 {
 		return GameOptions{}, usagef("volume must be between 0 and 1")
 	}
-	g, err := gf.geometry()
-	if err != nil {
+	if !validDifficulty(*difficulty) {
+		return GameOptions{}, usagef("unknown difficulty %q (want easy, normal, hard, or impossible)", *difficulty)
+	}
+	setup := MatchSetup{TeamSize: *teamSize, Seed: *seed}
+	if err := gf.fill(&setup); err != nil {
 		return GameOptions{}, err
 	}
-	r, err := rf.ruleset()
-	if err != nil {
+	if err := rf.fill(&setup); err != nil {
 		return GameOptions{}, err
 	}
-	cfg := Default()
-	cfg.Geometry = g
-	cfg.Ruleset = r
-	cfg.Seed = *seed
+	cfg, err := setup.Build()
+	if err != nil {
+		return GameOptions{}, usagef("%v", err)
+	}
 	return GameOptions{
-		Config:   cfg,
-		Logging:  *logging,
-		TeamSize: *teamSize,
-		AIBoth:   *aiBoth,
-		Solo:     *solo,
-		Duo:      *duo,
-		Zoom:     *zoom,
-		Camera:   *camera,
-		Mute:     *mute,
-		Volume:   *volume,
+		Config:     cfg,
+		Logging:    *logging,
+		TeamSize:   *teamSize,
+		AIBoth:     *aiBoth,
+		Solo:       *solo,
+		Duo:        *duo,
+		Zoom:       *zoom,
+		Camera:     *camera,
+		Mute:       *mute,
+		Volume:     *volume,
+		Difficulty: *difficulty,
 	}, nil
 }
 
 // ServerOptions is the parsed configuration for the headless server command.
 type ServerOptions struct {
-	Config   Config
-	Logging  Logging
-	Version  bool
-	Addr     string
-	TeamSize int
-	TickRate float64
+	Config     Config
+	Logging    Logging
+	Version    bool
+	Addr       string
+	TeamSize   int
+	TickRate   float64
+	Difficulty string // AI difficulty tier name (see control.SkillFromString)
 }
 
 // ParseServer parses the server command's flags.
@@ -307,6 +296,7 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	addr := fs.String("addr", ":4000", "listen address")
 	teamSize := fs.Int("team-size", 3, "players per team")
 	tickRate := fs.Float64("tick-rate", 60, "simulation ticks per second (1..240)")
+	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, or impossible")
 	if err := fs.Parse(args); err != nil {
 		return ServerOptions{}, parseError(err)
 	}
@@ -325,24 +315,27 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	if strings.TrimSpace(*addr) == "" {
 		return ServerOptions{}, usagef("addr must not be empty")
 	}
-	g, err := gf.geometry()
-	if err != nil {
+	if !validDifficulty(*difficulty) {
+		return ServerOptions{}, usagef("unknown difficulty %q (want easy, normal, hard, or impossible)", *difficulty)
+	}
+	setup := MatchSetup{TeamSize: *teamSize, Seed: *seed}
+	if err := gf.fill(&setup); err != nil {
 		return ServerOptions{}, err
 	}
-	r, err := rf.ruleset()
-	if err != nil {
+	if err := rf.fill(&setup); err != nil {
 		return ServerOptions{}, err
 	}
-	cfg := Default()
-	cfg.Geometry = g
-	cfg.Ruleset = r
-	cfg.Seed = *seed
+	cfg, err := setup.Build()
+	if err != nil {
+		return ServerOptions{}, usagef("%v", err)
+	}
 	return ServerOptions{
-		Config:   cfg,
-		Logging:  *logging,
-		Addr:     *addr,
-		TeamSize: *teamSize,
-		TickRate: *tickRate,
+		Config:     cfg,
+		Logging:    *logging,
+		Addr:       *addr,
+		TeamSize:   *teamSize,
+		TickRate:   *tickRate,
+		Difficulty: *difficulty,
 	}, nil
 }
 
