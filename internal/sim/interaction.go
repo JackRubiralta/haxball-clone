@@ -196,7 +196,8 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// clings); a push past it -- a shot or a hard bump -- frees the ball with the
 		// excess. Strongest at the front, with a small baseline hold even at the back.
 		separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal)
-		holdCap := player.Stats.Stickiness.Eval(angle) * stickinessGrip * deltaTime
+		holdCap := player.Stats.Stickiness.Eval(angle) * stickinessGrip *
+			(1 + player.Stats.TrapStickinessBonus*player.trapCharge) * deltaTime
 
 		// RETENTION measures how well the player's FULL hold contains the ball this
 		// frame: the sticky cap above PLUS the centripetal stick's full inward pull

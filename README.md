@@ -297,11 +297,11 @@ which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQua
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
   sticky touches that scale up as the charge builds.
-- **Other team** → `OtherTeam·strength` (down to **−0.6**): capture down, bounce up → the
+- **Other team** → `OtherTeam·strength` (down to **−0.8**): capture down, bounce up → the
   ball springs off them, more so the more possession you've built (so a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
 
-*Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−0.6`, and the multiplier endpoints
+*Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−0.8`, and the multiplier endpoints
 (anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.7 / 1.35`,
 **RestitutionWorst/Best** `1.5 / 0.45`.
 
@@ -326,12 +326,14 @@ side); toggle with `render.ShowPossessionBars`.
 
 - **TrapPullBonus** `1.5` — up to ×2.5 stronger centre-pull (trap/steal a loose ball).
 - **TrapRangeBonus** `10` — extends pull range by up to +10.
-- **TrapControlBonus** `1.2` — stronger roll-to-front (snaps the ball to the front).
-- **TrapCaptureBonus** `220` — raises capture speed by up to +220 (a damped first touch /
+- **TrapControlBonus** `1.25` — stronger roll-to-front (snaps the ball to the front).
+- **TrapStickinessBonus** `0.5` — stiffens the sticky hold while trapping (`Stickiness ×
+  (1 + TrapStickinessBonus·trapCharge)`, up to +50% at full trap).
+- **TrapCaptureBonus** `190` — raises capture speed by up to +190 (a damped first touch /
   save).
-- **TrapRestitutionFactor** `1.3` — how strongly trap *deadens the bounce*: restitution is
+- **TrapRestitutionFactor** `1.15` — how strongly trap *deadens the bounce*: restitution is
   scaled by `1 - min(1, trapCharge·TrapRestitutionFactor)`, so a held trap stops the ball
-  bouncing entirely by ~0.77 charge (on top of the higher capture speed). `0` = trap never
+  bouncing entirely by ~0.87 charge (on top of the higher capture speed). `0` = trap never
   affects bounce.
 - **TrapSpeedFactor** `0.5` / **TrapAccelFactor** `0.55` — speed/accel at full trap (trapping
   is slow). **TrapRadiusBonus** `0` — grow while trapping (off).

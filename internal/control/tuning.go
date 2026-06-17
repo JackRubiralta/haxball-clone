@@ -165,8 +165,8 @@ func defaultAITuning() aiTuning {
 		recvSpaceWeight:       0.6,
 		recvAdvanceWeight:     0.45,
 		oneTwoTicks:           50,
-		separationRadius:      44,  // just above the 36 contact gap: only fires to avert a near-collision
-		separationGain:        1.5, // strong omnidirectional repulsion from a teammate about to be run into
+		separationRadius:      44, // just above the 36 contact gap: only fires to avert a near-collision
+		separationGain:        0.6,
 		separationMinThrottle: 0.3, // a near-collision pulls an idle player off the spot to step apart
 
 		pressureRadius:    70,

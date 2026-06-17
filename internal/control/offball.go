@@ -101,22 +101,26 @@ func (a *AI) offBall(p perception, plan teamPlan) sim.Intent {
 	in := a.abortCharge(p, sim.Intent{})
 
 	target := idealPosition(p, a.tune)
+	supporting := false
 	switch {
 	case p.teamControls && p.view.Tick() < a.runUntil:
 		target = a.receiveSpot(p, a.tune.runForwardBias) // give-and-go run into space
+		supporting = true
 	case p.teamControls:
 		target = a.receiveSpot(p, a.tune.supportForwardBias) // offer a passing option in range
+		supporting = true
 	case p.carrierEnemy && plan.support == p.me.ID():
 		target = a.markSpot(p)
 	}
 
 	mv, th := a.steer(p, target, true)
 	// Spread off the ball: repel the MOVEMENT away from teammates that are too close (a boids
-	// separation from this player's own position, not its target -- nudging the target instead
-	// just makes runs cross). If the player has otherwise arrived (idle) but is crowded, give it
-	// a gentle throttle so resting clusters drift apart. The elected presser never gets this --
-	// only off-ball players -- so it is free to chase the ball.
-	if a.tune.separationGain > 0 {
+	// separation from this player's OWN position, not its target -- nudging the target instead
+	// just makes runs cross). If an idle player is in a near-collision, a small throttle floor
+	// steps it apart. Applied in the holding / defending / marking phases -- NOT to the elected
+	// presser (free to chase the ball) and NOT to an attacking support run, whose precise
+	// receiving line must be preserved for clean passing.
+	if a.tune.separationGain > 0 && !supporting && !a.wantTrapReceive(p) {
 		if push := a.teammatePush(p); push != (geom.Vec{}) {
 			mv = geom.Unit(mv.Add(push.Scale(a.tune.separationGain)))
 			if th < a.tune.separationMinThrottle {

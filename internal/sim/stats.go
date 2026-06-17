@@ -123,13 +123,14 @@ type PlayerStats struct {
 	// scales these -- a stronger, longer-reach centre-pull (to trap/steal a loose
 	// ball), a stronger roll-to-front control, an easier capture (less bounce), and
 	// slower acceleration.
-	TrapPullBonus    float64
-	TrapRangeBonus   float64
-	TrapControlBonus float64
-	TrapAccelFactor  float64 // acceleration multiplier at full trap (lower = slower to speed up)
-	TrapSpeedFactor  float64 // max-speed multiplier at full trap (lower = slower top speed)
-	TrapCaptureBonus float64
-	TrapRadiusBonus  float64 // 0 = the player does not change size while trapping
+	TrapPullBonus       float64
+	TrapRangeBonus      float64
+	TrapControlBonus    float64
+	TrapStickinessBonus float64 // trap also stiffens the sticky hold: Stickiness *= (1 + TrapStickinessBonus*trapCharge)
+	TrapAccelFactor     float64 // acceleration multiplier at full trap (lower = slower to speed up)
+	TrapSpeedFactor     float64 // max-speed multiplier at full trap (lower = slower top speed)
+	TrapCaptureBonus    float64
+	TrapRadiusBonus     float64 // 0 = the player does not change size while trapping
 	// TrapRestitutionFactor is how strongly the trap charge SUPPRESSES the bounce on a hard
 	// contact: the bounce restitution is scaled by (1 - min(1, trapCharge*TrapRestitutionFactor)),
 	// so >1 makes the ball stop bouncing before a full trap (a held trap deadens the ball, on
@@ -307,12 +308,13 @@ func DefaultStats(shootForce float64) PlayerStats {
 
 		TrapPullBonus:         1.5,
 		TrapRangeBonus:        10,
-		TrapControlBonus:      1.2,
+		TrapControlBonus:      1.25,
+		TrapStickinessBonus:   0.5, // a held trap stiffens the sticky hold (up to +50% at full trap)
 		TrapAccelFactor:       0.55,
 		TrapSpeedFactor:       0.5,
-		TrapCaptureBonus:      220,
+		TrapCaptureBonus:      190, // reduced a bit (was 220)
 		TrapRadiusBonus:       0,
-		TrapRestitutionFactor: 1.3, // a held trap deadens the bounce, fully by ~0.77 trap charge
+		TrapRestitutionFactor: 1.15, // a held trap deadens the bounce, fully by ~0.87 trap charge
 
 		TouchQuality: TouchQuality{
 			OwnTeamMax:       1.0,  // owning team at full charge -> the cleanest touch
