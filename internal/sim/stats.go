@@ -94,7 +94,7 @@ func DefaultStats(shootForce float64) PlayerStats {
 		Acceleration:    300,
 		TouchRange:      2,
 		PullRange:       6,
-		Restitution:     CurveSpec{InverseQuadraticCurve, 0.08, 0.80},
+		Restitution:     CurveSpec{InverseQuadraticCurve, 0.08, 0.35},
 		CaptureSpeed:    CurveSpec{LinearCurve, 320, 70},
 		CenterPull:      CurveSpec{InverseQuadraticCurve, 1000, 0},
 		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 0},
