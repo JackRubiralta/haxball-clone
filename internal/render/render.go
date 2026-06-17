@@ -607,31 +607,56 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 	drawShootCharge(c, pos, radius, shootCharge, body) // power gauge over the body
 }
 
-// drawTrapAura draws a soft glow ring around a player while it traps, growing with
-// the trap charge. The larger body itself comes from the bigger passed radius.
+// drawTrapAura draws a soft glow ring around a player while it traps. The glow charges UP then
+// DOWN: as the trap charge builds, the aura swells to a peak and then eases back to a smaller
+// floor (it never fully vanishes while trapping), so the effect doesn't just sit at maximum.
 func drawTrapAura(c canvas, pos geom.Vec, radius, trap float64, body color.RGBA) {
 	if trap <= 0 {
 		return
 	}
+	// Visual intensity follows trapAuraLevel: bigger first, then smaller (a less-intense but
+	// still-visible glow), driving both the reach and the opacity. (Purely cosmetic -- the
+	// trap mechanic still uses the raw trap charge.)
+	level := trapAuraLevel(trap)
 	// A glow drawn as a stack of thin concentric bands whose opacity runs as a smooth
 	// LINEAR gradient from the inner edge out: 75 (of 255) right at the body, falling
 	// to 10 at the outer rim. The alpha is read straight from the gradient (not summed
 	// across bands), so it stays a clean halo the ball reads through rather than a
-	// bright blob. The whole gradient scales with the trap charge, so it fades in as the
-	// charge builds instead of popping in, and the reach grows with the charge too.
+	// bright blob. The whole gradient scales with the aura level, so it swells then settles
+	// rather than popping in, and the reach tracks it too.
 	const bands = 24
-	const innerAlpha = 75.0                 // opacity at the body (inner edge), at full charge
-	const outerAlpha = 10.0                 // opacity at the outer rim, at full charge
-	reach := 4 + 16*trap                    // how far the glow reaches past the body, grows with charge
+	const innerAlpha = 75.0                 // opacity at the body (inner edge), at peak level
+	const outerAlpha = 10.0                 // opacity at the outer rim, at peak level
+	reach := 4 + 16*level                   // how far the glow reaches past the body, tracks the aura level
 	width := reach / float64(bands-1) * 1.1 // thin bands with a hair of overlap so they meet seamlessly
 	for i := 0; i < bands; i++ {
 		t := float64(i) / float64(bands-1) // 0 at the body, 1 at the outer rim
 		r := radius + reach*t
-		a := uint8((innerAlpha + (outerAlpha-innerAlpha)*t) * trap) // linear 75 -> 10, scaled by charge
+		a := uint8((innerAlpha + (outerAlpha-innerAlpha)*t) * level) // linear 75 -> 10, scaled by the level
 		if a == 0 {
 			continue
 		}
 		c.strokeCircle(pos.X, pos.Y, r, width, color.RGBA{body.R, body.G, body.B, a})
+	}
+}
+
+// trapAuraLevel maps the 0..1 trap charge to the aura's visual intensity: it rises QUICKLY to
+// full, HOLDS at full for ~0.5s of charging, then declines SLOWLY (slower than it rose) to
+// trapAuraFloor as the charge completes. Always > 0 while trapping (the aura never goes away).
+// (trapChargeTime is 1s, so a charge fraction equals seconds held: hold spans 0.2->0.7 = ~0.5s.)
+func trapAuraLevel(trap float64) float64 {
+	const (
+		trapAuraRiseEnd = 0.2  // charge fraction to reach full aura (quick rise)
+		trapAuraHoldEnd = 0.7  // charge fraction the aura holds at full (a ~0.5s hold)
+		trapAuraFloor   = 0.40 // aura intensity once fully charged (never goes away)
+	)
+	switch {
+	case trap <= trapAuraRiseEnd:
+		return trap / trapAuraRiseEnd // quick rise 0 -> 1
+	case trap <= trapAuraHoldEnd:
+		return 1 // hold at full (~0.5s)
+	default:
+		return 1 - (1-trapAuraFloor)*((trap-trapAuraHoldEnd)/(1-trapAuraHoldEnd)) // slow decline 1 -> floor
 	}
 }
 

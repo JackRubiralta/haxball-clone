@@ -92,12 +92,13 @@ type PlayerStats struct {
 	// full possession.
 	PossessionControlBonus float64
 
-	// PossessionStealFraction is how much of a dispossessed player's built-up possession the
-	// player who takes the ball off them inherits as a head start (and the victim loses): a
-	// clean tackle keeps some control instead of starting cold. A player who PASSED has zero
-	// possession (shoot resets it), so a received pass transfers nothing -- only a mid-dribble
-	// takeaway carries possession. 0.6 = the taker steals 60% of the victim's possession.
-	PossessionStealFraction float64
+	// PossessionStealRate is how fast player possession transfers from the current ball-holder
+	// to a CHALLENGER while BOTH are on the ball (a contest): per second, the challenger gains
+	// this much possession and the holder loses the same, so a sustained challenge wins the ball
+	// GRADUALLY rather than snatching it instantly. The ball changes hands once the challenger
+	// holds more than the holder. (A passed ball has possession 0 -- shoot resets it -- so a
+	// received pass transfers nothing; only a contested take carries possession.)
+	PossessionStealRate float64
 
 	// Charged shot: a tap fires at MinShootFactor of the angle power, a full charge at
 	// the full power. While charging, the player slows even more than while trapping --
@@ -170,10 +171,13 @@ type TouchQuality struct {
 	RestitutionWorst float64 // restitution multiplier at coefficient -1 (> 1: bouncier, ball flies)
 	RestitutionBest  float64 // restitution multiplier at coefficient +1 (< 1: deader, ball sticks)
 
-	// ConeBonusRadians widens (or, for the conceding team, narrows) the reliable capture cone
-	// by ConeBonusRadians*coefficient -- so built-up team possession also makes receiving a
-	// touch more angle-forgiving. Kept small (a slight buff).
-	ConeBonusRadians float64
+	// The reliable capture cone scales with the team-possession coefficient, ASYMMETRICALLY:
+	// the buff WIDENS it by ConeBonusRadians per +coefficient (a slight grow -- biggest cone at
+	// full possession), while the debuff NARROWS it by the larger ConeDebuffRadians per
+	// -coefficient (a debuffed opponent's cone gets WAY smaller, so it catches far less off the
+	// dead-on line). Net: buff = biggest, no buff = baseline, debuff = much smaller.
+	ConeBonusRadians  float64
+	ConeDebuffRadians float64
 }
 
 // captureMul maps a coefficient in [-1,1] to the capture-speed multiplier (1.0 at 0).
@@ -231,11 +235,17 @@ func (s PlayerStats) stickinessGrip(possession float64) float64 {
 }
 
 // captureConeRadians is the reliable-capture cone half-angle adjusted by the touch
-// coefficient: the team possession buff WIDENS the cone for the owning team (better, more
-// angle-forgiving receiving) and narrows it for the conceding team, by ConeBonusRadians per
-// unit coefficient. Never negative.
+// coefficient, ASYMMETRICALLY: the buff (coef > 0) WIDENS it a little (ConeBonusRadians per
+// unit) for the owning team, while the debuff (coef < 0) NARROWS it a lot (the larger
+// ConeDebuffRadians per unit) so a debuffed opponent's cone gets way smaller and it catches
+// far less off the dead-on line. Never negative. (Dead-on, angle 0, is always inside the cone,
+// so shots/captures straight on are unchanged -- only off-axis catching shrinks.)
 func (s PlayerStats) captureConeRadians(coef float64) float64 {
-	if r := s.CaptureConeRadians + s.TouchQuality.ConeBonusRadians*coef; r > 0 {
+	per := s.TouchQuality.ConeBonusRadians
+	if coef < 0 {
+		per = s.TouchQuality.ConeDebuffRadians
+	}
+	if r := s.CaptureConeRadians + per*coef; r > 0 {
 		return r
 	}
 	return 0
@@ -287,10 +297,10 @@ func DefaultStats(shootForce float64) PlayerStats {
 		Acceleration:   300,
 		TurnRate:       14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
 		TouchRange:     2,
-		PullRange:      6,
-		Restitution:    CurveSpec{InverseQuadraticCurve, 0.05, 0.25}, // less bouncy ball off a player (front/back lowered)
-		CaptureSpeed:   CurveSpec{LinearCurve, 280, 70},              // front lowered (320 -> 280): the cone helps less
-		CenterPull:     CurveSpec{InverseQuadraticCurve, 950, 0},     // front nerfed a touch (1000 -> 950)
+		PullRange:      5,                                            // reduced reach (was 6)
+		Restitution:    CurveSpec{InverseQuadraticCurve, 0.10, 0.20}, // front raised to 0.10 (head-on shots deflect more)
+		CaptureSpeed:   CurveSpec{LinearCurve, 260, 30},              // front lowered to 260 (ball clears capture more easily)
+		CenterPull:     CurveSpec{InverseQuadraticCurve, 800, 0},     // power reduced (950 -> 800)
 		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
 		Control:        CurveSpec{LinearCurve, 1500, 300},
 		Shoot:          CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
@@ -311,8 +321,8 @@ func DefaultStats(shootForce float64) PlayerStats {
 		PossessionSpeedFactor: 0.925, // ~7.5% slower top speed while carrying the ball
 		PossessionAccelFactor: 0.925, // ~7.5% slower acceleration while carrying the ball
 
-		PossessionControlBonus:  0.09, // up to +9% roll-to-front control at full possession (x1.09)
-		PossessionStealFraction: 0.6,  // a takeaway inherits 60% of the dispossessed player's possession
+		PossessionControlBonus: 0.09, // up to +9% roll-to-front control at full possession (x1.09)
+		PossessionStealRate:    1.0,  // a challenger drains/gains 1.0 possession per second while contesting the ball
 
 		MinShootFactor:   0.35,
 		ShootSpeedFactor: 0.35,
@@ -322,24 +332,25 @@ func DefaultStats(shootForce float64) PlayerStats {
 		ShootAimAssistConeRadians: 0.2617993877991494, // ~15deg: full assist within the front cone either way
 		ShootAimAssistSoftRadians: 0,                  // no soft band (side/back = pure radial)
 
-		TrapPullBonus:         1.5,
-		TrapRangeBonus:        10,
+		TrapPullBonus:         1.0,
+		TrapRangeBonus:        6,
 		TrapControlBonus:      1.25,
 		TrapStickinessBonus:   0.5, // a held trap stiffens the sticky hold (up to +50% at full trap)
 		TrapAccelFactor:       0.55,
 		TrapSpeedFactor:       0.5,
 		TrapCaptureBonus:      60, // small capture bump; the trap now relies on deadening the bounce
 		TrapRadiusBonus:       0,
-		TrapRestitutionFactor: 2.0, // a held trap deadens the bounce strongly -- fully killed by half charge (better receiving)
+		TrapRestitutionFactor: 0.4, // reduced further (was 0.8): even a full trap only damps a bounce to ~60%, so a max shot deflects off a trapping keeper
 
 		TouchQuality: TouchQuality{
-			OwnTeamMax:       1.0,                 // owning team at full charge -> the cleanest touch
-			OtherTeam:        -0.8,                // other team at the owner's full charge -> ball flies off them (stronger debuff)
-			CaptureWorst:     0.7,                 // -30% capture at the worst (ball harder to absorb)
-			CaptureBest:      1.142857142857143,   // at full charge restores capture to the OLD cone power (280 * 8/7 = 320)
-			RestitutionWorst: 1.5,                 // +50% bounce at the worst (blocks/lunges fly further)
-			RestitutionBest:  0.45,                // -55% bounce at full charge (received passes stay dead)
-			ConeBonusRadians: 0.05235987755982988, // ~3deg: a slight cone widening at full team charge
+			OwnTeamMax:        1.0,                 // owning team at full charge -> the cleanest touch
+			OtherTeam:         -1.0,                // other team at the owner's full charge -> worst-case touch (ball flies off)
+			CaptureWorst:      0.7,                 // -30% capture at the worst (ball harder to absorb)
+			CaptureBest:       1.142857142857143,   // at full charge restores capture to the OLD cone power (280 * 8/7 = 320)
+			RestitutionWorst:  2.0,                 // up to x2 bounce at the worst (a shot flies off a debuffed opponent)
+			RestitutionBest:   0.45,                // -55% bounce at full charge (received passes stay dead)
+			ConeBonusRadians:  0.05235987755982988, // ~3deg: a slight cone widening at full team buff (biggest cone)
+			ConeDebuffRadians: 0.2617993877991494,  // ~15deg: a debuffed opponent's cone shrinks way more (catches far less)
 		},
 	}
 }

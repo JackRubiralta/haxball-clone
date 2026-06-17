@@ -56,11 +56,11 @@ func (a *AI) keeperGuardSpot(p perception) geom.Vec {
 	standoff := lerp(a.tune.keeperDepthMin, a.tune.keeperDepthMax, near)
 	spot := p.ownGoal.Add(geom.Unit(p.ball.Sub(p.ownGoal)).Scale(standoff))
 
-	// A keeper isn't a perfect wall: drift its lateral position a little (skill-scaled) so it
-	// can be wrong-footed and a well-placed shot finds the corner. The drift is keyed to the
-	// ball's coarse position so each attacking situation gets its own error (decorrelated, so
-	// no single shot pattern is always saved) yet stays steady enough not to jitter.
-	spot.Y += a.keeperMisread(p) * a.params.keeperError * 0.5
+	// NOTE: no positioning mis-read here. While merely HOLDING the angle (no shot driven at us)
+	// the keeper should sit cleanly on the ball-to-goal line -- adding a skill-scaled lateral
+	// drift here made the keeper slide around its line seemingly at random as the ball moved.
+	// The beatable mis-read belongs on an actual save (keeperSave), where a well-placed shot
+	// should be able to find the corner; a resting keeper just holds the true angle.
 
 	// Keep within the goal area depth and a touch inside each post, and -- crucially -- never
 	// let the keeper hug its goal line / back into the net: hold it at least keeperDepthMin off
@@ -142,8 +142,18 @@ func (a *AI) keeperShouldSweep(p perception, plan teamPlan) bool {
 // exists, otherwise a strong charged clearance up a flank.
 func (a *AI) keeperDistribute(p perception) sim.Intent {
 	in := sim.Intent{}
+	// Prefer a real, progressive pass.
 	if target, receiver, score := a.bestPass(p); receiver != nil && score > 0.6 {
 		dc := a.passChargeFor(p, target) // calibrated to reach the receiver in control
+		a.passReceiver = receiver
+		a.lastOnBall = actPass
+		return a.shootAt(p, in, a.applyAim(p, target), dc, a.tune.shootAlignRad)
+	}
+	// No progressive pass found, but a keeper should PLAY THE BALL OUT, not hoof it: look for any
+	// safe, uncontested outlet to an open teammate (forwardness not required -- the keeper is the
+	// deepest player). Only clear when there is genuinely no safe option.
+	if target, receiver := a.keeperOutlet(p); receiver != nil {
+		dc := a.passChargeFor(p, target)
 		a.passReceiver = receiver
 		a.lastOnBall = actPass
 		return a.shootAt(p, in, a.applyAim(p, target), dc, a.tune.shootAlignRad)
@@ -151,6 +161,46 @@ func (a *AI) keeperDistribute(p perception) sim.Intent {
 	a.lastOnBall = actClear
 	// No safe pass: clear it quickly (low charge, loose aim) rather than dwelling on the ball.
 	return a.shootAt(p, in, a.applyAim(p, a.clearTarget(p)), a.tune.clearCharge, a.tune.clearAlignRad)
+}
+
+// keeperOutlet finds the safest open outlet pass for the keeper: an open teammate (not the
+// keeper) with a clear, uncontested lane the receiver wins ahead of any opponent. Forwardness
+// is NOT required -- a square ball to an open full-back to start play beats a blind clearance.
+// Returns the target and receiver, or (zero, nil) if no safe outlet exists.
+func (a *AI) keeperOutlet(p perception) (geom.Vec, sim.PlayerView) {
+	var bestRecv sim.PlayerView
+	var bestTarget geom.Vec
+	best := -1.0
+	for _, mate := range p.teammates {
+		if mate.Role() == sim.RoleGoalkeeper {
+			continue
+		}
+		target := a.leadPoint(p, mate)
+		if laneSafe(p.ball, target, a.passSpeedFor(p, target), p.ballRadius, p.friction, p.opponents, a.tune) < a.tune.passSafetyMin {
+			continue // lane could be cut out
+		}
+		space := p.space(target)
+		if space < a.tune.passReceiverSpace {
+			continue // receiver is marked
+		}
+		// The receiver must win the ball at the target ahead of every opponent.
+		recvT := timeToPoint(mate, target, p.ballRadius)
+		contested := false
+		for _, o := range p.opponents {
+			if timeToPoint(o, target, p.ballRadius) < recvT+a.tune.passContestMargin {
+				contested = true
+				break
+			}
+		}
+		if contested {
+			continue
+		}
+		// Favour the most open, nearest safe outlet.
+		if score := space - geom.Dist(p.ball, target)*0.1; score > best {
+			best, bestTarget, bestRecv = score, target, mate
+		}
+	}
+	return bestTarget, bestRecv
 }
 
 // keeperMisread returns a deterministic, roughly-normal positioning error in [-~1,1] keyed

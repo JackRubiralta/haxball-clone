@@ -139,9 +139,9 @@ and replacing the procedurally-generated placeholder sound effects in
 
 Previous values for knobs that were changed, kept here so they can be restored:
 
-- `PullRange`: `8` (now `6`)
-- `TrapRangeBonus`: `14` (now `10`)
-- `Restitution` (front / back): `0.08 / 0.35` (now `0.05 / 0.25` — less bouncy ball off a player)
+- `PullRange`: `8` (now `5`)
+- `TrapRangeBonus`: `14` (now `6`)
+- `Restitution` (front / back): `0.08 / 0.35` (now `0.10 / 0.20` — front raised so head-on shots deflect)
 
 ## Physics & player variables
 
@@ -191,7 +191,7 @@ speed → apply friction → move position.
 ### `PlayerStats` — ball-control geometry (surface gaps, units)
 
 - **TouchRange** `2` — gap under which the ball is "touching" (hold/control/shoot).
-- **PullRange** `6` — gap under which centre-pull and carry reach the ball.
+- **PullRange** `5` — gap under which centre-pull and carry reach the ball (reduced from 6).
 
 ### `PlayerStats` — angle curves (`CurveSpec{Curve, Front(0°), Back(180°)}`)
 
@@ -199,13 +199,14 @@ Each is evaluated from the ball dead-in-front (0°) to directly-behind (180°). 
 (`curves.go`): Linear, Quadratic (eases in), InverseQuadratic (eases out), Smoothstep,
 Exponential.
 
-- **Restitution** `0.05 / 0.25` (InvQuad) — bounciness on a *hard* contact; soft in front,
-  springier behind.
-- **CaptureSpeed** `280 / 70` (Linear) — impact speed *below which the ball sticks*
-  (restitution 0) instead of bouncing. Front lowered from 320, so the in-cone capture (the
-  receiving "boost") is weaker.
-- **CenterPull** `950 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
-  make contact.
+- **Restitution** `0.10 / 0.20` (InvQuad) — bounciness on a *hard* contact; front raised to
+  0.10 so a head-on hard shot deflects off a player rather than dying at their feet.
+- **CaptureSpeed** `260 / 30` (Linear) — impact speed *below which the ball sticks*
+  (restitution 0) instead of bouncing. Front lowered to 260 (the ball clears capture more
+  easily); back 30, so off-front hits stick much less. A full-power shot (~500) easily clears
+  it, so an opponent never captures it — it deflects off.
+- **CenterPull** `800 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
+  make contact (power reduced from 950).
 - **Stickiness** `420 / 30` (InvQuad) — capped adhesion holding a touching ball until a
   shot/bump overcomes it; a small baseline hold even at the back (`30`).
 - **Control** `1500 / 300` (Linear) — tangential pull rolling a touching ball to the front.
@@ -222,7 +223,7 @@ Exponential.
 ### `PlayerStats` — capture cone
 
 - **CaptureConeRadians** `0.384` (≈22°) — within ±22° of facing the ball reliably sticks
-  (a bigger cone). The trade-off: the in-cone capture peak is lower (CaptureSpeed front 280),
+  (a bigger cone). The trade-off: the in-cone capture peak is modest (CaptureSpeed front 260),
   so the cone covers more angle but holds less firmly.
 - **CaptureConeSoft** `0.524` (≈30°) — over the next ~30° capture decays to the back floor;
   beyond ~52° total, side/back hits bounce.
@@ -254,17 +255,18 @@ opposite directions):*
   front a touch more crisply (up to **×1.09** at full possession).
 - **Carry slowdown** — while the ball is at your feet, top speed and acceleration are scaled
   by **PossessionSpeedFactor** / **PossessionAccelFactor**.
-- **Stolen on a takeaway** — `Match.updateBallPossessor` tracks the recognised holder (kept
-  while they stay in contact, so a scramble doesn't flip it). When the ball changes hands, the
-  taker inherits **PossessionStealFraction** of the dispossessed player's possession as a head
-  start and the victim loses that share — a clean tackle keeps some control instead of starting
-  cold. (A player who *passed* has possession 0 — `shoot` resets it — so a received pass steals
-  nothing; only a mid-dribble takeaway carries possession.)
+- **Won in a contest** — `Match.updateBallPossessor` tracks the recognised holder. While the
+  holder AND a challenger are BOTH on the ball, possession transfers GRADUALLY (`contestPossession`):
+  the challenger gains and the holder loses **PossessionStealRate** per second, and the ball
+  changes hands once the challenger holds the larger share — a sustained challenge wins the ball
+  rather than snatching it instantly. If the holder is off the ball, the nearest toucher just
+  takes over (no transfer). (A player who *passed* has possession 0 — `shoot` resets it — so a
+  clean reception starts cold; only a contested take carries possession.)
 
 *Variables:* **PossessionBuildSeconds** `1.5` / **PossessionReleaseSeconds** `0.4` (build /
 decay time), **CenterPullGripFloor** `0.65`, **StickinessPossessionDebuff** `0.03`,
 **PossessionControlBonus** `0.09` (up to +9% control at full possession),
-**PossessionStealFraction** `0.6` (a takeaway steals 60% of the victim's possession),
+**PossessionStealRate** `1.0` (possession/sec transferred while contesting the ball),
 **PossessionSpeedFactor** / **PossessionAccelFactor** `0.925` (~7.5% slower). A parallel
 **control** state (gated by **PossessionArcRadians** `0.873`/50° — the ball within the front
 arc) is *tracked but not yet wired to anything*.
@@ -292,27 +294,32 @@ away the moment you move the ball on.
   (deep in the decay, e.g. down to 30%) and you start at 30% and rebuild from there (the
   decayed strength is baked back into the build progress). Either way you continue, never restart.
 - **Reset** — the **other team touching** the ball hands ownership over and restarts their
-  build from zero; both teams touching at once (a scramble) clears it; an **opposing-player
-  collision that involves the ball carrier** (a physical challenge on the holder) clears it;
-  so does a kickoff/shootout.
+  build from zero; both teams touching at once (a scramble) clears it; a kickoff/shootout
+  clears it.
+- **Drained by a challenge** — an **opposing-player collision that involves the ball carrier**
+  (a physical challenge on the holder) does NOT reset the charge but **drains** it at
+  `teamDrainPerSecond` (1.0/s of build progress), so sustained pressure wears the boost away
+  while a glancing bump only nicks it.
 
 *What it affects:* each player's **touch coefficient** (`Player.touchCoef`, in `[-1,1]`),
 which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQuality`, in
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
-  sticky touches that scale up as the charge builds. At full charge the capture is restored to
-  the **old cone power** (front 280 × `CaptureBest` 8/7 ≈ 320), so a fully-built possession
-  receives as firmly as the cone did before it was weakened.
-- **Other team** → `OtherTeam·strength` (down to **−0.8**): capture down, bounce up → the
-  ball springs off them, more so the more possession you've built (so a blocked shot flies).
+  sticky touches that scale up as the charge builds (full-charge capture ≈ front × `CaptureBest`
+  8/7 ≈ 297), so a fully-built possession receives firmly.
+- **Other team** → `OtherTeam·strength` (down to **−1.0**): capture down, bounce up (up to
+  ×2) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
-- **Capture cone** → the owning team's reliable cone widens slightly (and the conceding
-  team's narrows) by `ConeBonusRadians·coefficient` (≈3° at full charge), so built-up
-  possession also makes receiving a touch more angle-forgiving.
+- **Capture cone** → scales ASYMMETRICALLY with the coefficient (see `captureConeRadians`):
+  the buff WIDENS the owning team's reliable cone a little (`ConeBonusRadians` ≈3° at full
+  charge — biggest cone), while the debuff NARROWS the conceding team's a lot
+  (`ConeDebuffRadians` ≈15° at full enemy charge — cone shrinks to ~6°, way smaller). So a
+  debuffed opponent catches far less off the dead-on line. Dead-on (angle 0) is always inside
+  the cone, so straight-on shots/captures are unchanged — only off-axis catching shrinks.
 
-*Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−0.8`, and the multiplier endpoints
-(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.7 / 1.143` (best restores the old
-320 capture), **RestitutionWorst/Best** `1.5 / 0.45`.
+*Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−1.0`, and the multiplier endpoints
+(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.7 / 1.143` (best lifts the
+owning team's capture by ~1/7), **RestitutionWorst/Best** `2.0 / 0.45`.
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding
@@ -333,17 +340,17 @@ side); toggle with `render.ShowPossessionBars`.
 
 ### `PlayerStats` — trap ("good touch"), scaled by `trapCharge` 0→1
 
-- **TrapPullBonus** `1.5` — up to ×2.5 stronger centre-pull (trap/steal a loose ball).
-- **TrapRangeBonus** `10` — extends pull range by up to +10.
+- **TrapPullBonus** `1.0` — up to ×2 stronger centre-pull (trap/steal a loose ball); reduced from 1.5.
+- **TrapRangeBonus** `6` — extends pull range by up to +6 (reduced from 10).
 - **TrapControlBonus** `1.25` — stronger roll-to-front (snaps the ball to the front).
 - **TrapStickinessBonus** `0.5` — stiffens the sticky hold while trapping (`Stickiness ×
   (1 + TrapStickinessBonus·trapCharge)`, up to +50% at full trap).
 - **TrapCaptureBonus** `60` — small capture-speed bump (+60 at full trap); the trap now relies
   mainly on deadening the bounce rather than a big capture lift.
-- **TrapRestitutionFactor** `2.0` — how strongly trap *deadens the bounce*: restitution is
-  scaled by `1 - min(1, trapCharge·TrapRestitutionFactor)`, so a held trap kills the bounce
-  entirely by **half** charge — the main way a trap receives a fast ball cleanly. `0` = trap
-  never affects bounce.
+- **TrapRestitutionFactor** `0.4` — how strongly trap *deadens the bounce*: restitution is
+  scaled by `1 - min(1, trapCharge·TrapRestitutionFactor)`. At `0.4`, even a full trap only
+  damps the bounce to ~60%, so a hard shot clearly deflects off a trapping defender/keeper
+  rather than dying at their feet. `0` = trap never affects bounce.
 - **TrapSpeedFactor** `0.5` / **TrapAccelFactor** `0.55` — speed/accel at full trap (trapping
   is slow). **TrapRadiusBonus** `0` — grow while trapping (off).
 

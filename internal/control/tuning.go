@@ -91,6 +91,7 @@ type aiTuning struct {
 	maxTurnRad        float64 // max facing change per decision with a settled ball (anti-fling)
 	minTurnRad        float64 // max facing change per decision with a loose ball (it lags more, turn gentler)
 	turnTrapSettled   float64 // ball-settledness below which the dribbler traps to keep the ball glued
+	dribbleWallAvoid  float64 // penalty weight steering a dribble heading away from carrying the ball into a wall
 
 	// Trap usage.
 	trapApproachFactor float64 // (reserved) trap to receive when ball approach speed exceeds capture*this
@@ -186,6 +187,7 @@ func defaultAITuning() aiTuning {
 		maxTurnRad:        0.22689280275926285,
 		minTurnRad:        0.08726646259971647,
 		turnTrapSettled:   0.5,
+		dribbleWallAvoid:  3.0,
 
 		trapApproachFactor: 0.7,
 		trapReceiveFactor:  0.4,

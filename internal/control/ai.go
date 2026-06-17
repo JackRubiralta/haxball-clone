@@ -5,6 +5,12 @@ import (
 	"phootball/internal/sim"
 )
 
+// aimCapGap is the surface gap to the ball beyond which the AI's facing is rate-limited (it can
+// only re-orient at maxTurnRad). Inside it the player is near enough to interact with the ball,
+// so the facing must stay responsive (rate-limiting it there fights the centre-pull control loop
+// and jitters the scoop).
+const aimCapGap = 60.0
+
 // AI is a headless, utility-based controller. Each tick it builds a read-only perception
 // of the match, derives a deterministic team plan (who presses, who supports), and then
 // scores and executes the best action for its player -- on the ball (shoot/pass/dribble/
@@ -78,6 +84,14 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 	}
 
 	in = a.applyMoveJitter(p, in)
+	// Cap how fast the AI re-orients while it is AWAY from the ball (where it uses instant
+	// aimToward to point around and there is no ball-control feedback), so it can't snap-turn.
+	// Near the ball the facing drives the centre-pull/scoop, and rate-limiting it there fights
+	// that control loop and jitters -- so leave anyone close to the ball (and the keeper)
+	// responsive.
+	if me.Role() != sim.RoleGoalkeeper && p.gapToBall > aimCapGap {
+		in = a.capAim(p, in)
+	}
 
 	a.cached = in
 	a.haveCached = true
@@ -96,6 +110,25 @@ func (a *AI) dt(view sim.View) float64 {
 		return view.Clock() / float64(view.Tick())
 	}
 	return 1.0 / 60.0
+}
+
+// capAim caps how fast the AI can re-orient: it rotates the player's current facing toward the
+// aimed direction by at most maxTurnRad and re-projects far, so the AI's disk can never
+// snap-turn instantly -- it can only switch direction at its own turn rate. aimKeepingBall
+// already turns within this cap (on-ball aim is unchanged); this only reins in the faster
+// instant-aim paths (aimToward, used off-ball, by the keeper, and during recovery).
+func (a *AI) capAim(p perception, in sim.Intent) sim.Intent {
+	if in.Aim == (geom.Vec{}) {
+		return in
+	}
+	facing := p.me.Facing()
+	desired := geom.Unit(in.Aim.Sub(p.me.Position()))
+	if facing == (geom.Vec{}) || desired == (geom.Vec{}) {
+		return in
+	}
+	capped := rotateToward(facing, desired, a.tune.maxTurnRad)
+	in.Aim = p.me.Position().Add(capped.Scale(aimProjectDist))
+	return in
 }
 
 // applyMoveJitter adds a little skill-scaled wander to the movement direction, so players

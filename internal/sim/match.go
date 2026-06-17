@@ -122,7 +122,7 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 	// 2.55 Track who holds the ball; on a change of hands, the taker steals a slice of the
 	// dispossessed player's possession. Runs before the dribble interaction so the stolen
 	// possession feeds this tick's grip.
-	m.updateBallPossessor()
+	m.updateBallPossessor(deltaTime)
 
 	// 2.6 Advance the team possession charge and publish each player's touch-quality
 	// coefficient for this tick, so the collision resolver can read it as a per-player value.
@@ -163,7 +163,7 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 		if in.AimFromCursor {
 			p.faceTowardLimited(in.Aim, deltaTime) // human cursor: turn at TurnRate, no instant snap
 		} else {
-			p.FaceTowards(in.Aim) // AI (already smoothed) / network: instant
+			p.FaceTowards(in.Aim) // AI (capped in the control layer) / network: instant
 		}
 	}
 
@@ -336,54 +336,64 @@ func (m *Match) touchingSides() (left, right bool) {
 	return left, right
 }
 
-// updateBallPossessor tracks who holds the ball and, when it changes hands, transfers a slice
-// of the old holder's PLAYER possession to the new one (a steal). The current holder keeps
-// possession while they are still in contact -- so a brief scramble where both players touch
-// does NOT trigger a steal; only once the old holder is off the ball and a different player is
-// on it does possession change hands. A player who passed/shot has possession 0 (shoot resets
-// it), so a received pass steals nothing; only a mid-dribble takeaway carries possession.
-func (m *Match) updateBallPossessor() {
-	if m.possessor != nil && m.touching(m.possessor) {
-		return // the current holder keeps the ball while still in contact
-	}
-	// The ball is up for grabs: the player whose centre is NEAREST the ball (the one who
-	// actually won it) takes it. Iterating in roster order makes exact-distance ties
-	// deterministic (the lowest-index toucher wins), so replays stay bit-identical.
-	var next *Player
+// updateBallPossessor tracks who holds the ball and resolves a CONTEST for it. The single
+// nearest OTHER player in contact is the challenger. While both the current holder and a
+// challenger are on the ball, possession transfers GRADUALLY -- the challenger gains and the
+// holder loses (see contestPossession) -- and the ball changes hands once the challenger holds
+// more than the holder. If the holder is off the ball, the nearest toucher simply takes over
+// (no contest to transfer); a passed ball carries possession 0 (shoot resets it), so a clean
+// reception starts cold.
+func (m *Match) updateBallPossessor(deltaTime float64) {
+	holder := m.possessor
+	holderTouching := holder != nil && m.touching(holder)
+
+	// The nearest OTHER player in contact (deterministic: roster order breaks distance ties).
+	var taker *Player
 	best := 0.0
 	for _, p := range m.Players {
-		if !m.touching(p) {
+		if p == holder || !m.touching(p) {
 			continue
 		}
-		if d := geom.Dist(p.Position, m.Ball.Position); next == nil || d < best {
-			next, best = p, d
+		if d := geom.Dist(p.Position, m.Ball.Position); taker == nil || d < best {
+			taker, best = p, d
 		}
 	}
-	if next == nil {
-		return // ball loose: keep the (decaying) holder of record until someone takes it
+
+	switch {
+	case holderTouching && taker != nil:
+		// Contest: drain possession from the holder into the challenger. The ball flips once the
+		// challenger has the larger share.
+		m.contestPossession(holder, taker, deltaTime)
+		if taker.possession > holder.possession {
+			m.possessor = taker
+		}
+	case holderTouching:
+		// Holder alone on the ball: keeps it, no transfer.
+	case taker != nil:
+		// Holder is off the ball: the nearest toucher takes over (no one is fighting for it).
+		m.possessor = taker
+	default:
+		// Nobody touching: keep the holder of record (its possession decays on its own).
 	}
-	if m.possessor != nil && next != m.possessor {
-		m.stealPossession(m.possessor, next)
-	}
-	m.possessor = next
 }
 
-// stealPossession transfers a fraction of a dispossessed player's built-up possession to the
-// player who just took the ball: the taker GAINS it on top of any it already had (a clean
-// takeaway keeps some control), and the victim loses the same amount. The transfer is capped
-// at the taker reaching full possession, so nothing is created or destroyed.
-func (m *Match) stealPossession(victim, taker *Player) {
-	stolen := taker.Stats.PossessionStealFraction * victim.possession
-	if room := 1 - taker.possession; stolen > room { // the taker can't exceed full possession
-		stolen = room
+// contestPossession moves player possession from the holder to a challenger while both are on
+// the ball: per tick the challenger GAINS and the holder LOSES PossessionStealRate*dt, so a
+// sustained challenge wins the ball gradually rather than snatching it. Capped so nothing is
+// created (challenger to full) or destroyed (holder to empty).
+func (m *Match) contestPossession(holder, taker *Player, deltaTime float64) {
+	xfer := taker.Stats.PossessionStealRate * deltaTime
+	if xfer > holder.possession {
+		xfer = holder.possession
 	}
-	if stolen <= 0 {
+	if room := 1 - taker.possession; xfer > room {
+		xfer = room
+	}
+	if xfer <= 0 {
 		return
 	}
-	taker.possession += stolen
-	if victim.possession -= stolen; victim.possession < 0 {
-		victim.possession = 0
-	}
+	holder.possession -= xfer
+	taker.possession += xfer
 }
 
 // advanceTeamPossession runs one tick of the team possession charge. It first PUBLISHES every

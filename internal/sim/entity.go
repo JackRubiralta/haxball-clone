@@ -47,9 +47,9 @@ type Player struct {
 
 // Charge timing constants (seconds), shared by the sim and the renderer's gauges.
 const (
-	shootChargeMax  = 1.0 // seconds of hold for a full-power shot
-	trapChargeTime  = 1.0 // seconds of holding the trap button to reach full trap charge
-	trapChargeDecay = 4.0 // per-second decay of trap charge once the button is released
+	shootChargeMax  = 0.75 // seconds of hold for a full-power shot (faster charge)
+	trapChargeTime  = 1.0  // seconds of holding the trap button to reach full trap charge
+	trapChargeDecay = 4.0  // per-second decay of trap charge once the button is released
 )
 
 // ShootCharge returns the seconds the shoot button has been held this charge.
@@ -146,9 +146,8 @@ func rotateToward(from, to geom.Vec, maxRad float64) geom.Vec {
 	return from.Rotate(step, geom.Vec{})
 }
 
-// FaceTowards points the player instantly toward the given point. Used directly by the AI
-// (whose aim is already smoothed in the control layer) and as the snap path for a human; the
-// rate-limited human cursor aim goes through faceTowardLimited in applyIntent instead.
+// FaceTowards points the player instantly toward the given point. Used for the AI (whose aim is
+// smoothed on-ball and rate-limited off-ball in the control layer) and the network path.
 func (p *Player) FaceTowards(point geom.Vec) {
 	direction := point.Sub(p.Position)
 	if length := geom.Norm(direction); length > 0 {
@@ -158,8 +157,7 @@ func (p *Player) FaceTowards(point geom.Vec) {
 
 // faceTowardLimited rotates the facing toward point at up to TurnRate radians/sec, so a human's
 // cursor aim turns at a limited rate instead of snapping (the disk can't instantly re-orient).
-// With TurnRate 0 or no current facing it snaps. The AI does NOT use this -- its aim is already
-// rate-limited in the control layer, and double-limiting it makes the facing jitter.
+// With TurnRate 0 or no current facing yet it snaps.
 func (p *Player) faceTowardLimited(point geom.Vec, deltaTime float64) {
 	direction := point.Sub(p.Position)
 	length := geom.Norm(direction)

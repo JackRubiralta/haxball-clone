@@ -374,6 +374,10 @@ func (a *AI) bestDribble(p perception) (geom.Vec, float64) {
 		pt := p.me.Position().Add(dir.Scale(probe))
 		// Stay close to the preferred heading, nudged toward open space.
 		val := geom.Dot(dir, prefer)*100 + clampFloat(p.space(pt), 0, 120)*0.5
+		// Don't carry the ball into a wall: penalise headings whose probe runs out of the play
+		// area (the ball is confined, so driving at a wall just grinds it). The overshoot is how
+		// far past the bounds the probe reaches, so a heading along/away from the wall wins.
+		val -= geom.Dist(pt, confineSlot(p, pt)) * a.tune.dribbleWallAvoid
 		if val > bestVal {
 			bestVal, bestDir = val, dir
 		}

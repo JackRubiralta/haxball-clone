@@ -52,67 +52,55 @@ func bothTouch(m *Match, leftP, rightP *Player) {
 	m.Ball.Position = geom.NewVec(0, 0)
 }
 
-// TestPossessionStealOnTakeaway: when the ball changes hands mid-dribble, the taker inherits a
-// fraction of the dispossessed player's possession and the victim loses that share.
-func TestPossessionStealOnTakeaway(t *testing.T) {
+// TestPossessionContestGradualTransfer: while the holder and a challenger are BOTH on the ball,
+// possession flows gradually from the holder to the challenger, and a sustained contest hands
+// the ball over once the challenger holds more.
+func TestPossessionContestGradualTransfer(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
 	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
 	a.possession = 0.8
 	m.possessor = a
-	frac := b.Stats.PossessionStealFraction
 
-	onlyToucher(m, b) // a off the ball, b now on it
-	m.updateBallPossessor()
+	bothTouch(m, a, b) // a (holder) and b (challenger) both in contact
 
-	wantStolen := frac * 0.8
-	if math.Abs(b.possession-wantStolen) > 1e-9 {
-		t.Errorf("the taker should inherit %.3f of the victim's possession, got %.3f", wantStolen, b.possession)
+	// One tick: the challenger gains, the holder loses, but the holder still holds (only a sliver moved).
+	m.updateBallPossessor(dt)
+	if !(b.possession > 0 && a.possession < 0.8) {
+		t.Fatalf("a contest should start transferring possession: a=%.3f b=%.3f", a.possession, b.possession)
 	}
-	if math.Abs(a.possession-(0.8-wantStolen)) > 1e-9 {
-		t.Errorf("the victim should lose the stolen share: want %.3f, got %.3f", 0.8-wantStolen, a.possession)
+	if m.possessor != a {
+		t.Errorf("after one tick the holder should still hold, got %v", m.possessor)
+	}
+
+	// Sustained contest: the challenger eventually wins the ball.
+	for i := 0; i < 120 && m.possessor != b; i++ {
+		m.updateBallPossessor(dt)
 	}
 	if m.possessor != b {
-		t.Errorf("the taker should become the recognised holder")
+		t.Errorf("a sustained contest should hand the ball to the challenger, holder still %v", m.possessor)
+	}
+	if !(b.possession > a.possession) {
+		t.Errorf("after winning the challenger should hold the larger share: a=%.3f b=%.3f", a.possession, b.possession)
 	}
 }
 
-// TestPossessionStealIsAdditive: the steal ADDS to whatever the taker already had (a head
-// start on top), and the victim loses the same amount -- it is a transfer, not a max.
-func TestPossessionStealIsAdditive(t *testing.T) {
-	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
-	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
-	a.possession = 0.8
-	b.possession = 0.2 // the taker already had some
-	m.possessor = a
-	stolen := b.Stats.PossessionStealFraction * 0.8 // 0.48
-
-	onlyToucher(m, b)
-	m.updateBallPossessor()
-
-	if want := 0.2 + stolen; math.Abs(b.possession-want) > 1e-9 {
-		t.Errorf("the steal should ADD to the taker's possession: want %.3f, got %.3f", want, b.possession)
-	}
-	if want := 0.8 - stolen; math.Abs(a.possession-want) > 1e-9 {
-		t.Errorf("the victim should lose exactly the transferred amount: want %.3f, got %.3f", want, a.possession)
-	}
-}
-
-// TestPossessionHolderKeptInScramble: while the recognised holder is still in contact, a
-// challenger also touching the ball does NOT take possession or steal anything.
-func TestPossessionHolderKeptInScramble(t *testing.T) {
+// TestPossessionCleanTakeover: when the holder is OFF the ball, the nearest toucher simply takes
+// over with no transfer (there is no one to contest).
+func TestPossessionCleanTakeover(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
 	a.possession = 0.8
 	m.possessor = a
 
-	bothTouch(m, a, b) // a (the holder) and b both in contact
-	m.updateBallPossessor()
+	onlyToucher(m, b) // a off the ball, b on it
+	m.updateBallPossessor(1.0 / 60)
 
-	if m.possessor != a {
-		t.Errorf("the holder should keep the ball while still in contact, got %v", m.possessor)
+	if m.possessor != b {
+		t.Errorf("the nearest toucher should take over when the holder is off the ball, got %v", m.possessor)
 	}
-	if a.possession != 0.8 || b.possession != 0 {
-		t.Errorf("no steal while the holder is still in contact: a=%.3f b=%.3f", a.possession, b.possession)
+	if b.possession != 0 {
+		t.Errorf("a clean takeover (no contest) should transfer nothing, got b=%.3f", b.possession)
 	}
 }
 
@@ -128,19 +116,32 @@ func TestPossessionControlBonusAndCone(t *testing.T) {
 	}
 }
 
-// TestTeamChargeWidensCone: the team possession buff slightly widens the capture cone for the
-// owning team (positive coefficient) and narrows it for the conceding team, never going below 0.
-func TestTeamChargeWidensCone(t *testing.T) {
+// TestTeamChargeConeScaling: the capture cone scales asymmetrically with the team-possession
+// coefficient -- biggest with the buff, baseline without, and WAY smaller with the debuff (so a
+// debuffed opponent catches far less). Never negative.
+func TestTeamChargeConeScaling(t *testing.T) {
 	s := DefaultStats(500)
 	base := s.CaptureConeRadians
-	if got := s.captureConeRadians(0); math.Abs(got-base) > 1e-9 {
-		t.Errorf("a neutral coefficient should leave the cone unchanged: %.5f vs %.5f", got, base)
+	buff := s.captureConeRadians(1) // owning team, full charge
+	neutral := s.captureConeRadians(0)
+	debuff := s.captureConeRadians(-1) // conceding team, full enemy charge
+
+	if math.Abs(neutral-base) > 1e-9 {
+		t.Errorf("a neutral coefficient should leave the cone unchanged: %.5f vs %.5f", neutral, base)
 	}
-	if !(s.captureConeRadians(1) > base) {
-		t.Errorf("the owning-team buff should widen the cone: %.5f should exceed %.5f", s.captureConeRadians(1), base)
+	// Ordering: buff > neutral > debuff.
+	if !(buff > neutral && neutral > debuff) {
+		t.Errorf("cone should be biggest with buff, then neutral, then debuff: buff=%.4f neutral=%.4f debuff=%.4f", buff, neutral, debuff)
 	}
-	if !(s.captureConeRadians(-0.8) < base) {
-		t.Errorf("the conceding team should get a narrower cone: %.5f should be below %.5f", s.captureConeRadians(-0.8), base)
+	// The debuff must shrink the cone WAY more than the buff grows it (asymmetric), and to a
+	// small fraction of the baseline.
+	grow := buff - neutral
+	shrink := neutral - debuff
+	if !(shrink > 3*grow) {
+		t.Errorf("the debuff should shrink the cone much more than the buff grows it: grow=%.4f shrink=%.4f", grow, shrink)
+	}
+	if !(debuff < base*0.5) {
+		t.Errorf("a fully-debuffed cone should be way smaller than baseline (< half): %.4f vs base %.4f", debuff, base)
 	}
 	if s.captureConeRadians(-100) < 0 {
 		t.Errorf("the cone must never go negative")
@@ -155,15 +156,16 @@ func TestPossessionNotStolenAfterPass(t *testing.T) {
 	a.possession = 0 // a "passed" -- shoot() reset its possession to 0
 	m.possessor = a
 	onlyToucher(m, b)
-	m.updateBallPossessor()
+	m.updateBallPossessor(1.0 / 60)
 	if b.possession != 0 {
 		t.Errorf("a received ball carrying no possession should give no head start, got %.3f", b.possession)
 	}
 }
 
-// TestTeamChargeResetByChallenge: an opposing-player collision that involves the ball CARRIER
-// resets the team possession charge, while an off-ball collision does not.
-func TestTeamChargeResetByChallenge(t *testing.T) {
+// TestTeamChargeDrainedByChallenge: an opposing-player collision that involves the ball CARRIER
+// DRAINS the team possession charge over time (it does not reset it), while an off-ball
+// collision leaves it untouched.
+func TestTeamChargeDrainedByChallenge(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 	const dt = 1.0 / 60
 	l, r := firstOn(m, SideLeft), firstOn(m, SideRight)
@@ -172,27 +174,42 @@ func TestTeamChargeResetByChallenge(t *testing.T) {
 			p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
 		}
 	}
-
-	// Carrier challenged: L holds the ball, R overlaps L -> the charge resets.
-	m.possSide, m.possProgress = SideLeft, 1
-	park()
-	m.Ball.Position = m.Field.CenterSpot
-	l.Position = m.Field.CenterSpot
-	r.Position = m.Field.CenterSpot.Add(geom.NewVec(10, 0)) // overlapping L (and the ball)
-	m.resolveInteractions(dt)
-	if m.possSide != SideNone {
-		t.Errorf("an opposing challenge on the carrier should reset the team charge, side=%v", m.possSide)
+	challenge := func() { // L holds the ball; R overlaps L (and the ball) -- an opposing challenge
+		park()
+		m.Ball.Position = m.Field.CenterSpot
+		l.Position = m.Field.CenterSpot
+		r.Position = m.Field.CenterSpot.Add(geom.NewVec(10, 0))
 	}
 
-	// Off-ball collision: L and R overlap each other far from the ball -> the charge survives.
+	// One tick of challenge DRAINS the charge a little -- it does NOT reset, and ownership stays.
+	m.possSide, m.possProgress = SideLeft, 1
+	challenge()
+	m.resolveInteractions(dt)
+	if m.possSide != SideLeft {
+		t.Errorf("a single challenge tick should not hand ownership over, side=%v", m.possSide)
+	}
+	if !(m.possProgress < 1 && m.possProgress > 0) {
+		t.Errorf("a challenge should DRAIN the charge a little, got progress=%.4f", m.possProgress)
+	}
+
+	// A sustained challenge drains it to empty (re-overlapping each tick, since Resolve separates them).
+	for i := 0; i < 200 && m.possProgress > 0; i++ {
+		challenge()
+		m.resolveInteractions(dt)
+	}
+	if m.possProgress > 0.01 {
+		t.Errorf("a sustained challenge should drain the charge to ~0, got %.4f", m.possProgress)
+	}
+
+	// Off-ball collision: L and R overlap each other far from the ball -> no drain.
 	m.possSide, m.possProgress = SideLeft, 1
 	park()
 	m.Ball.Position = m.Field.CenterSpot
 	l.Position = geom.NewVec(50000, 0)
 	r.Position = geom.NewVec(50010, 0) // overlap each other, nowhere near the ball
 	m.resolveInteractions(dt)
-	if m.possSide != SideLeft {
-		t.Errorf("an off-ball collision should NOT reset the charge, side=%v", m.possSide)
+	if m.possProgress != 1 {
+		t.Errorf("an off-ball collision should not drain the charge, got progress=%.4f", m.possProgress)
 	}
 }
 
@@ -319,6 +336,41 @@ func TestTeamChargeShapesContact(t *testing.T) {
 	hardBase := contact(hard, 0)
 	if hardOther.X <= hardBase.X {
 		t.Errorf("a blocked shot should fly off the conceding team more: other=%.2f base=%.2f", hardOther.X, hardBase.X)
+	}
+}
+
+// TestMaxShotNotCapturedByDebuffedOpponent: a full-power shot, dead-on, is NOT captured by a
+// debuffed opponent (the conceding team when the shooter holds the possession boost) -- it
+// deflects off rather than being caught, even if that opponent is fully trapping.
+func TestMaxShotNotCapturedByDebuffedOpponent(t *testing.T) {
+	const ballRadius = 10
+	s := DefaultStats(500)
+	maxShot := s.Shoot.Eval(0) // full-charge front shot power (the ball's launch speed)
+	coef := s.TouchQuality.OtherTeam
+
+	contact := func(trap float64) (geom.Vec, float64) {
+		p := NewPlayer(1, geom.NewVec(0, 0), DefaultStats(500), &Team{Side: SideRight})
+		p.Facing = geom.NewVec(1, 0) // facing the incoming ball: dead-on, inside the cone
+		p.touchCoef = coef           // debuffed (the conceding team)
+		p.trapCharge = trap
+		b := NewBall(geom.NewVec(p.Radius()+ballRadius-0.5, 0), ballRadius)
+		b.Velocity = geom.NewVec(-maxShot, 0) // straight at the player at the max shot speed
+		_, bounce := handleBallToPlayerInteraction(b, p, 1.0/60)
+		return b.Velocity, bounce
+	}
+
+	// Dead-on, no trap: not a soft capture (bounce > 0), and the ball deflects away.
+	vel, bounce := contact(0)
+	if bounce <= 0 {
+		t.Errorf("a max shot should NOT be captured by a debuffed opponent (should bounce), bounce=%.1f", bounce)
+	}
+	if vel.X <= 0 {
+		t.Errorf("the ball should deflect off the opponent (move away), got vx=%.1f", vel.X)
+	}
+
+	// Even a fully-trapping debuffed opponent cannot capture it (the shot beats the trapped capture).
+	if _, bounceTrap := contact(1); bounceTrap <= 0 {
+		t.Errorf("even a full-trapping debuffed opponent should not capture a max shot, bounce=%.1f", bounceTrap)
 	}
 }
 
