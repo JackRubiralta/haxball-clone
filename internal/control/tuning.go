@@ -69,6 +69,10 @@ type aiTuning struct {
 	recvAdvanceWeight float64 // weight on goalward advancement when picking a receive spot
 	oneTwoTicks       uint64  // ticks a player keeps making its give-and-go run after passing
 
+	separationRadius      float64 // an off-ball player repels its movement from teammates within this gap (world units)
+	separationGain        float64 // strength of that repulsion blended into the move direction (0 = off)
+	separationMinThrottle float64 // throttle floor so an idle-but-crowded off-ball player still drifts apart
+
 	// Pressure / decisions.
 	pressureRadius    float64 // an opponent within this distance applies pressure
 	shieldPressure    float64 // pressure above which the carrier shields/clears instead of dwelling
@@ -154,13 +158,16 @@ func defaultAITuning() aiTuning {
 		passSpeedMax:      430,
 		passDistPenalty:   0.0004,
 
-		supportForwardBias: 40,
-		supportRangeFrac:   0.3,
-		runForwardBias:     150,
-		recvLaneWeight:     60,
-		recvSpaceWeight:    0.6,
-		recvAdvanceWeight:  0.45,
-		oneTwoTicks:        50,
+		supportForwardBias:    40,
+		supportRangeFrac:      0.3,
+		runForwardBias:        150,
+		recvLaneWeight:        60,
+		recvSpaceWeight:       0.6,
+		recvAdvanceWeight:     0.45,
+		oneTwoTicks:           50,
+		separationRadius:      44,  // just above the 36 contact gap: only fires to avert a near-collision
+		separationGain:        1.5, // strong omnidirectional repulsion from a teammate about to be run into
+		separationMinThrottle: 0.3, // a near-collision pulls an idle player off the spot to step apart
 
 		pressureRadius:    70,
 		shieldPressure:    0.55,
@@ -189,7 +196,7 @@ func defaultAITuning() aiTuning {
 		keeperDepthMin:    24,
 		keeperDepthMax:    60,
 		keeperSweepBox:    1.1,
-		keeperSaveSpeed:   110,
+		keeperSaveSpeed:   85, // anticipate the predictive save on more shots (was 110)
 		keeperSweepMargin: 0.12,
 	}
 }
@@ -225,13 +232,13 @@ type skillParams struct {
 func paramsForSkill(s Skill) skillParams {
 	switch s {
 	case SkillEasy:
-		return skillParams{reactTicks: 10, aimNoiseRad: 0.19198621771937624, scoreNoise: 0.35, moveJitter: 16, chargeSlack: 0.25, keeperError: 168}
+		return skillParams{reactTicks: 10, aimNoiseRad: 0.19198621771937624, scoreNoise: 0.35, moveJitter: 16, chargeSlack: 0.25, keeperError: 60}
 	case SkillNormal:
-		return skillParams{reactTicks: 5, aimNoiseRad: 0.10471975511965977, scoreNoise: 0.2, moveJitter: 8, chargeSlack: 0.15, keeperError: 140}
+		return skillParams{reactTicks: 5, aimNoiseRad: 0.10471975511965977, scoreNoise: 0.2, moveJitter: 8, chargeSlack: 0.15, keeperError: 42}
 	case SkillHard:
-		return skillParams{reactTicks: 2, aimNoiseRad: 0, scoreNoise: 0.06, moveJitter: 2, chargeSlack: 0.08, keeperError: 115}
+		return skillParams{reactTicks: 2, aimNoiseRad: 0, scoreNoise: 0.06, moveJitter: 2, chargeSlack: 0.08, keeperError: 28}
 	default: // SkillImpossible -- perfect execution
-		return skillParams{reactTicks: 1, aimNoiseRad: 0, scoreNoise: 0, moveJitter: 0, chargeSlack: 0.04, keeperError: 38}
+		return skillParams{reactTicks: 1, aimNoiseRad: 0, scoreNoise: 0, moveJitter: 0, chargeSlack: 0.04, keeperError: 12}
 	}
 }
 

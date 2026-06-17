@@ -168,7 +168,15 @@ func (a *AI) shootAt(p perception, in sim.Intent, target geom.Vec, desired, base
 	if a.chargedAt != 0 {
 		relax = clampFloat(float64(p.view.Tick()-a.chargedAt)/float64(a.tune.aimRelaxTicks), 0, 1)
 	}
-	tol := lerp(a.shotAlignRad, a.tune.shootAlignMaxRad, relax)
+	// Relaxing only ever LOOSENS the tolerance: never let it drop below the committed baseTol.
+	// A clear commits an already-wide tolerance (> shootAlignMaxRad); without this it would
+	// TIGHTEN as the lineup dragged on, so a clear that wasn't lined up instantly could never
+	// fire -- it would time out and the keeper would be stranded dribbling instead of booting it.
+	relaxTo := a.tune.shootAlignMaxRad
+	if a.shotAlignRad > relaxTo {
+		relaxTo = a.shotAlignRad
+	}
+	tol := lerp(a.shotAlignRad, relaxTo, relax)
 	aligned := p.iControl && a.launchAligned(p, a.shotTarget, cur, tol)
 	overtime := p.view.Tick()-a.chargeStart > a.tune.maxChargeTicks
 	switch {

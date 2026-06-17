@@ -111,12 +111,41 @@ func (a *AI) offBall(p perception, plan teamPlan) sim.Intent {
 	}
 
 	mv, th := a.steer(p, target, true)
+	// Spread off the ball: repel the MOVEMENT away from teammates that are too close (a boids
+	// separation from this player's own position, not its target -- nudging the target instead
+	// just makes runs cross). If the player has otherwise arrived (idle) but is crowded, give it
+	// a gentle throttle so resting clusters drift apart. The elected presser never gets this --
+	// only off-ball players -- so it is free to chase the ball.
+	if a.tune.separationGain > 0 {
+		if push := a.teammatePush(p); push != (geom.Vec{}) {
+			mv = geom.Unit(mv.Add(push.Scale(a.tune.separationGain)))
+			if th < a.tune.separationMinThrottle {
+				th = a.tune.separationMinThrottle
+			}
+		}
+	}
 	in.Move, in.Throttle = mv, th
 	in.Aim = a.aimToward(p, p.ball)
 	if a.wantTrapReceive(p) {
 		in.Trap = true
 	}
 	return in
+}
+
+// teammatePush returns a steering vector that repels this player away from teammates within
+// separationRadius, each contribution a unit direction scaled by how deep inside the radius the
+// teammate sits (0 at the edge, 1 on top). Summing over close teammates spreads bunched players
+// apart. Read from current positions in the shared view, so it is deterministic and symmetric.
+func (a *AI) teammatePush(p perception) geom.Vec {
+	push := geom.Vec{}
+	for _, q := range p.teammates {
+		rel := p.me.Position().Sub(q.Position())
+		d := geom.Norm(rel)
+		if d > 1e-6 && d < a.tune.separationRadius {
+			push = push.Add(rel.Scale((a.tune.separationRadius - d) / a.tune.separationRadius / d))
+		}
+	}
+	return push
 }
 
 // receiveSpot moves this player to where it is a real, REACHABLE passing option. Each

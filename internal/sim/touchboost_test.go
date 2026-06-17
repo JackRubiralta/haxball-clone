@@ -41,6 +41,164 @@ func buildToFull(m *Match, holder *Player, dt float64) {
 	}
 }
 
+// bothTouch parks everyone, then places leftP and rightP both overlapping the ball, so
+// touchingSides reports a CONTESTED ball (both teams touching at once).
+func bothTouch(m *Match, leftP, rightP *Player) {
+	for _, p := range m.Players {
+		p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
+	}
+	leftP.Position = geom.NewVec(0, 0)
+	rightP.Position = geom.NewVec(0, 0)
+	m.Ball.Position = geom.NewVec(0, 0)
+}
+
+// TestPossessionStealOnTakeaway: when the ball changes hands mid-dribble, the taker inherits a
+// fraction of the dispossessed player's possession and the victim loses that share.
+func TestPossessionStealOnTakeaway(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+	a.possession = 0.8
+	m.possessor = a
+	frac := b.Stats.PossessionStealFraction
+
+	onlyToucher(m, b) // a off the ball, b now on it
+	m.updateBallPossessor()
+
+	wantStolen := frac * 0.8
+	if math.Abs(b.possession-wantStolen) > 1e-9 {
+		t.Errorf("the taker should inherit %.3f of the victim's possession, got %.3f", wantStolen, b.possession)
+	}
+	if math.Abs(a.possession-(0.8-wantStolen)) > 1e-9 {
+		t.Errorf("the victim should lose the stolen share: want %.3f, got %.3f", 0.8-wantStolen, a.possession)
+	}
+	if m.possessor != b {
+		t.Errorf("the taker should become the recognised holder")
+	}
+}
+
+// TestPossessionStealIsAdditive: the steal ADDS to whatever the taker already had (a head
+// start on top), and the victim loses the same amount -- it is a transfer, not a max.
+func TestPossessionStealIsAdditive(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+	a.possession = 0.8
+	b.possession = 0.2 // the taker already had some
+	m.possessor = a
+	stolen := b.Stats.PossessionStealFraction * 0.8 // 0.48
+
+	onlyToucher(m, b)
+	m.updateBallPossessor()
+
+	if want := 0.2 + stolen; math.Abs(b.possession-want) > 1e-9 {
+		t.Errorf("the steal should ADD to the taker's possession: want %.3f, got %.3f", want, b.possession)
+	}
+	if want := 0.8 - stolen; math.Abs(a.possession-want) > 1e-9 {
+		t.Errorf("the victim should lose exactly the transferred amount: want %.3f, got %.3f", want, a.possession)
+	}
+}
+
+// TestPossessionHolderKeptInScramble: while the recognised holder is still in contact, a
+// challenger also touching the ball does NOT take possession or steal anything.
+func TestPossessionHolderKeptInScramble(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+	a.possession = 0.8
+	m.possessor = a
+
+	bothTouch(m, a, b) // a (the holder) and b both in contact
+	m.updateBallPossessor()
+
+	if m.possessor != a {
+		t.Errorf("the holder should keep the ball while still in contact, got %v", m.possessor)
+	}
+	if a.possession != 0.8 || b.possession != 0 {
+		t.Errorf("no steal while the holder is still in contact: a=%.3f b=%.3f", a.possession, b.possession)
+	}
+}
+
+// TestPossessionControlBonusAndCone is a cheap pin on two tuning values: the per-player Control
+// boost reaches x1.09 at full possession, and the role preset mirrors the widened capture cone.
+func TestPossessionControlBonusAndCone(t *testing.T) {
+	s := DefaultStats(500)
+	if mul := 1 + s.PossessionControlBonus*1; math.Abs(mul-1.09) > 1e-9 {
+		t.Errorf("Control multiplier at full possession = %.4f, want 1.09", mul)
+	}
+	if r := fieldPlayerStats(); math.Abs(r.CaptureConeRadians-s.CaptureConeRadians) > 1e-9 {
+		t.Errorf("role cone %.6f should match DefaultStats %.6f", r.CaptureConeRadians, s.CaptureConeRadians)
+	}
+}
+
+// TestPossessionNotStolenAfterPass: a passed ball carries no possession (shoot zeros it), so a
+// receiving player gets no head start from the passer.
+func TestPossessionNotStolenAfterPass(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+	a.possession = 0 // a "passed" -- shoot() reset its possession to 0
+	m.possessor = a
+	onlyToucher(m, b)
+	m.updateBallPossessor()
+	if b.possession != 0 {
+		t.Errorf("a received ball carrying no possession should give no head start, got %.3f", b.possession)
+	}
+}
+
+// TestTeamChargeResetByChallenge: an opposing-player collision that involves the ball CARRIER
+// resets the team possession charge, while an off-ball collision does not.
+func TestTeamChargeResetByChallenge(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	l, r := firstOn(m, SideLeft), firstOn(m, SideRight)
+	park := func() {
+		for _, p := range m.Players {
+			p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
+		}
+	}
+
+	// Carrier challenged: L holds the ball, R overlaps L -> the charge resets.
+	m.possSide, m.possProgress = SideLeft, 1
+	park()
+	m.Ball.Position = m.Field.CenterSpot
+	l.Position = m.Field.CenterSpot
+	r.Position = m.Field.CenterSpot.Add(geom.NewVec(10, 0)) // overlapping L (and the ball)
+	m.resolveInteractions(dt)
+	if m.possSide != SideNone {
+		t.Errorf("an opposing challenge on the carrier should reset the team charge, side=%v", m.possSide)
+	}
+
+	// Off-ball collision: L and R overlap each other far from the ball -> the charge survives.
+	m.possSide, m.possProgress = SideLeft, 1
+	park()
+	m.Ball.Position = m.Field.CenterSpot
+	l.Position = geom.NewVec(50000, 0)
+	r.Position = geom.NewVec(50010, 0) // overlap each other, nowhere near the ball
+	m.resolveInteractions(dt)
+	if m.possSide != SideLeft {
+		t.Errorf("an off-ball collision should NOT reset the charge, side=%v", m.possSide)
+	}
+}
+
+// TestPossessionGripSplit pins the directional design of player possession on the two hold
+// forces: it changes the centre-pull grip only mildly (rising to 1), and slightly REDUCES the
+// stickiness grip (a tiny debuff at full possession).
+func TestPossessionGripSplit(t *testing.T) {
+	s := DefaultStats(500)
+	if got := s.centerPullGrip(0); math.Abs(got-s.CenterPullGripFloor) > 1e-9 {
+		t.Errorf("centerPullGrip(0) = %.3f, want floor %.3f", got, s.CenterPullGripFloor)
+	}
+	if got := s.centerPullGrip(1); math.Abs(got-1) > 1e-9 {
+		t.Errorf("centerPullGrip(1) = %.3f, want 1", got)
+	}
+	if swing := s.centerPullGrip(1) - s.centerPullGrip(0); swing > 0.5 {
+		t.Errorf("possession should change the centre-pull only mildly (swing < the old 0.7), got %.3f", swing)
+	}
+	if got := s.stickinessGrip(0); math.Abs(got-1) > 1e-9 {
+		t.Errorf("stickinessGrip(0) = %.3f, want 1", got)
+	}
+	if full := s.stickinessGrip(1); !(full < 1 && full > 0.9) {
+		t.Errorf("stickinessGrip(1) should be a tiny debuff just below 1, got %.3f", full)
+	}
+}
+
 // TestTeamBuildCurve pins the build ramp: 0->0, 1->1, monotonic, and ACCELERATING (weaker
 // than linear early, so the rate increases toward the end).
 func TestTeamBuildCurve(t *testing.T) {
@@ -170,14 +328,14 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 	}
 	heldStrength := m.teamPossessionStrength(SideLeft)
 
-	// A passes: the ball is in flight (nobody touching) for ~0.5s, inside the 1.0s hold
-	// window -- the charge is held at strength and the progress is preserved, not decayed.
+	// A passes: the ball is in flight (nobody touching) for part of the hold window, so the
+	// charge is held at strength and the progress is preserved, not decayed.
 	onlyToucher(m, nil)
-	for i := 0; i < 30; i++ {
+	for i := 0; i < int(0.5*teamHoldSeconds/dt); i++ {
 		m.advanceTeamPossession(dt)
 	}
 	if m.possSide != SideLeft {
-		t.Fatalf("the charge should survive a 1s pass, owner now %v", m.possSide)
+		t.Fatalf("the charge should survive a pass within the hold window, owner now %v", m.possSide)
 	}
 	if math.Abs(m.possProgress-built) > 1e-9 {
 		t.Errorf("progress must be preserved in flight: was %.3f, now %.3f", built, m.possProgress)
@@ -230,6 +388,30 @@ func TestTeamChargeResetByOpponent(t *testing.T) {
 	}
 }
 
+// TestTeamChargeContestedReset: when both teams touch the ball at once, the charge clears
+// entirely (nobody gets a clean possession out of a scramble).
+func TestTeamChargeContestedReset(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	left, right := firstOn(m, SideLeft), firstOn(m, SideRight)
+
+	buildToFull(m, left, dt)
+	if m.possSide != SideLeft {
+		t.Fatalf("precondition: the left team should own the charge, got %v", m.possSide)
+	}
+
+	bothTouch(m, left, right)
+	m.advanceTeamPossession(dt)
+	if m.possSide != SideNone || m.possProgress != 0 {
+		t.Errorf("a contested ball should clear the charge, side=%v progress=%.3f", m.possSide, m.possProgress)
+	}
+	for _, p := range m.Players {
+		if p.touchCoef != 0 {
+			t.Errorf("a contested reset should zero coefficients, player %d = %.3f", p.PlayerID, p.touchCoef)
+		}
+	}
+}
+
 // TestTeamChargeExpiresAfterDecayWindow: a released charge holds at full within the hold
 // window and is gone once the full decay window of nobody touching it has elapsed.
 func TestTeamChargeExpiresAfterDecayWindow(t *testing.T) {
@@ -255,9 +437,10 @@ func TestTeamChargeExpiresAfterDecayWindow(t *testing.T) {
 	}
 }
 
-// TestTeamChargeDecaysAndRebuildsOnLateReception is the user's worked example: a full charge
-// released and received LATE (1.75s, deep in the decay) lands at ~30%, the receiver inherits
-// that decayed coefficient, and rebuilds from there toward full (faster than a fresh second).
+// TestTeamChargeDecaysAndRebuildsOnLateReception is the user's worked example, generalised: a
+// full charge released and received LATE (mid-decay, partly decayed) is taken at the decayed
+// coefficient, the receiver inherits it, and rebuilds from there toward full -- far faster
+// than a fresh full build.
 func TestTeamChargeDecaysAndRebuildsOnLateReception(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 	const dt = 1.0 / 60
@@ -301,14 +484,15 @@ func TestTeamChargeDecaysAndRebuildsOnLateReception(t *testing.T) {
 		t.Errorf("the charge should re-base to progress ~%.3f (the decayed strength), got %.3f", want, m.possProgress)
 	}
 
-	// It rebuilds to full from the decayed point -- in well under a fresh second.
+	// It rebuilds to full from the decayed point -- in well under a fresh full build.
+	freshTicks := int(teamBuildSeconds / dt)
 	ticks := 1
-	for m.possProgress < 1 && ticks < 60 {
+	for m.possProgress < 1 && ticks < freshTicks+5 {
 		m.advanceTeamPossession(dt)
 		ticks++
 	}
-	if ticks >= 55 {
-		t.Errorf("rebuild from a decayed charge should beat a fresh second, took %d ticks", ticks)
+	if ticks >= freshTicks {
+		t.Errorf("rebuild from a decayed charge should beat a fresh full build (%d ticks), took %d", freshTicks, ticks)
 	}
 }
 

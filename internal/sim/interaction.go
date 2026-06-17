@@ -139,18 +139,22 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	}
 	angle := math.Acos(cos) // radians
 
-	// Possession grip (fresh touch weak, established possession firm) and the trap
-	// modifiers (a held trap strengthens and lengthens the centre-pull).
-	grip := player.Stats.GripFloor + (1-player.Stats.GripFloor)*player.possession
+	// Possession grip, split so possession affects the two hold forces only mildly and in
+	// OPPOSITE directions: the centre-pull rises a little with possession (most of it is
+	// always present -- CenterPullGripFloor is high), while stickiness is, if anything, very
+	// slightly REDUCED by possession (StickinessPossessionDebuff). Plus the trap modifiers
+	// (a held trap strengthens and lengthens the centre-pull).
+	centerPullGrip := player.Stats.centerPullGrip(player.possession)
+	stickinessGrip := player.Stats.stickinessGrip(player.possession)
 	trapPullMul := 1 + player.Stats.TrapPullBonus*player.trapCharge
 	pullRange := player.Stats.PullRange + player.Stats.TrapRangeBonus*player.trapCharge
 
 	// Centre-pull: a gap-scaled spring toward the player centre, active only while the
-	// ball is near but NOT yet touching, scaled by grip and the trap. It draws a
-	// drifting (or an opponent's loose) ball in to make contact; once the ball is
+	// ball is near but NOT yet touching, scaled by the centre-pull grip and the trap. It
+	// draws a drifting (or an opponent's loose) ball in to make contact; once the ball is
 	// touching, the sticky hold below takes over instead.
 	if gap >= player.Stats.TouchRange && gap < pullRange {
-		strength := player.Stats.CenterPull.Eval(angle) * grip * trapPullMul
+		strength := player.Stats.CenterPull.Eval(angle) * centerPullGrip * trapPullMul
 		ball.Velocity = ball.Velocity.Add(normal.Scale(-strength * (gap / pullRange) * deltaTime))
 	}
 
@@ -187,12 +191,12 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	// While the ball is ACTUALLY touching: hold it, roll it to the front, and seat it.
 	if gap < player.Stats.TouchRange {
 		// Sticky hold (radial): resist the ball separating from the player up to a
-		// capped holding impulse, scaled by grip so a fresh touch barely holds while an
-		// established one holds firmly. Below the cap the separation is cancelled (the
-		// ball clings); a push past it -- a shot or a hard bump -- frees the ball with
-		// the excess. Strongest at the front, zero at the back.
+		// capped holding impulse, scaled by the stickiness grip (near-constant, a hair
+		// lower at full possession). Below the cap the separation is cancelled (the ball
+		// clings); a push past it -- a shot or a hard bump -- frees the ball with the
+		// excess. Strongest at the front, with a small baseline hold even at the back.
 		separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal)
-		holdCap := player.Stats.Stickiness.Eval(angle) * grip * deltaTime
+		holdCap := player.Stats.Stickiness.Eval(angle) * stickinessGrip * deltaTime
 
 		// RETENTION measures how well the player's FULL hold contains the ball this
 		// frame: the sticky cap above PLUS the centripetal stick's full inward pull

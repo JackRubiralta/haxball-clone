@@ -63,14 +63,20 @@ type PlayerStats struct {
 	// Possession / control build-up: possession grows to 1 over PossessionBuildSeconds
 	// while the ball is touching ANYWHERE (and decays over PossessionReleaseSeconds
 	// otherwise); control uses the same timing but builds only while the ball is touching
-	// within PossessionArcRadians of the front. A grip multiplier (GripFloor at a fresh
-	// touch, 1 at full possession) scales the centre-pull and stickiness, so a fresh touch
-	// is easily stolen and established possession survives quick turns. PossessionArcRadians
-	// now gates only the (currently unused) control state, not possession.
-	PossessionBuildSeconds   float64
-	PossessionReleaseSeconds float64
-	PossessionArcRadians     float64
-	GripFloor                float64
+	// within PossessionArcRadians of the front. PossessionArcRadians now gates only the
+	// (currently unused) control state, not possession.
+	//
+	// Possession modulates the two hold forces only MILDLY and in OPPOSITE directions:
+	//   - CenterPullGripFloor sets the centre-pull's grip at possession 0; it rises to 1 at
+	//     full possession, so a high floor means possession barely changes the centre-pull.
+	//   - StickinessPossessionDebuff slightly REDUCES stickiness with possession: the
+	//     stickiness grip is (1 - StickinessPossessionDebuff*possession), a touch lower when
+	//     fully settled.
+	PossessionBuildSeconds     float64
+	PossessionReleaseSeconds   float64
+	PossessionArcRadians       float64
+	CenterPullGripFloor        float64
+	StickinessPossessionDebuff float64
 
 	// Possession movement penalty: while the player has the ball at its feet (touching
 	// it), it moves a little slower. These scale the (soft) top speed and the
@@ -82,9 +88,16 @@ type PlayerStats struct {
 	// PossessionControlBonus is a small PER-PLAYER (not team) boost to the Control force
 	// (the tangential roll-to-front), scaled by the player's own possession: the Control
 	// strength is multiplied by (1 + PossessionControlBonus*possession), so a settled
-	// carrier rolls the ball to its front a touch more crisply. 0.05 = up to +5% at full
-	// possession.
+	// carrier rolls the ball to its front a touch more crisply. 0.09 = up to +9% (x1.09) at
+	// full possession.
 	PossessionControlBonus float64
+
+	// PossessionStealFraction is how much of a dispossessed player's built-up possession the
+	// player who takes the ball off them inherits as a head start (and the victim loses): a
+	// clean tackle keeps some control instead of starting cold. A player who PASSED has zero
+	// possession (shoot resets it), so a received pass transfers nothing -- only a mid-dribble
+	// takeaway carries possession. 0.6 = the taker steals 60% of the victim's possession.
+	PossessionStealFraction float64
 
 	// Charged shot: a tap fires at MinShootFactor of the angle power, a full charge at
 	// the full power. While charging, the player slows even more than while trapping --
@@ -124,8 +137,8 @@ type PlayerStats struct {
 	// never affects bounce.
 	TrapRestitutionFactor float64
 
-	// TouchQuality folds a player's POSSESSION and the team RECEIVE-BOOST into how cleanly
-	// it takes an incoming ball (its capture speed and bounce). See the TouchQuality type.
+	// TouchQuality folds the TEAM POSSESSION CHARGE into how cleanly a player takes an
+	// incoming ball (its capture speed and bounce). See the TouchQuality type.
 	TouchQuality TouchQuality
 }
 
@@ -197,6 +210,20 @@ func clampUnit(v float64) float64 {
 	return v
 }
 
+// centerPullGrip is the centre-pull's grip at the given possession: it rises from
+// CenterPullGripFloor (possession 0) to 1 (full possession). A high floor means possession
+// changes the centre-pull only a little.
+func (s PlayerStats) centerPullGrip(possession float64) float64 {
+	return s.CenterPullGripFloor + (1-s.CenterPullGripFloor)*possession
+}
+
+// stickinessGrip is the stickiness grip at the given possession: 1 at a fresh touch, trimmed
+// slightly DOWN with possession by StickinessPossessionDebuff (a settled carrier is a hair
+// less sticky).
+func (s PlayerStats) stickinessGrip(possession float64) float64 {
+	return 1 - s.StickinessPossessionDebuff*possession
+}
+
 // aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle`
 // radians off the facing direction: ShootAimAssist within the front cone, decaying
 // linearly to zero across the soft band, and zero beyond (side/back shots fire purely
@@ -246,27 +273,29 @@ func DefaultStats(shootForce float64) PlayerStats {
 		PullRange:      6,
 		Restitution:    CurveSpec{InverseQuadraticCurve, 0.05, 0.25}, // less bouncy ball off a player (front/back lowered)
 		CaptureSpeed:   CurveSpec{LinearCurve, 320, 70},
-		CenterPull:     CurveSpec{InverseQuadraticCurve, 1000, 0},
-		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 0},
+		CenterPull:     CurveSpec{InverseQuadraticCurve, 950, 0},  // front nerfed a touch (1000 -> 950)
+		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30}, // front restored to 420; small baseline hold at the back (0 -> 30)
 		Control:        CurveSpec{LinearCurve, 1500, 300},
 		Shoot:          CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping: 11,
 		OrbitStick:     8,
 
-		CaptureConeRadians: 0.2617993877991494, // ~15deg
+		CaptureConeRadians: 0.2792526803190927, // ~16deg (widened a touch from 15deg)
 		CaptureConeSoft:    0.4363323129985824, // ~25deg
 
 		SeatStrength: 14,
 
-		PossessionBuildSeconds:   1.5,
-		PossessionReleaseSeconds: 0.4,
-		PossessionArcRadians:     0.8726646259971648, // ~50deg
-		GripFloor:                0.3,
+		PossessionBuildSeconds:     1.5,
+		PossessionReleaseSeconds:   0.4,
+		PossessionArcRadians:       0.8726646259971648, // ~50deg
+		CenterPullGripFloor:        0.65,               // possession changes the centre-pull much less than before (0.65 -> 1.0, vs the old 0.3 -> 1.0)
+		StickinessPossessionDebuff: 0.03,               // possession trims stickiness a hair (down to 0.97 at full)
 
 		PossessionSpeedFactor: 0.925, // ~7.5% slower top speed while carrying the ball
 		PossessionAccelFactor: 0.925, // ~7.5% slower acceleration while carrying the ball
 
-		PossessionControlBonus: 0.05, // up to +5% roll-to-front control at full possession
+		PossessionControlBonus:  0.09, // up to +9% roll-to-front control at full possession (x1.09)
+		PossessionStealFraction: 0.6,  // a takeaway inherits 60% of the dispossessed player's possession
 
 		MinShootFactor:   0.35,
 		ShootSpeedFactor: 0.35,
@@ -287,7 +316,7 @@ func DefaultStats(shootForce float64) PlayerStats {
 
 		TouchQuality: TouchQuality{
 			OwnTeamMax:       1.0,  // owning team at full charge -> the cleanest touch
-			OtherTeam:        -0.6, // other team at the owner's full charge -> ball flies off them
+			OtherTeam:        -0.8, // other team at the owner's full charge -> ball flies off them (stronger debuff)
 			CaptureWorst:     0.7,  // -30% capture at the worst (ball harder to absorb)
 			CaptureBest:      1.35, // +35% capture at full charge (sticks at higher speed)
 			RestitutionWorst: 1.5,  // +50% bounce at the worst (blocks/lunges fly further)

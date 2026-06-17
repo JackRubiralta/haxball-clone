@@ -65,6 +65,11 @@ type Match struct {
 	possSide     Side    // team that owns the charge (SideNone = nobody)
 	possProgress float64 // 0..1 build progress (held time toward full; preserved across a pass)
 	possCoast    float64 // seconds since the owning team last touched the ball (hold+decay clock)
+
+	// possessor is the player currently recognised as holding the ball (nil = nobody yet). It
+	// stays the holder while they remain in contact -- so when the ball changes hands, the new
+	// holder STEALS a fraction of the old holder's player possession (see updateBallPossessor).
+	possessor *Player
 }
 
 // Celebrating reports whether a goal was just scored and the kickoff countdown is
@@ -113,6 +118,11 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 	for _, p := range m.Players {
 		updatePossession(m.Ball, p, deltaTime)
 	}
+
+	// 2.55 Track who holds the ball; on a change of hands, the taker steals a slice of the
+	// dispossessed player's possession. Runs before the dribble interaction so the stolen
+	// possession feeds this tick's grip.
+	m.updateBallPossessor()
 
 	// 2.6 Advance the team possession charge and publish each player's touch-quality
 	// coefficient for this tick, so the collision resolver can read it as a per-player value.
@@ -288,11 +298,17 @@ func (m *Match) resetTeamPossession() {
 	}
 }
 
-// touchingSides reports which teams have at least one player overlapping the ball this tick
-// (the same touch test as the possession slowdown). Used to drive the team charge.
+// touching reports whether the player is currently in contact with the ball (the same touch
+// test as the possession slowdown and possession build-up).
+func (m *Match) touching(p *Player) bool {
+	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange
+}
+
+// touchingSides reports which teams have at least one player overlapping the ball this tick.
+// Used to drive the team charge.
 func (m *Match) touchingSides() (left, right bool) {
 	for _, p := range m.Players {
-		if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange {
+		if m.touching(p) {
 			switch p.Team.Side {
 			case SideLeft:
 				left = true
@@ -302,6 +318,56 @@ func (m *Match) touchingSides() (left, right bool) {
 		}
 	}
 	return left, right
+}
+
+// updateBallPossessor tracks who holds the ball and, when it changes hands, transfers a slice
+// of the old holder's PLAYER possession to the new one (a steal). The current holder keeps
+// possession while they are still in contact -- so a brief scramble where both players touch
+// does NOT trigger a steal; only once the old holder is off the ball and a different player is
+// on it does possession change hands. A player who passed/shot has possession 0 (shoot resets
+// it), so a received pass steals nothing; only a mid-dribble takeaway carries possession.
+func (m *Match) updateBallPossessor() {
+	if m.possessor != nil && m.touching(m.possessor) {
+		return // the current holder keeps the ball while still in contact
+	}
+	// The ball is up for grabs: the player whose centre is NEAREST the ball (the one who
+	// actually won it) takes it. Iterating in roster order makes exact-distance ties
+	// deterministic (the lowest-index toucher wins), so replays stay bit-identical.
+	var next *Player
+	best := 0.0
+	for _, p := range m.Players {
+		if !m.touching(p) {
+			continue
+		}
+		if d := geom.Dist(p.Position, m.Ball.Position); next == nil || d < best {
+			next, best = p, d
+		}
+	}
+	if next == nil {
+		return // ball loose: keep the (decaying) holder of record until someone takes it
+	}
+	if m.possessor != nil && next != m.possessor {
+		m.stealPossession(m.possessor, next)
+	}
+	m.possessor = next
+}
+
+// stealPossession transfers a fraction of a dispossessed player's built-up possession to the
+// player who just took the ball: the taker GAINS it on top of any it already had (a clean
+// takeaway keeps some control), and the victim loses the same amount. The transfer is capped
+// at the taker reaching full possession, so nothing is created or destroyed.
+func (m *Match) stealPossession(victim, taker *Player) {
+	stolen := taker.Stats.PossessionStealFraction * victim.possession
+	if room := 1 - taker.possession; stolen > room { // the taker can't exceed full possession
+		stolen = room
+	}
+	if stolen <= 0 {
+		return
+	}
+	taker.possession += stolen
+	if victim.possession -= stolen; victim.possession < 0 {
+		victim.possession = 0
+	}
 }
 
 // advanceTeamPossession runs one tick of the team possession charge. It first PUBLISHES every
@@ -388,7 +454,17 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 
 	for i := 0; i < len(m.Players); i++ {
 		for j := i + 1; j < len(m.Players); j++ {
-			physics.Resolve(m.Players[i].Body, m.Players[j].Body)
+			pi, pj := m.Players[i], m.Players[j]
+			// A collision between OPPOSING players where one of them is IN CONTACT WITH THE BALL
+			// resets the team possession charge -- a physical challenge on the ball breaks up the
+			// build-up. Detected before Resolve pushes them apart; an off-ball bump does nothing.
+			challenge := pi.Team.Side != pj.Team.Side &&
+				geom.Dist(pi.Position, pj.Position) < pi.Radius()+pj.Radius() &&
+				(m.touching(pi) || m.touching(pj))
+			physics.Resolve(pi.Body, pj.Body)
+			if challenge {
+				m.resetTeamPossession()
+			}
 		}
 	}
 	for _, p := range m.Players {
@@ -424,6 +500,7 @@ func (m *Match) resetKickoff() {
 	m.LastTouch = nil
 	m.touchHistory = m.touchHistory[:0]
 	m.resetTeamPossession()
+	m.possessor = nil
 	m.Ball.Position = m.Field.CenterSpot
 	m.Ball.Velocity = geom.NewVec(0, 0)
 	m.Ball.Acceleration = geom.NewVec(0, 0)

@@ -201,10 +201,10 @@ Exponential.
   springier behind.
 - **CaptureSpeed** `320 / 70` (Linear) — impact speed *below which the ball sticks*
   (restitution 0) instead of bouncing.
-- **CenterPull** `1000 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
+- **CenterPull** `950 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
   make contact.
-- **Stickiness** `420 / 0` (InvQuad) — capped adhesion holding a touching ball until a
-  shot/bump overcomes it.
+- **Stickiness** `420 / 30` (InvQuad) — capped adhesion holding a touching ball until a
+  shot/bump overcomes it; a small baseline hold even at the back (`30`).
 - **Control** `1500 / 300` (Linear) — tangential pull rolling a touching ball to the front.
 - **Shoot** `shootForce / shootForce·0.3` (Linear, e.g. `500 / 150`) — shot power by angle.
 
@@ -218,9 +218,10 @@ Exponential.
 
 ### `PlayerStats` — capture cone
 
-- **CaptureConeDegrees** `15` — within ±15° of facing the ball reliably sticks.
-- **CaptureConeSoft** `25` — over the next 25° capture decays to the back floor; beyond,
-  side/back hits bounce.
+- **CaptureConeRadians** `0.279` (≈16°) — within ±16° of facing the ball reliably sticks
+  (widened a touch from 15°).
+- **CaptureConeSoft** `0.436` (≈25°) — over the next ~25° capture decays to the back floor;
+  beyond, side/back hits bounce.
 
 ### Possession mechanics
 
@@ -237,21 +238,32 @@ player anywhere* (any angle), decayed otherwise.
 better, at a small speed cost — so a fresh poke is easy to steal but an established carry is
 sticky.
 
-*What it affects:*
-- **Grip** = `GripFloor + (1-GripFloor)·possession` — scales **CenterPull** and
-  **Stickiness** (the forces that keep the ball glued to you). A fresh touch barely holds;
-  full possession clings through turns.
+*What it affects (possession modulates these only MILDLY, and the two hold forces in
+opposite directions):*
+- **Centre-pull grip** = `CenterPullGripFloor + (1-CenterPullGripFloor)·possession` — scales
+  **CenterPull**. With a high floor (`0.65`) possession changes it only a little (`0.65 → 1.0`),
+  far less than before.
+- **Stickiness grip** = `1 − StickinessPossessionDebuff·possession` — scales **Stickiness**,
+  *slightly DOWN* with possession (a settled carrier is a hair less sticky, down to `0.97`).
 - **Roll-to-front control** — the **Control** force is multiplied by
   `(1 + PossessionControlBonus·possession)`, so a settled carrier rolls the ball to the
-  front a touch more crisply.
+  front a touch more crisply (up to **×1.09** at full possession).
 - **Carry slowdown** — while the ball is at your feet, top speed and acceleration are scaled
   by **PossessionSpeedFactor** / **PossessionAccelFactor**.
+- **Stolen on a takeaway** — `Match.updateBallPossessor` tracks the recognised holder (kept
+  while they stay in contact, so a scramble doesn't flip it). When the ball changes hands, the
+  taker inherits **PossessionStealFraction** of the dispossessed player's possession as a head
+  start and the victim loses that share — a clean tackle keeps some control instead of starting
+  cold. (A player who *passed* has possession 0 — `shoot` resets it — so a received pass steals
+  nothing; only a mid-dribble takeaway carries possession.)
 
 *Variables:* **PossessionBuildSeconds** `1.5` / **PossessionReleaseSeconds** `0.4` (build /
-decay time), **GripFloor** `0.3`, **PossessionControlBonus** `0.05` (up to +5% control at
-full possession), **PossessionSpeedFactor** / **PossessionAccelFactor** `0.925` (~7.5%
-slower). A parallel **control** state (gated by **PossessionArcRadians** `0.873`/50° — the
-ball within the front arc) is *tracked but not yet wired to anything*.
+decay time), **CenterPullGripFloor** `0.65`, **StickinessPossessionDebuff** `0.03`,
+**PossessionControlBonus** `0.09` (up to +9% control at full possession),
+**PossessionStealFraction** `0.6` (a takeaway steals 60% of the victim's possession),
+**PossessionSpeedFactor** / **PossessionAccelFactor** `0.925` (~7.5% slower). A parallel
+**control** state (gated by **PossessionArcRadians** `0.873`/50° — the ball within the front
+arc) is *tracked but not yet wired to anything*.
 
 #### 2. Team possession charge (per-team — `Match.advanceTeamPossession`)
 
@@ -265,8 +277,8 @@ away the moment you move the ball on.
 
 *How it works:*
 - **Build** — while the owning team touches the ball, the charge builds to full over
-  **teamBuildSeconds** `1.0` on an *accelerating* curve (`teamBuildCurve` = progress², weak
-  early, steep toward the end).
+  **teamBuildSeconds** `1.5` on a strongly accelerating **cubic** curve (`teamBuildCurve` =
+  progress³) — it stays low for most of the build and spikes only near the end.
 - **Hold + decay** — after a release (nobody touching), it **holds** at full strength for
   **teamHoldSeconds** `1.5`, then fades on a smooth **convex** curve (`teamCoastEnvelope` =
   `1 − x²`) to 0 by **teamDecaySeconds** `3.5` — gentle at first, speeding up toward the end.
@@ -276,8 +288,9 @@ away the moment you move the ball on.
   (deep in the decay, e.g. down to 30%) and you start at 30% and rebuild from there (the
   decayed strength is baked back into the build progress). Either way you continue, never restart.
 - **Reset** — the **other team touching** the ball hands ownership over and restarts their
-  build from zero; both teams touching at once (a scramble) clears it; so does a
-  kickoff/shootout.
+  build from zero; both teams touching at once (a scramble) clears it; an **opposing-player
+  collision that involves the ball carrier** (a physical challenge on the holder) clears it;
+  so does a kickoff/shootout.
 
 *What it affects:* each player's **touch coefficient** (`Player.touchCoef`, in `[-1,1]`),
 which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQuality`, in
