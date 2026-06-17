@@ -45,7 +45,7 @@ var (
 	hudColor     = color.RGBA{0, 0, 0, 110}
 	bannerColor  = color.RGBA{0, 0, 0, 165}
 	offsideLine  = color.RGBA{235, 240, 235, 105} // translucent white anti-camp line
-	boxLimitFill = color.RGBA{235, 240, 235, 28}  // faint wash over a player-capped box
+	boxLimitFill = color.RGBA{40, 10, 10, 50}     // faint RED keep-out wash over a player-capped box (premultiplied ~rgb(204,51,51)@0.2)
 )
 
 // Line widths (world units). The perimeter -- the boundary plus the goal line that
@@ -607,10 +607,11 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
 }
 
-// drawTrapAura draws a soft glow ring around a player while it traps. `level` is the cosmetic
-// aura strength (sim.Player.TrapAura): it swells to a max as the trap is held, weakens as the
+// drawTrapAura draws a soft glow ring around a player while it traps. `level` is the trap's
+// effective strength (sim.Player.TrapAura): it swells to a max as the trap is held, weakens as the
 // trap is over-held (so the circle grows then shrinks), and shrinks to nothing on release. Both
-// the reach and the opacity track it. (Purely cosmetic -- the trap mechanic uses the raw charge.)
+// the reach and the opacity track it -- and the trap MECHANIC uses this same level, so the glow's
+// size and intensity match what the trap is actually doing.
 func drawTrapAura(c canvas, pos geom.Vec, radius, level float64, body color.RGBA) {
 	if level <= 0 {
 		return
@@ -650,15 +651,17 @@ func drawPossessionBarsAll(screen *ebiten.Image, m *sim.Match) {
 	c := newCanvas(screen)
 	for _, p := range m.Players {
 		drawPossessionBars(c, p.Position, p.Radius(),
-			p.Possession(), m.PossessionCharge(p.Team.Side), p.TouchCoefficient())
+			p.Possession(), p.TouchCoefficient())
 	}
 }
 
 // drawPossessionBars draws two small test bars above a player: the TOP bar is the player's own
-// possession (0..1, white), the BOTTOM bar is the team possession charge (0..1) tinted by the
-// touch coefficient -- green while the team is boosted (positive coefficient), red while it is
-// the conceding side (negative). For tuning/testing visibility of the possession mechanic.
-func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, teamCharge, coef float64) {
+// possession (0..1, white), the BOTTOM bar is the player's TOUCH COEFFICIENT magnitude (0..1) --
+// green while boosted (positive), red while conceding (negative). The coefficient already folds
+// in the PER-PLAYER contact drain (an opponent body-touching a boosted player erodes that
+// player's boost), so the bottom bar SHRINKS over the marked player while its team-mates' bars
+// stay full. For tuning/testing visibility of the possession mechanic.
+func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, coef float64) {
 	const w, h, gap = 26.0, 3.0, 1.5
 	clamp01 := func(v float64) float64 {
 		if v < 0 {
@@ -678,11 +681,15 @@ func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, teamCharge, 
 
 	y2 := y + h + gap
 	c.fillRect(x, y2, w, h, bg)
-	fill := color.RGBA{90, 220, 100, 235} // green: this team is boosted
+	fill := color.RGBA{90, 220, 100, 235} // green: this player is boosted
 	if coef < 0 {
-		fill = color.RGBA{225, 80, 80, 235} // red: this team is the conceding side
+		fill = color.RGBA{225, 80, 80, 235} // red: this player is on the conceding side
 	}
-	c.fillRect(x, y2, w*clamp01(teamCharge), h, fill)
+	mag := coef // bar length tracks the per-player coefficient magnitude (folds in the contact drain)
+	if mag < 0 {
+		mag = -mag
+	}
+	c.fillRect(x, y2, w*clamp01(mag), h, fill)
 }
 
 // drawShootCharge draws the power gauge as a 180deg arc over the FRONT hemisphere the player

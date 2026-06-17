@@ -363,7 +363,7 @@ func DefaultStats(shootForce float64) PlayerStats {
 			RestitutionWorst:  3.0,                 // scaled with the lower baseline so the debuffed front bounce stays ~0.24 (0.08*3.0)
 			RestitutionBest:   0.675,               // scaled with the lower baseline so the buffed front bounce stays ~0.054 (0.08*0.675)
 			ConeBonusRadians:  0.05235987755982988, // ~3deg: a slight cone widening at full team buff (biggest cone)
-			ConeDebuffRadians: 0.2617993877991494,  // ~15deg: a debuffed opponent's cone shrinks way more (catches far less)
+			ConeDebuffRadians: 0.20943951023931953, // ~12deg: a debuffed opponent's cone shrinks a lot (to ~10deg) but a bit less than before (was ~15deg/~7deg) -- still well under the baseline
 		},
 	}
 }

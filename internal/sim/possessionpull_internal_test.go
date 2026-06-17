@@ -54,11 +54,11 @@ func TestPossessionInPullRange(t *testing.T) {
 		p.Position = geom.NewVec(0, 0)
 		justBeyondBase := p.Stats.PullRange + 1 // gap just past the untrapped pull radius
 		m.Ball.Position = geom.NewVec(p.Radius()+m.Ball.Radius()+justBeyondBase, 0)
-		p.trapCharge = 0
+		p.trapAura = 0 // trapAura is the effective trap strength that drives the reach
 		if m.inPullRange(p) {
 			t.Fatalf("setup: ball should be beyond the untrapped pull radius")
 		}
-		p.trapCharge = 1
+		p.trapAura = 1 // trap at peak strength -> maximum reach extension
 		if !m.inPullRange(p) {
 			t.Errorf("a charged trap should extend the pull radius to reach the ball (gap %.2f, trapped pullRadius %.2f)", justBeyondBase, p.pullRadius())
 		}
@@ -84,6 +84,7 @@ func TestPossessionInPullRange(t *testing.T) {
 			t.Fatalf("setup: both players should have the ball in pull range")
 		}
 		before := h.possession + c.possession
+		m.advancePossessionBuilder()
 		m.updateBallPossessor(dt)
 		if !(h.possession < 0.8 && c.possession > 0.1) {
 			t.Errorf("a pull-range contest should drain the holder into the challenger: h=%.4f c=%.4f", h.possession, c.possession)

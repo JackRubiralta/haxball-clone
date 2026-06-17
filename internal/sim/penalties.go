@@ -7,9 +7,10 @@ import (
 
 // Penalty shootout timing (seconds).
 const (
-	penaltyReadySeconds = 0.8 // pause before each kick goes live and after a result
-	penaltyKickTimeout  = 6.0 // an unresolved kick by now is a miss
-	penaltyStopSpeed    = 6.0 // ball slower than this (after a moment live) is dead
+	penaltyReadySeconds   = 0.8 // pause before each kick goes live and after a result
+	penaltyAimSeconds     = 8.0 // a frozen taker has this long to aim and strike before it is a miss
+	penaltyResolveSeconds = 4.0 // after the strike, the shot has this long to score before it is a miss
+	penaltyStopSpeed      = 6.0 // a released ball slower than this (after a moment) is dead -> a miss
 )
 
 type penaltyKickState int
@@ -32,6 +33,7 @@ type Shootout struct {
 	goals      [2]int
 	taken      [2]int
 	kickState  penaltyKickState
+	released   bool // the taker has taken its one touch -- the ball is in flight and the keeper may move
 	timer      float64
 	takerID    int
 	keeperID   int
@@ -123,6 +125,7 @@ func (m *Match) penaltyKeeper(side Side) *Player {
 // parks everyone else at home.
 func (m *Match) setupKick() {
 	s := m.shootout
+	s.released = false
 	defender := s.taker.Opponent()
 	spot := m.Field.PenaltySpot(defender)
 	m.Ball.Position = spot
@@ -146,7 +149,9 @@ func (m *Match) setupKick() {
 	if goalX < spot.X {
 		into = -1.0
 	}
-	taker.Position = geom.NewVec(spot.X-into*(m.Ball.Radius()+taker.Radius()+8), spot.Y)
+	// Stand the taker right at the ball (just within shoot range) facing the goal: it strikes from
+	// here without a run-up, and stays frozen on the spot for its single touch.
+	taker.Position = geom.NewVec(spot.X-into*(m.Ball.Radius()+taker.Radius()+1), spot.Y)
 	taker.Velocity = geom.NewVec(0, 0)
 	taker.Acceleration = geom.NewVec(0, 0)
 	taker.Facing = geom.NewVec(into, 0)
@@ -182,15 +187,26 @@ func (m *Match) stepShootout(inputs map[int]Intent, dt float64) {
 			m.emit(SoundWhistle, 1, m.Ball.Position)
 		}
 	case kickLive:
+		m.stepPenaltyPlay(inputs, dt) // sets s.released and restarts s.timer when the strike fires
+		if m.shootout == nil {
+			return
+		}
 		s.timer += dt
-		m.stepPenaltyPlay(inputs, dt)
 		defender := s.taker.Opponent()
+		if !s.released {
+			// Aiming: the frozen taker lines up its one strike. Dawdling past the window is a miss.
+			if s.timer > penaltyAimSeconds {
+				m.recordKick(false)
+			}
+			return
+		}
+		// The strike is away -- resolve the shot (goal, stopped/saved, or out of time).
 		switch {
 		case m.Field.CheckGoal(m.Ball) == defender:
 			m.recordKick(true)
-		case s.timer > penaltyKickTimeout:
+		case s.timer > penaltyResolveSeconds:
 			m.recordKick(false)
-		case s.timer > 0.6 && geom.Norm(m.Ball.Velocity) < penaltyStopSpeed:
+		case s.timer > 0.4 && geom.Norm(m.Ball.Velocity) < penaltyStopSpeed:
 			m.recordKick(false)
 		}
 	case kickDone:
@@ -215,40 +231,68 @@ func (m *Match) stepShootout(inputs map[int]Intent, dt float64) {
 	}
 }
 
-// stepPenaltyPlay integrates only the taker and keeper; everyone else stays frozen.
+// stepPenaltyPlay runs one tick of a live penalty. The taker is frozen on the spot -- it may aim
+// and charge, but never moves and only ever touches the ball with its single strike. The keeper
+// is held on its line (it may turn but not move) until the ball is RELEASED by that strike; after
+// release it is free to move and dive for the save. The ball sits still on the spot until struck,
+// then flies. Everyone else stays frozen.
 func (m *Match) stepPenaltyPlay(inputs map[int]Intent, dt float64) {
 	s := m.shootout
 	taker := m.PlayerByID(s.takerID)
 	keeper := m.PlayerByID(s.keeperID)
-	active := [2]*Player{taker, keeper}
 
-	for _, p := range active {
-		if p != nil {
-			m.applyIntent(p, inputs[p.PlayerID], dt)
+	// Keeper: it may turn to face, but stays planted on its line until the ball is released.
+	if keeper != nil {
+		in := inputs[keeper.PlayerID]
+		if !s.released {
+			in.Move = geom.Vec{}
+			in.Throttle = 0
+		}
+		m.applyIntent(keeper, in, dt)
+		if !s.released {
+			keeper.Velocity = geom.NewVec(0, 0)
+			keeper.Acceleration = geom.NewVec(0, 0)
 		}
 	}
+
+	if !s.released {
+		// Aiming: the taker is frozen on the spot, aiming and charging its one strike; nothing else
+		// moves and the ball sits still on the spot until the strike releases it.
+		if taker != nil {
+			in := inputs[taker.PlayerID]
+			in.Move = geom.Vec{} // frozen in place: no run-up, no follow-up
+			in.Throttle = 0
+			m.applyIntent(taker, in, dt) // facing + shoot charge only; Move(0) => no acceleration
+			taker.Velocity = geom.NewVec(0, 0)
+			taker.Acceleration = geom.NewVec(0, 0)
+			if taker.WantsKick {
+				if shoot(taker, m.Ball) { // the single touch
+					m.recordTouch(taker, TouchKick)
+					m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
+					s.released = true
+					s.timer = 0 // restart the clock for the shot's flight
+				}
+				taker.WantsKick = false
+				taker.shootCharge = 0
+			}
+		}
+		return
+	}
+
+	// Released: the taker has spent its one touch and is now inert (it never touches the ball
+	// again). The ball is live and the keeper is free to move and save.
 	m.Ball.Update(dt)
-	for _, p := range active {
-		if p != nil {
-			p.Body.Update(dt)
-		}
-	}
-	m.advancePossessionBuilder()
-	for _, p := range active {
-		if p != nil {
-			updatePossession(m.Ball, p, dt, p == m.possBuilder)
-		}
+	if keeper != nil {
+		keeper.Body.Update(dt)
 	}
 	if spd := m.Field.ConfineBall(m.Ball); spd > ballHitMinSpeed {
 		m.emit(SoundBallHit, spd, m.Ball.Position)
 	}
-	for _, p := range active {
-		if p != nil {
-			if touched, bounce := handleBallToPlayerInteraction(m.Ball, p, dt); touched {
-				m.recordTouch(p, TouchDribble)
-				if bounce > ballHitMinSpeed {
-					m.emit(SoundBallHit, bounce, m.Ball.Position)
-				}
+	if keeper != nil {
+		if touched, bounce := handleBallToPlayerInteraction(m.Ball, keeper, dt); touched {
+			m.recordTouch(keeper, TouchDribble)
+			if bounce > ballHitMinSpeed {
+				m.emit(SoundBallHit, bounce, m.Ball.Position)
 			}
 		}
 	}
@@ -260,19 +304,16 @@ func (m *Match) stepPenaltyPlay(inputs map[int]Intent, dt float64) {
 			physics.Collide(m.Ball.Body, seg, netRestitution)
 		}
 	}
-	for _, p := range active {
-		if p == nil {
-			continue
-		}
-		if p.WantsKick {
-			if shoot(p, m.Ball) {
-				m.recordTouch(p, TouchKick)
+	if keeper != nil {
+		if keeper.WantsKick { // the keeper may boot a rebound clear
+			if shoot(keeper, m.Ball) {
+				m.recordTouch(keeper, TouchKick)
 				m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
 			}
-			p.WantsKick = false
-			p.shootCharge = 0
+			keeper.WantsKick = false
+			keeper.shootCharge = 0
 		}
-		m.Field.ConfinePlayer(p)
+		m.Field.ConfinePlayer(keeper)
 	}
 }
 

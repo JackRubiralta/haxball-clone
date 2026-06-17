@@ -230,9 +230,11 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 		}
 	}
 
-	// Cosmetic aura level (stateful): WHILE HELD it follows a hump of the charge -- swelling to
-	// full at the peak charge, then weakening as the trap is over-held; on RELEASE it shrinks
+	// Effective trap strength (stateful): WHILE HELD it follows a hump of the charge -- swelling
+	// to full at the peak charge, then weakening as the trap is over-held; on RELEASE it shrinks
 	// straight to nothing and never re-swells (it is not recomputed from the decaying charge).
+	// This single level drives BOTH the trap effect (capture/pull/reach/slowdown/...) and the
+	// visual aura, so the on-screen glow always matches what the trap is actually doing.
 	if in.Trap {
 		p.trapAura = trapAuraShape(p.trapCharge)
 	} else if p.trapAura > 0 {
@@ -241,12 +243,13 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 		}
 	}
 
-	// Trapping and charging a shot both slow the player; charging slows it more. Set
-	// unconditionally from the base so nothing drifts.
-	p.Body.SetRadius(p.Stats.Radius + p.Stats.TrapRadiusBonus*p.trapCharge)
+	// Trapping and charging a shot both slow the player; charging slows it more. The trap term
+	// uses the humped trapAura (so the slowdown swells then eases as the trap is over-held, like
+	// the rest of its effect). Set unconditionally from the base so nothing drifts.
+	p.Body.SetRadius(p.Stats.Radius + p.Stats.TrapRadiusBonus*p.trapAura)
 	shootCharge := NormShootCharge(p.shootCharge)
-	speedMul := (1 - p.trapCharge*(1-p.Stats.TrapSpeedFactor)) * (1 - shootCharge*(1-p.Stats.ShootSpeedFactor))
-	accelMul := (1 - p.trapCharge*(1-p.Stats.TrapAccelFactor)) * (1 - shootCharge*(1-p.Stats.ShootAccelFactor))
+	speedMul := (1 - p.trapAura*(1-p.Stats.TrapSpeedFactor)) * (1 - shootCharge*(1-p.Stats.ShootSpeedFactor))
+	accelMul := (1 - p.trapAura*(1-p.Stats.TrapAccelFactor)) * (1 - shootCharge*(1-p.Stats.ShootAccelFactor))
 	// Possession penalty: a ball at the player's feet costs a little speed and accel.
 	if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange {
 		speedMul *= p.Stats.PossessionSpeedFactor
@@ -273,6 +276,13 @@ const (
 	teamDecaySeconds   = 3.5 // seconds until the charge has fully decayed after release (no touch)
 	teamBuildExponent  = 3.0 // build-curve exponent: higher = stays low for most of the build, spiking near the end
 	teamDrainPerSecond = 1.0 // build-progress drained per second while the carrier is challenged by an opponent
+
+	// Per-player boost drain: while an opponent is body-touching a player on the BOOSTED team,
+	// that ONE player's share of the team boost erodes (its published touch coefficient is scaled
+	// toward 0) -- the team charge and its team-mates are untouched. It recovers once the contact
+	// ends. So an opponent marking you body-to-body drains YOUR clean touch even off the ball.
+	boostContactDrainPerSecond   = 2.0 // fraction of a player's own boost drained per second while an opponent is touching it
+	boostContactRecoverPerSecond = 1.5 // fraction recovered per second once no opponent is touching it
 )
 
 // teamBuildCurve maps build progress (0..1, the held-time fraction) to charge strength on a
@@ -335,9 +345,11 @@ func (m *Match) resetTeamPossession() {
 }
 
 // drainTeamPossession bleeds the team possession charge DOWN over time (rather than zeroing
-// it), used while the ball carrier is being physically challenged by an opponent: the build
-// progress drops at teamDrainPerSecond, so sustained pressure wears the boost away while a
-// glancing bump only nicks it. The owner keeps the ball, rebuilding from whatever is left.
+// it), used while the ball carrier is being challenged by an opponent -- either a body-to-body
+// challenge on the holder OR an opponent reaching the ball within its pull radius while the
+// owning team still has it (a ranged contest). The build progress drops at teamDrainPerSecond,
+// so sustained pressure wears the boost away while a glancing bump only nicks it. The owner
+// keeps the ball, rebuilding from whatever is left.
 func (m *Match) drainTeamPossession(deltaTime float64) {
 	if m.possSide == SideNone {
 		return
@@ -360,6 +372,47 @@ func (m *Match) inPullRange(p *Player) bool {
 	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.pullRadius()
 }
 
+// ballInTeamPullRange reports whether any player on the given side has the ball within its pull
+// radius (the trap-extended reach). Used to detect a pull-range possession contest: the ball is
+// in BOTH the owning team's and an opponent's pull radius.
+func (m *Match) ballInTeamPullRange(side Side) bool {
+	for _, p := range m.Players {
+		if p.Team.Side == side && m.inPullRange(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// playersTouching reports whether two players' bodies overlap (a body-to-body bump).
+func playersTouching(a, b *Player) bool {
+	return geom.Dist(a.Position, b.Position) < a.Radius()+b.Radius()
+}
+
+// opponentTouching reports whether any player on the OTHER team is body-touching p -- used to
+// drain that one player's team-possession boost while it is being marked/contacted.
+func (m *Match) opponentTouching(p *Player) bool {
+	for _, o := range m.Players {
+		if o.Team.Side != p.Team.Side && playersTouching(p, o) {
+			return true
+		}
+	}
+	return false
+}
+
+// engaged reports whether a player is contesting the ball this tick: either the ball is within
+// its (trap-extended) pull radius, OR it is bumping the current holder body-to-body -- so a
+// player-to-player challenge counts even when the ball itself is not quite in reach. The latest
+// player to become engaged is the sole possession builder (advancePossessionBuilder) and the
+// player a held ball drains into (updateBallPossessor).
+func (m *Match) engaged(p *Player) bool {
+	if m.inPullRange(p) {
+		return true
+	}
+	h := m.possessor
+	return h != nil && h != p && playersTouching(p, h)
+}
+
 // advancePossessionBuilder selects the single player allowed to build player-possession this
 // tick: of the players that currently have the ball within their pull radius, the one whose
 // radius the ball entered MOST RECENTLY. Each player is stamped with an increasing sequence the
@@ -371,11 +424,11 @@ func (m *Match) inPullRange(p *Player) bool {
 func (m *Match) advancePossessionBuilder() {
 	var builder *Player
 	for _, p := range m.Players {
-		if !m.inPullRange(p) {
-			p.pullEnterSeq = 0 // out of reach: forget the entry so a re-entry counts as newest
+		if !m.engaged(p) {
+			p.pullEnterSeq = 0 // out of reach: forget the entry so a re-engagement counts as newest
 			continue
 		}
-		if p.pullEnterSeq == 0 { // rising edge: the ball just entered this player's pull radius
+		if p.pullEnterSeq == 0 { // rising edge: just became engaged (ball in reach, or bumping the holder)
 			m.pullSeq++
 			p.pullEnterSeq = m.pullSeq
 		}
@@ -402,54 +455,49 @@ func (m *Match) touchingSides() (left, right bool) {
 	return left, right
 }
 
-// updateBallPossessor tracks who holds the ball and resolves a CONTEST for it. While the holder
-// is on the ball, the nearest OTHER player with the ball in its PULL radius is the challenger --
-// it can contest/steal from arm's length (the ball within its pull reach, extended by a held
-// trap), it does not have to be in direct contact. Possession transfers GRADUALLY -- the
-// challenger gains and the holder loses (see contestPossession) -- and the ball changes hands
-// once the challenger holds more than the holder. A LOOSE ball (the holder off it) is only
-// claimed on an actual touch, so a ball merely flying past a player is not taken over. A passed
-// ball carries possession 0 (shoot resets it), so a clean reception starts cold.
+// updateBallPossessor tracks who holds the ball and resolves a CONTEST for it. The single
+// possession BUILDER (the latest player to engage -- ball in its pull radius, or bumping the
+// holder; see advancePossessionBuilder) is the player gaining possession. While the current
+// holder is a DIFFERENT player still engaged, possession drains GRADUALLY from the holder INTO
+// that builder -- the displaced player loses exactly what the builder gains (contestPossession),
+// so possession always flows TO the latest engager and never leaks back out of it (the earlier
+// bug: it bled back into the displaced player, whose fast decay then zeroed both). The builder
+// takes the ball once it holds the larger share. A LOOSE ball (the holder no longer engaged) is
+// claimed only on an actual touch, so a ball merely flying past a player is not taken over
+// (protects passes); a passed ball carries possession 0 (shoot resets it), so reception starts cold.
 func (m *Match) updateBallPossessor(deltaTime float64) {
 	holder := m.possessor
-	// The holder still "has" the ball while it is within its PULL radius (not only touching), so
-	// it can hold possession from arm's length (a held trap reaches further).
-	holderHas := holder != nil && m.inPullRange(holder)
-
-	// contender: nearest OTHER player with the ball in its pull radius (can steal from a holder
-	// without touching). toucher: nearest OTHER player actually in contact (claims a loose ball).
-	// Deterministic: roster order breaks distance ties.
-	var contender, toucher *Player
-	bestC, bestT := 0.0, 0.0
-	for _, p := range m.Players {
-		if p == holder {
-			continue
-		}
-		d := geom.Dist(p.Position, m.Ball.Position)
-		if m.inPullRange(p) && (contender == nil || d < bestC) {
-			contender, bestC = p, d
-		}
-		if m.touching(p) && (toucher == nil || d < bestT) {
-			toucher, bestT = p, d
-		}
-	}
+	builder := m.possBuilder // the latest engager: the player gaining possession this tick
 
 	switch {
-	case holderHas && contender != nil:
-		// Contest: drain possession from the holder into the challenger (both with the ball in
-		// pull range, neither need touch). The ball flips once the challenger has the larger share.
-		m.contestPossession(holder, contender, deltaTime)
-		if contender.possession > holder.possession {
-			m.possessor = contender
+	case holder != nil && m.engaged(holder) && builder != nil && builder != holder:
+		// A different player than the holder is the latest engager (ball in its pull radius, or
+		// bumping the holder). Drain the holder INTO that builder; the builder takes the ball
+		// once it leads. Possession flows to the builder and never leaks back out.
+		m.contestPossession(holder, builder, deltaTime)
+		if builder.possession > holder.possession {
+			m.possessor = builder
 		}
-	case holderHas:
-		// Holder alone with the ball in its pull radius: keeps it, no transfer.
-	case toucher != nil:
-		// Holder no longer has the ball in reach: only an actual toucher claims the loose ball
-		// (a ball merely flying past a player in pull range is not taken over -- protects passes).
-		m.possessor = toucher
+	case holder != nil && m.engaged(holder):
+		// The holder is itself the latest engager (or alone in reach): it keeps the ball, no
+		// transfer -- so an established builder holds without bleeding possession away.
 	default:
-		// Nobody has it: keep the holder of record (its possession decays on its own).
+		// The holder no longer has the ball in reach. Only an ACTUAL touch claims the loose ball
+		// (a ball merely within a player's pull radius -- a pass in flight, or flying past -- does
+		// not flip possession; protects passes). Nearest toucher wins; roster order breaks ties.
+		var toucher *Player
+		bestT := 0.0
+		for _, p := range m.Players {
+			if p == holder {
+				continue
+			}
+			if d := geom.Dist(p.Position, m.Ball.Position); m.touching(p) && (toucher == nil || d < bestT) {
+				toucher, bestT = p, d
+			}
+		}
+		if toucher != nil {
+			m.possessor = toucher
+		}
 	}
 }
 
@@ -483,13 +531,28 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 	// 1. Publish coefficients from the current (pre-contact) charge.
 	strength := m.teamPossessionStrength(m.possSide)
 	for _, p := range m.Players {
+		boosted := m.possSide != SideNone && p.Team.Side == m.possSide
 		switch {
 		case m.possSide == SideNone:
 			p.touchCoef = 0
-		case p.Team.Side == m.possSide:
+		case boosted:
 			p.touchCoef = p.Stats.TouchQuality.OwnTeamMax * strength
 		default:
 			p.touchCoef = p.Stats.TouchQuality.OtherTeam * strength
+		}
+
+		// Per-player boost drain: while an opponent is body-touching a player on the BOOSTED
+		// team, that ONE player's boost erodes; it recovers once the contact ends. Only the
+		// boosted team's own buff drains (a conceding player has no boost to lose), and only
+		// that player's published coefficient is scaled down -- the team charge and team-mates
+		// are untouched. So an opponent marking you erodes YOUR clean touch even off the ball.
+		if boosted && m.opponentTouching(p) {
+			p.boostDrain = clampUnit(p.boostDrain + boostContactDrainPerSecond*deltaTime)
+		} else {
+			p.boostDrain = clampUnit(p.boostDrain - boostContactRecoverPerSecond*deltaTime)
+		}
+		if boosted {
+			p.touchCoef *= 1 - p.boostDrain
 		}
 	}
 
@@ -554,6 +617,14 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 		}
 	}
 
+	// Re-confine the ball after the dribble/contact and obstacle/goal collisions. The ConfineBall
+	// at the top ran BEFORE those, so a player dribbling the ball into a wall or corner (its
+	// centre-pull dragging the ball toward the player, which is itself momentarily past the wall
+	// until ConfinePlayer clamps it below) would otherwise leave the ball penetrating the wall.
+	// This pushes it back inside each tick so it cannot be wedged into the corner. No sound here --
+	// a genuine high-speed wall impact is caught by the confine at the top of the next tick.
+	m.Field.ConfineBall(m.Ball)
+
 	challenged := false
 	for i := 0; i < len(m.Players); i++ {
 		for j := i + 1; j < len(m.Players); j++ {
@@ -569,6 +640,13 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 			}
 			physics.Resolve(pi.Body, pj.Body)
 		}
+	}
+	// A RANGED challenge also drains the charge: while the owning team still has the ball within
+	// an owning player's pull radius, an opponent that now has it within THEIR pull radius too is
+	// contesting the possession at arm's length -- no body collision needed.
+	if !challenged && m.possSide != SideNone &&
+		m.ballInTeamPullRange(m.possSide) && m.ballInTeamPullRange(m.possSide.Opponent()) {
+		challenged = true
 	}
 	if challenged {
 		m.drainTeamPossession(deltaTime)
@@ -586,6 +664,18 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 			}
 		}
 		m.Field.ConfinePlayer(p)
+
+		// A ball confined against a wall or corner can't be shoved aside, so once the player is
+		// also clamped against that boundary their centres can't reach radius-sum apart and the
+		// player would sit ON TOP OF the ball. Separate them by moving the PLAYER out of the
+		// overlap (never the ball -- it must stay inside the arena), pushed away from the ball
+		// toward open space, so a player can never overlap a pinned ball.
+		sep := p.Position.Sub(m.Ball.Position)
+		if d := geom.Norm(sep); d > 0 {
+			if push := p.Radius() + m.Ball.Radius() - d; push > 0 {
+				p.Position = p.Position.Add(sep.Scale(push / d))
+			}
+		}
 	}
 }
 
@@ -619,6 +709,7 @@ func (m *Match) resetKickoff() {
 		p.control = 0
 		p.shootCharge = 0
 		p.trapCharge = 0
+		p.trapAura = 0
 		p.shootHeldPrev = false
 		p.shootCanceled = false
 		p.trapHeldPrev = false

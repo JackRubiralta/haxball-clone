@@ -62,15 +62,20 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 
 	// setup: a holds the ball (touching, possession 0.8); b sits at surface gap `gap` from the
 	// ball with trap charge `trap`. Everyone else is parked far away.
+	surface := a.Radius() + m.Ball.Radius()
 	setup := func(gap, trap float64) {
 		for _, p := range m.Players {
 			p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
 		}
 		m.Ball.Position = geom.NewVec(0, 0)
-		a.Position = geom.NewVec(0, 0) // a overlaps the ball -> touching
+		// a holds from pull range on the LEFT (in reach, not touching the ball); b sits `gap` from
+		// the ball on the RIGHT. They are on opposite sides, far enough apart NOT to touch each
+		// other, so this isolates the PULL-RANGE steal from the body-contact one.
+		holdGap := (a.Stats.TouchRange + a.Stats.PullRange) / 2
+		a.Position = geom.NewVec(-(surface + holdGap), 0)
 		a.possession, a.control = 0.8, 0
-		b.possession, b.control, b.trapCharge = 0, 0, trap
-		b.Position = geom.NewVec(b.Radius()+m.Ball.Radius()+gap, 0)
+		b.possession, b.control, b.trapAura = 0, 0, trap // trapAura is the effective trap strength driving the reach
+		b.Position = geom.NewVec(surface+gap, 0)
 		m.possessor = a
 	}
 
@@ -79,6 +84,7 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 	if m.touching(b) {
 		t.Fatalf("test setup: b should not be touching at gap 3")
 	}
+	m.advancePossessionBuilder()
 	m.updateBallPossessor(dt)
 	if !(b.possession > 0 && a.possession < 0.8) {
 		t.Errorf("a challenger in pull range (not touching) should steal possession: a=%.3f b=%.3f", a.possession, b.possession)
@@ -89,6 +95,7 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 	if m.inPullRange(b) {
 		t.Fatalf("test setup: gap 8 should be beyond the base pull radius")
 	}
+	m.advancePossessionBuilder()
 	m.updateBallPossessor(dt)
 	if !(b.possession == 0 && a.possession == 0.8) {
 		t.Errorf("a challenger beyond the pull radius should not steal: a=%.3f b=%.3f", a.possession, b.possession)
@@ -99,9 +106,79 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 	if !m.inPullRange(b) {
 		t.Fatalf("test setup: a full trap should bring gap 8 into the extended pull radius")
 	}
+	m.advancePossessionBuilder()
 	m.updateBallPossessor(dt)
 	if !(b.possession > 0 && a.possession < 0.8) {
 		t.Errorf("a trapping challenger should steal from the extended pull radius (gap 8): a=%.3f b=%.3f", a.possession, b.possession)
+	}
+}
+
+// TestPossessionStealByPlayerContact: a challenger that does NOT have the ball in its pull radius
+// can still contest the holder's possession by bumping it body-to-body (player-to-player touch).
+func TestPossessionStealByPlayerContact(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+	for _, p := range m.Players {
+		p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
+	}
+	m.Ball.Position = geom.NewVec(0, 0)
+	a.Position = geom.NewVec(0, 0) // a holds the ball (touching it)
+	a.possession = 0.8
+	m.possessor = a
+	b.possession = 0
+	b.Position = geom.NewVec(a.Radius()+b.Radius()-1, 0) // bumping a body-to-body, ball NOT in b's reach
+
+	if m.inPullRange(b) {
+		t.Fatalf("setup: the ball should be out of b's pull radius (this tests the body-contact path)")
+	}
+	if !playersTouching(a, b) {
+		t.Fatalf("setup: b should be touching a body-to-body")
+	}
+	m.advancePossessionBuilder()
+	m.updateBallPossessor(dt)
+	if !(b.possession > 0 && a.possession < 0.8) {
+		t.Errorf("a body-contact challenge should steal possession even with the ball out of reach: a=%.3f b=%.3f", a.possession, b.possession)
+	}
+}
+
+// TestPossessionHandoffToLatestEntrantNoLeak: when an opponent reaches a carrier's ball, the
+// LATEST entrant builds and the carrier drains INTO it -- and once handed over, the new holder
+// KEEPS its possession. It must not leak back into the displaced player and decay both to zero
+// (the earlier bug, where the contest drained the holder into the wrong player).
+func TestPossessionHandoffToLatestEntrantNoLeak(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+	for _, p := range m.Players {
+		p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
+	}
+	surface := a.Radius() + m.Ball.Radius()
+	gap := (a.Stats.TouchRange + a.pullRadius()) / 2
+	m.Ball.Position = geom.NewVec(0, 0)
+	a.Position = geom.NewVec(-(surface + gap), 0) // a holds from pull range (left)
+	b.Position = geom.NewVec(surface+gap, 0)      // b arrives in pull range (right), not touching a
+	a.possession, b.possession = 1.0, 0
+	m.possessor = a
+
+	tick := func() {
+		m.advancePossessionBuilder()
+		updatePossession(m.Ball, a, dt, a == m.possBuilder)
+		updatePossession(m.Ball, b, dt, b == m.possBuilder)
+		m.updateBallPossessor(dt)
+	}
+	for i := 0; i < 240; i++ {
+		tick()
+	}
+
+	if !(b.possession > 0.8) {
+		t.Errorf("the latest entrant should build and hold high possession, got b=%.3f", b.possession)
+	}
+	if !(a.possession < 0.2) {
+		t.Errorf("the displaced carrier should drain low (not both to zero), got a=%.3f", a.possession)
+	}
+	if m.possessor != b {
+		t.Errorf("possession should hand over to the latest entrant (got possessor==a: %v)", m.possessor == a)
 	}
 }
 
@@ -118,6 +195,7 @@ func TestPossessionContestGradualTransfer(t *testing.T) {
 	bothTouch(m, a, b) // a (holder) and b (challenger) both in contact
 
 	// One tick: the challenger gains, the holder loses, but the holder still holds (only a sliver moved).
+	m.advancePossessionBuilder()
 	m.updateBallPossessor(dt)
 	if !(b.possession > 0 && a.possession < 0.8) {
 		t.Fatalf("a contest should start transferring possession: a=%.3f b=%.3f", a.possession, b.possession)
@@ -128,6 +206,7 @@ func TestPossessionContestGradualTransfer(t *testing.T) {
 
 	// Sustained contest: the challenger eventually wins the ball.
 	for i := 0; i < 120 && m.possessor != b; i++ {
+		m.advancePossessionBuilder()
 		m.updateBallPossessor(dt)
 	}
 	if m.possessor != b {
@@ -147,6 +226,7 @@ func TestPossessionCleanTakeover(t *testing.T) {
 	m.possessor = a
 
 	onlyToucher(m, b) // a off the ball, b on it
+	m.advancePossessionBuilder()
 	m.updateBallPossessor(1.0 / 60)
 
 	if m.possessor != b {
@@ -238,6 +318,7 @@ func TestPossessionNotStolenAfterPass(t *testing.T) {
 	a.possession = 0 // a "passed" -- shoot() reset its possession to 0
 	m.possessor = a
 	onlyToucher(m, b)
+	m.advancePossessionBuilder()
 	m.updateBallPossessor(1.0 / 60)
 	if b.possession != 0 {
 		t.Errorf("a received ball carrying no possession should give no head start, got %.3f", b.possession)
@@ -292,6 +373,45 @@ func TestTeamChargeDrainedByChallenge(t *testing.T) {
 	m.resolveInteractions(dt)
 	if m.possProgress != 1 {
 		t.Errorf("an off-ball collision should not drain the charge, got progress=%.4f", m.possProgress)
+	}
+}
+
+// TestTeamChargeDrainedByOpponentInPullRange: while the owning team has the ball within a
+// player's pull radius, an OPPONENT that also has it within their pull radius drains the team
+// charge -- a ranged challenge, no body contact needed; with no opponent in range it is left alone.
+func TestTeamChargeDrainedByOpponentInPullRange(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+
+	setup := func() {
+		for _, p := range m.Players {
+			p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
+		}
+		c := m.Field.CenterSpot // use the field centre so ConfineBall doesn't move the ball
+		m.Ball.Position = c
+		m.Ball.Velocity = geom.NewVec(0, 0)
+		a.Position = c.Add(geom.NewVec(-(a.Radius() + m.Ball.Radius() + 1), 0)) // left owner: touching the ball
+		b.Position = c.Add(geom.NewVec(b.Radius()+m.Ball.Radius()+3, 0))        // right opponent: gap 3 (in pull range, not touching)
+		m.possSide, m.possProgress, m.possCoast = SideLeft, 1.0, 0
+	}
+
+	// Owner has the ball; opponent has it in its pull radius (not touching) -> the charge drains.
+	setup()
+	if !m.inPullRange(b) || m.touching(b) {
+		t.Fatalf("test setup: opponent should be in pull range but not touching at gap 3")
+	}
+	m.resolveInteractions(dt)
+	if !(m.possProgress < 1.0) {
+		t.Errorf("an opponent with the ball in its pull radius should drain the team charge, got %.4f", m.possProgress)
+	}
+
+	// No opponent in range -> the charge is left alone.
+	setup()
+	b.Position = m.Field.CenterSpot.Add(geom.NewVec(300, 0)) // far from the ball, out of pull range
+	m.resolveInteractions(dt)
+	if m.possProgress != 1.0 {
+		t.Errorf("no opponent in pull range should leave the charge untouched, got %.4f", m.possProgress)
 	}
 }
 
@@ -437,7 +557,7 @@ func TestMaxShotNotCapturedByDebuffedOpponent(t *testing.T) {
 		p := NewPlayer(1, geom.NewVec(0, 0), DefaultStats(500), &Team{Side: SideRight})
 		p.Facing = geom.NewVec(1, 0) // facing the incoming ball: dead-on, inside the cone
 		p.touchCoef = coef           // debuffed (the conceding team)
-		p.trapCharge = trap
+		p.trapAura = trap            // trapAura is the effective trap strength the contact reads (trap=1 -> peak)
 		b := NewBall(geom.NewVec(p.Radius()+ballRadius-0.5, 0), ballRadius)
 		b.Velocity = geom.NewVec(-maxShot, 0) // straight at the player at the max shot speed
 		_, bounce := handleBallToPlayerInteraction(b, p, 1.0/60)

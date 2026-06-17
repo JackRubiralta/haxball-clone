@@ -15,15 +15,18 @@ type MatchSetup struct {
 	PlayWidth, PlayHeight float64
 	GoalWidth, GoalDepth  float64
 
-	// Boxes: existence + size overrides + per-box same-team caps (0 = no cap).
-	PenaltyArea   bool
-	PenaltyWidth  float64
-	PenaltyDepth  float64
-	PenaltyBoxMax int
-	GoalArea      bool
-	GoalAreaWidth float64
-	GoalAreaDepth float64
-	GoalAreaMax   int
+	// Boxes: existence + size overrides + per-box caps (0 = no cap). Each box caps the
+	// defending team and the opponent (attackers) separately.
+	PenaltyArea      bool
+	PenaltyWidth     float64
+	PenaltyDepth     float64
+	PenaltyBoxMax    int // defending players allowed in the penalty area
+	PenaltyBoxMaxOpp int // opponent (attacking) players allowed in the penalty area
+	GoalArea         bool
+	GoalAreaWidth    float64
+	GoalAreaDepth    float64
+	GoalAreaMax      int // defending players allowed in the goal area
+	GoalAreaMaxOpp   int // opponent (attacking) players allowed in the goal area
 
 	// Positional rules.
 	Offside     bool
@@ -71,7 +74,7 @@ func (s MatchSetup) Validate() error {
 	if s.OffsideFrac < 0 || s.OffsideFrac > 1 {
 		return fmt.Errorf("offside fraction must be between 0 and 1")
 	}
-	if s.PenaltyBoxMax < 0 || s.GoalAreaMax < 0 {
+	if s.PenaltyBoxMax < 0 || s.GoalAreaMax < 0 || s.PenaltyBoxMaxOpp < 0 || s.GoalAreaMaxOpp < 0 {
 		return fmt.Errorf("box max players must not be negative")
 	}
 	if s.Minutes < 0 {
@@ -152,8 +155,14 @@ func (s MatchSetup) Ruleset() (Ruleset, error) {
 	if s.PenaltyBoxMax > 0 {
 		r.PenaltyBoxMaxPlayers = s.PenaltyBoxMax
 	}
+	if s.PenaltyBoxMaxOpp > 0 {
+		r.PenaltyBoxMaxOpponents = s.PenaltyBoxMaxOpp
+	}
 	if s.GoalAreaMax > 0 {
 		r.GoalAreaMaxPlayers = s.GoalAreaMax
+	}
+	if s.GoalAreaMaxOpp > 0 {
+		r.GoalAreaMaxOpponents = s.GoalAreaMaxOpp
 	}
 	r.Enforcement = s.Enforcement
 	r.EvictGrace = s.EvictGrace

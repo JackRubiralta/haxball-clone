@@ -23,7 +23,7 @@ func TestPokeAndFrontHemisphereShot(t *testing.T) {
 		return p
 	}
 
-	// --- POKE fires within the PULL radius even when NOT touching, at the strong poke power. ---
+	// --- POKE fires within the PULL radius even when NOT touching, at the poke power. ---
 	gap := 3.0 // between TouchRange (2) and PullRange (5)
 	if !(gap < s.PullRange && gap >= s.TouchRange) {
 		t.Fatalf("test setup: gap %.1f should sit between TouchRange %.1f and PullRange %.1f", gap, s.TouchRange, s.PullRange)
@@ -33,11 +33,11 @@ func TestPokeAndFrontHemisphereShot(t *testing.T) {
 		t.Fatalf("poke should fire on a ball within the pull radius (gap %.1f)", gap)
 	}
 	if got := geom.Norm(pf.Velocity); math.Abs(got-pokePower) > 1e-6 {
-		t.Errorf("poke power should be the strong poke power %.1f, got %.1f", pokePower, got)
+		t.Errorf("poke power should be the poke power %.1f, got %.1f", pokePower, got)
 	}
-	// The poke is much stronger than a tap, and stronger than a full-charge front shot.
-	if !(pokePower > s.Shoot.Eval(0)) {
-		t.Errorf("poke should hit harder than a full-charge front shot (%.1f), got %.1f", s.Shoot.Eval(0), pokePower)
+	// The poke fires at 70% of a full-charge front shot.
+	if math.Abs(pokePower-0.7*s.Shoot.Eval(0)) > 1e-6 {
+		t.Errorf("poke should be ~70%% of a full front shot (%.1f), got %.1f", 0.7*s.Shoot.Eval(0), pokePower)
 	}
 	// A held shot must NOT fire there -- it still needs the ball touching.
 	if shoot(newP(), NewBall(geom.NewVec(d0+gap, 0), ballR)) {

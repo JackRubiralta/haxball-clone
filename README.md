@@ -183,7 +183,8 @@ speed → apply friction → move position.
 
 ### `PlayerStats` — body / motion
 
-- **Radius** `18` — body size. **Mass** `20` — heavier player shoves the ball more.
+- **Radius** `18` — body size. **Mass** `20` — heavier player shoves the ball more, and is
+  shoved back *less* by a hard hit (the ball:player mass ratio drives the contact — see Contact).
   **Friction** `-1.5` — high drag, so players stop quickly. **MaxSpeed** `140`.
   **Acceleration** `300`. **TurnRate** `14 rad/s` — max turn rate of the movement heading AND
   the human cursor aim (a 180° turn takes ~0.22s; snappy but non-instant; `0` = instant).
@@ -236,12 +237,33 @@ different things and never share state.
 
 #### 1. Player possession (per-player — `Player.possession`, `updatePossession`)
 
-*What it is:* the "ball at my feet" state — built toward 1 while the ball is *touching the
-player anywhere* (any angle), decayed otherwise.
+*What it is:* the "ball at my feet" state — built toward 1 while *you* are the player drawing
+the ball, decayed otherwise. You build it while the ball is within your **pull radius**
+(`pullRadius()` = `PullRange + TrapRangeBonus·trapCharge`, so a held trap reaches further) — you
+do **not** have to be touching it — but only **one** player builds at a time (see *Who builds*).
 
 *Intent:* a player who has had the ball a moment holds it more firmly and carries it a touch
 better, at a small speed cost — so a fresh poke is easy to steal but an established carry is
-sticky.
+sticky. Single-builder so a contest is *decisive*: when an opponent closes a carrier down, the
+newcomer's bar rises while the carrier's falls, instead of both pinning at max.
+
+*Who builds it (`advancePossessionBuilder` + `engaged`):* a player is **engaged** if the ball is
+within its pull radius **or** it is body-bumping the current holder (so a physical challenge
+counts even when the ball isn't quite in reach). Of the engaged players, the **latest** one to
+become engaged is the *sole* builder — everyone else *decays* toward 0 (not instantly to zero).
+Each player is stamped the tick it engages; the newest stamp wins. If the latest builder loses
+the ball, the build falls back to whoever still has it in reach.
+
+*Won in a contest (`updateBallPossessor` / `contestPossession`):* while the holder is still
+engaged and a *different* player is the latest engager, possession transfers GRADUALLY from the
+holder **into that builder** — the holder loses exactly what the builder gains
+(**PossessionStealRate**/sec, conserved), and the ball changes hands once the builder holds the
+larger share. Possession always flows *to* the latest engager and never leaks back, so a
+sustained challenge wins the ball cleanly (rather than both bars bleeding to zero). A **loose**
+ball — no holder still engaged — is claimed only on an actual *touch*, so a ball merely in range
+or flying past doesn't flip possession (this protects passes). A player who *passed* has
+possession 0 (`shoot` resets it), so a clean reception starts cold; only a contested take
+carries possession.
 
 *What it affects (possession modulates these only MILDLY, and the two hold forces in
 opposite directions):*
@@ -255,18 +277,12 @@ opposite directions):*
   front a touch more crisply (up to **×1.09** at full possession).
 - **Carry slowdown** — while the ball is at your feet, top speed and acceleration are scaled
   by **PossessionSpeedFactor** / **PossessionAccelFactor**.
-- **Won in a contest** — `Match.updateBallPossessor` tracks the recognised holder. While the
-  holder AND a challenger are BOTH on the ball, possession transfers GRADUALLY (`contestPossession`):
-  the challenger gains and the holder loses **PossessionStealRate** per second, and the ball
-  changes hands once the challenger holds the larger share — a sustained challenge wins the ball
-  rather than snatching it instantly. If the holder is off the ball, the nearest toucher just
-  takes over (no transfer). (A player who *passed* has possession 0 — `shoot` resets it — so a
-  clean reception starts cold; only a contested take carries possession.)
 
 *Variables:* **PossessionBuildSeconds** `1.5` / **PossessionReleaseSeconds** `0.4` (build /
 decay time), **CenterPullGripFloor** `0.65`, **StickinessPossessionDebuff** `0.03`,
 **PossessionControlBonus** `0.09` (up to +9% control at full possession),
-**PossessionStealRate** `1.0` (possession/sec transferred while contesting the ball),
+**PossessionStealRate** `1.0` (possession/sec transferred while contesting). The build/steal
+**reach** is the pull radius (`PullRange + TrapRangeBonus·trapCharge`, trap-extended);
 **PossessionSpeedFactor** / **PossessionAccelFactor** `0.925` (~7.5% slower). A parallel
 **control** state (gated by **PossessionArcRadians** `0.873`/50° — the ball within the front
 arc) is *tracked but not yet wired to anything*.
@@ -296,34 +312,95 @@ away the moment you move the ball on.
 - **Reset** — the **other team touching** the ball hands ownership over and restarts their
   build from zero; both teams touching at once (a scramble) clears it; a kickoff/shootout
   clears it.
-- **Drained by a challenge** — an **opposing-player collision that involves the ball carrier**
-  (a physical challenge on the holder) does NOT reset the charge but **drains** it at
-  `teamDrainPerSecond` (1.0/s of build progress), so sustained pressure wears the boost away
-  while a glancing bump only nicks it.
+- **Drained by a challenge (team-wide)** — a challenge on the held ball does NOT reset the charge
+  but **drains** it at `teamDrainPerSecond` (1.0/s of build progress), so sustained pressure wears
+  the boost away while a glancing bump only nicks it. Two triggers count as a challenge: an
+  **opposing-player collision involving the ball carrier** (a body challenge), or a **ranged
+  pull-radius contest** — the owning team has the ball in a player's pull radius *and* an opponent
+  also has it in *their* pull radius (`ballInTeamPullRange`), so closing down to arm's length drains
+  it without contact.
+- **Per-player contact drain (localized)** — separately, any boosted player **body-touched by an
+  opponent** (even off the ball) has only *its own* published `touchCoef` eroded: a per-player
+  `boostDrain` (0..1) rises at `boostContactDrainPerSecond` (2.0/s) while an opponent is on it and
+  recovers at `boostContactRecoverPerSecond` (1.5/s) when they leave, scaling that player's coef by
+  `(1 − boostDrain)`. The **team charge and team-mates are untouched** — only the marked player's
+  clean-touch buff fades toward neutral. (A conceding player has no boost to lose.)
 
 *What it affects:* each player's **touch coefficient** (`Player.touchCoef`, in `[-1,1]`),
 which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQuality`, in
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
-  sticky touches that scale up as the charge builds (full-charge capture ≈ front × `CaptureBest`
-  8/7 ≈ 297), so a fully-built possession receives firmly.
+  sticky touches that scale up as the charge builds (full-charge capture ≈ front × `CaptureBest`,
+  290 × 1.025 ≈ 297), so a fully-built possession receives firmly.
 - **Other team** → `OtherTeam·strength` (down to **−1.0**): capture down, bounce up (up to
-  ×2) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
+  ×3) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
 - **Capture cone** → scales ASYMMETRICALLY with the coefficient (see `captureConeRadians`):
   the buff WIDENS the owning team's reliable cone a little (`ConeBonusRadians` ≈3° at full
-  charge — biggest cone), while the debuff NARROWS the conceding team's a lot
-  (`ConeDebuffRadians` ≈15° at full enemy charge — cone shrinks to ~6°, way smaller). So a
-  debuffed opponent catches far less off the dead-on line. Dead-on (angle 0) is always inside
+  charge — biggest cone), while the debuff NARROWS the conceding team's more (`ConeDebuffRadians`
+  ≈12° at full enemy charge — cone shrinks to ~10°, still well under the ~22° baseline). So a
+  debuffed opponent catches less off the dead-on line. Dead-on (angle 0) is always inside
   the cone, so straight-on shots/captures are unchanged — only off-axis catching shrinks.
 
 *Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−1.0`, and the multiplier endpoints
-(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.7 / 1.143` (best lifts the
-owning team's capture by ~1/7), **RestitutionWorst/Best** `2.0 / 0.45`.
+(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.025`,
+**RestitutionWorst/Best** `3.0 / 0.675`. These are scaled against the lowered baselines
+(CaptureSpeed front `290`, Restitution front `0.08`) so the buffed/debuffed *absolute* touches
+are preserved (buffed capture ≈ 297, debuffed bounce ≈ 0.24).
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding
 side); toggle with `render.ShowPossessionBars`.
+
+#### Design choices & open options
+
+Both possession systems are *disrupted* by the opposing team, and exactly **what triggers that
+disruption** is a deliberate, still-open design choice rather than a settled rule. The axes below
+list the plausible triggers for each mechanic, mark the **current** choice, and note the
+trade-off — so the feel can be retuned by swapping which trigger fires (and whether it is
+gradual/instant and per-player/team-wide).
+
+**A. What disrupts the TEAM possession charge (the squad-wide touch buff):**
+- **Opponent touches the ball** → hands ownership over and restarts their build (also: both teams
+  touching at once, kickoff, and shootout clear it). *(current — the primary, most intuitive
+  handover: they won the ball, you lost the buff.)*
+- **Opponent body-checks the player who has the ball** → drains the charge gradually
+  (`teamDrainPerSecond` 1.0), not a reset. *(current — pressure wears a buildup down even without
+  winning the ball; a glancing bump only nicks it.)* Open sub-choices on this one:
+  - *Scope:* **both are now live** — the **whole team's** charge drains when the *carrier* is
+    challenged, AND a separate **per-player localized** drain erodes only the *touch-boost* of any
+    boosted player an opponent body-checks (even off the ball), leaving the team charge and
+    team-mates intact (more intuitive — an opponent only spoils the player they're actually on).
+    See "Per-player contact drain" in the mechanics above.
+  - *Severity:* **drain** gradually *(current, both)* vs **reset** it instantly *(option, not used)*.
+- **Ball in an opponent's pull radius** (no contact yet) → drains at arm's length. *(current — a
+  ranged pull-radius contest: it drains when an opponent has the ball in reach AND the owning team
+  still does too, so closing down erodes the buff without a body-check; it does NOT drain off a
+  single far opponent or a ball flying away.)* Pros: pull-range pressure erodes the buff early; the
+  owner-also-in-range guard stops it from firing on a loose/escaping ball.
+- **A player merely inside an opponent's pull radius** (proximity, ball not involved) → drain.
+  *(option, not used.)* Pure marking-pressure; cons: you'd lose control with nobody touching the
+  ball *or* you, which reads as arbitrary.
+
+**B. What counts as "engaging" the ball for PLAYER possession (who builds + who can steal):**
+- **Ball touching the player** → build/steal. *(the original model; now superseded.)*
+- **Ball within the player's pull radius** (trap-extended, `PullRange + TrapRangeBonus·trapCharge`)
+  → build/steal from arm's length. *(current — `inPullRange`; rewards positioning and turns the
+  trap into a defensive reach tool.)*
+- **Body-contact with the current holder** → counts as engaged even if the ball isn't quite in
+  reach, so a physical challenge still contests. *(current — `playersTouching`.)*
+- **A player inside another player's pull radius** (player-proximity, ball elsewhere) → steal.
+  *(option, not used.)* Steal purely by marking tightly; cons: you'd drain a carrier whose ball is
+  on their far side just because you stood next to them — decoupled from the ball, unintuitive.
+- **Loose-ball takeover** (no holder still engaged): claim only on an **actual touch**
+  *(current — protects passes)* vs claim on **pull-range** *(rejected: a ball merely flying past
+  would flip possession, which tanks passing).*
+
+The current design deliberately favours **ball-grounded, gradual** triggers — disruption is tied
+to the ball being touched/reachable or to a real body-check, and it happens over time — which
+keeps possession changes readable and rewards positioning over magnetic, proximity-only effects.
+Swapping any line above to an *option* shifts that balance (more aggressive pressing, faster
+swings, or a more localized buff) at the cost of some intuitiveness.
 
 ### `PlayerStats` — charged shot
 
@@ -357,13 +434,15 @@ side); toggle with `render.ShowPossessionBars`.
 ### World physics (`config.Tuning`) + collision restitution
 
 - **BallRadius** `7.5`, **BallFriction** `-0.3` (light drag → the ball rolls far),
-  **BallMass** `1.5`.
+  **BallMass** `1.5` — the ball:player mass ratio (`1.5 : 20`) drives the contact: it damps the
+  bounce off a player and sets how hard a heavy hit shoves the player back (see Contact).
 - **BallWallRestitution** `0.90` — ball stays lively off walls/frame.
 - **PlayerWallRestitution** `0.50` — players damped harder off walls.
 - **ObstacleRestitution** `0.5` — bounce off cones. **NetRestitution** `0.2` — net catches
   the ball rather than springing it.
 - player ↔ player: inelastic (positional separation, no bounce). ball ↔ player: a custom
-  capture-vs-bounce path (below), never the generic resolver.
+  capture-vs-bounce path (below), never the generic resolver — and a *really hard* hit is the
+  one case the ball moves the player (it shoves them back).
 
 ### How it fits together each tick
 
@@ -375,8 +454,16 @@ side); toggle with `render.ShowPossessionBars`.
   with your movement; while touching, sticky hold + roll-to-front control + orbit-stick
   (anti-fling) + seat keep it glued to the front — all scaled by grip (possession) and trap.
 - **Contact**: approach speed below the (cone- and trap-adjusted) CaptureSpeed → absorbed
-  (sticks first touch); above → bounces with the angle's Restitution, deadened by trap and
-  limited by the mass ratio off-centre.
+  (sticks first touch); above → bounces with the angle's Restitution (deadened by trap). Two
+  mass effects, both driven by the ball:player mass ratio:
+  - **Bounce damping** — the bounce is mass-ratio damped *at every angle* now (uniformly *less
+    bouncing*). The old angle-split impulse scaling (full impulse in the front cone, damped only
+    off-centre) is gone; `uniformImpulseScale` toggles it back if needed. A clean capture still
+    absorbs fully.
+  - **Hard-hit shove** — a really hard hit (approach speed above `ballPushThreshold`) is the one
+    place the ball moves the player: the excess momentum shoves the player back along the ball's
+    travel, scaled by the ball:player mass ratio and `ballPushFactor`, so a heavier or faster
+    ball pushes harder. Dribble and soft contacts leave the player planted.
 - **Shooting**: power = `Shoot.Eval(angle) · (MinShootFactor + (1-MinShootFactor)·charge)`,
   added to the ball's current velocity along the radial (player→ball) direction, nudged
   toward `Facing` by the aim assist when the ball is in the front cone.

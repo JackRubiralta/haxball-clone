@@ -35,6 +35,12 @@ const (
 	ballPushFactor    = 1.5
 )
 
+// centerPullFalloffExp exaggerates how fast the centre-pull weakens with distance: the pull is
+// strongest near the surface and falls off as (1 - t)^centerPullFalloffExp toward the pull-radius
+// edge (t = 0 at the surface, 1 at the edge), so the player only draws in a ball that is already
+// close -- a far ball in range is barely pulled. Higher = a steeper, more aggressive falloff.
+const centerPullFalloffExp = 3.0
+
 // handleBallToPlayerInteraction resolves everything between the ball and a player
 // except shooting: the attraction that lets the player dribble, and the contact,
 // which either sticks the ball or bounces it off.
@@ -99,14 +105,15 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			side := player.Stats.CaptureSpeed.Back
 			captureSpeed := side + (player.Stats.CaptureSpeed.Eval(angle)-side)*cone
 			captureSpeed *= player.Stats.TouchQuality.captureMul(quality)
-			captureSpeed += player.Stats.TrapCaptureBonus * player.trapCharge
+			captureSpeed += player.Stats.TrapCaptureBonus * player.trapAura
 
 			restitution := 0.0
 			if approachSpeed > captureSpeed {
 				// Bounce livelier the further off-front it is; a held trap deadens the bounce
-				// (scaled by TrapRestitutionFactor, fully killing it before a full trap), and
-				// the touch quality scales it too -- a clean touch deadens it, a cold one livens it.
-				trapDeaden := 1 - math.Min(1, player.trapCharge*player.Stats.TrapRestitutionFactor)
+				// (scaled by TrapRestitutionFactor and the trap's effective strength `trapAura`,
+				// which swells then weakens as the trap is over-held -- see entity.trapAuraShape),
+				// and the touch quality scales it too -- a clean touch deadens it, a cold one livens it.
+				trapDeaden := 1 - math.Min(1, player.trapAura*player.Stats.TrapRestitutionFactor)
 				restitution = player.Stats.Restitution.Eval(angle) * (1 + (1 - cone)) * trapDeaden
 				restitution *= player.Stats.TouchQuality.restitutionMul(quality)
 				if restitution > 0.95 {
@@ -178,7 +185,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	// (a held trap strengthens and lengthens the centre-pull).
 	centerPullGrip := player.Stats.centerPullGrip(player.possession)
 	stickinessGrip := player.Stats.stickinessGrip(player.possession)
-	trapPullMul := 1 + player.Stats.TrapPullBonus*player.trapCharge
+	trapPullMul := 1 + player.Stats.TrapPullBonus*player.trapAura
 	pullRange := player.pullRadius()
 
 	// Centre-pull: a gap-scaled spring toward the player centre, active only while the
@@ -187,7 +194,12 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	// touching, the sticky hold below takes over instead.
 	if gap >= player.Stats.TouchRange && gap < pullRange {
 		strength := player.Stats.CenterPull.Eval(angle) * centerPullGrip * trapPullMul
-		ball.Velocity = ball.Velocity.Add(normal.Scale(-strength * (gap / pullRange) * deltaTime))
+		// Distance falloff: STRONGEST near the surface, dropping off steeply as the ball gets
+		// further out (the exponent exaggerates how fast it weakens), so the player only draws in
+		// a ball that is already close -- a far ball in the pull radius is barely pulled.
+		t := (gap - player.Stats.TouchRange) / (pullRange - player.Stats.TouchRange) // 0 at the surface, 1 at the far edge
+		falloff := math.Pow(1-t, centerPullFalloffExp)
+		ball.Velocity = ball.Velocity.Add(normal.Scale(-strength * falloff * deltaTime))
 	}
 
 	// Carry: move the ball with the player's input acceleration, capped at the player's
@@ -229,7 +241,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// excess. Strongest at the front, with a small baseline hold even at the back.
 		separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal)
 		holdCap := player.Stats.Stickiness.Eval(angle) * stickinessGrip *
-			(1 + player.Stats.TrapStickinessBonus*player.trapCharge) * deltaTime
+			(1 + player.Stats.TrapStickinessBonus*player.trapAura) * deltaTime
 
 		// RETENTION measures how well the player's FULL hold contains the ball this
 		// frame: the sticky cap above PLUS the centripetal stick's full inward pull
@@ -269,7 +281,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// (1 + PossessionControlBonus*possession), so a settled carrier rolls the ball to its
 		// front a touch more crisply -- a player boost, independent of the team charge.
 		strength := player.Stats.Control.Eval(angle) *
-			(1 + player.Stats.TrapControlBonus*player.trapCharge) *
+			(1 + player.Stats.TrapControlBonus*player.trapAura) *
 			(1 + player.Stats.PossessionControlBonus*player.possession)
 		tangential := player.Facing.Sub(normal.Scale(cos))
 		ball.Velocity = ball.Velocity.Add(tangential.Scale(strength * deltaTime * retention))
@@ -400,16 +412,15 @@ func shoot(player *Player, ball *Ball) bool {
 	return true
 }
 
-// pokePowerFactor is how hard the middle-click poke fires, as a multiple of the front shot
-// power. It is a STRONG jab -- well above even a full-charge left-click shot -- so the instant,
-// no-aim, no-touch poke hits much harder than a held shot.
-const pokePowerFactor = 1.5
+// pokePowerFactor is how hard the middle-click poke fires, as a fraction of the front shot
+// power: 0.7 = 70% of a full-charge left-click shot. The instant, no-aim, no-touch poke is a
+// quick jab (stronger than a tap, just under a full shot).
+const pokePowerFactor = 0.7
 
-// poke is the middle-click jab: an INSTANT radial push of the ball at a STRONG power
+// poke is the middle-click jab: an INSTANT radial push of the ball at 70% of the front shot power
 // (pokePowerFactor of the front shot), EQUAL in every direction (no angle falloff, no aim
 // assist), reaching any ball within the PULL radius (not just touching). Because it never
-// charges it fires faster than the held shot AND hits much harder. Returns whether it fired
-// (a ball was in range).
+// charges it fires faster than a held shot. Returns whether it fired (a ball was in range).
 func poke(player *Player, ball *Ball) bool {
 	toBall := ball.Position.Sub(player.Position)
 	distance := geom.Norm(toBall)
@@ -421,7 +432,7 @@ func poke(player *Player, ball *Ball) bool {
 	if distance > 0 {
 		dir = toBall.Scale(1 / distance) // pure radial (player centre -> ball), no aim assist
 	}
-	power := player.Stats.Shoot.Eval(0) * pokePowerFactor // a strong jab, the same in every direction
+	power := player.Stats.Shoot.Eval(0) * pokePowerFactor // a 70%-power jab, the same in every direction
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
 	player.control = 0

@@ -60,14 +60,18 @@ type Ruleset struct {
 	GoldenGoalSeconds float64        // sudden-death time limit (0 = until a goal is scored)
 	Penalties         PenaltyRules
 
-	// Positional rules (off by default). The box caps are per box, counting players of
-	// the same team; 0 means that box has no limit.
-	OffsideEnabled       bool            // anti-camp: hold a player behind the offside line
-	OffsideFrac          float64         // line position as a fraction of the pitch from a team's own goal
-	PenaltyBoxMaxPlayers int             // max same-team players allowed in the penalty area (0 = off)
-	GoalAreaMaxPlayers   int             // max same-team players allowed in the goal area (0 = off)
-	Enforcement          EnforcementMode // how violations are corrected
-	EvictGrace           float64         // seconds of tolerance before a warn-evict clamp
+	// Positional rules (off by default). Each box is capped per box; a player counts against a
+	// cap the moment ANY part of its body overlaps the box, and a full box becomes a barrier.
+	// The defending team (the box's own side) and the opponent (attackers) are capped SEPARATELY;
+	// 0 means that side has no limit in that box.
+	OffsideEnabled         bool            // anti-camp: hold a player behind the offside line
+	OffsideFrac            float64         // line position as a fraction of the pitch from a team's own goal
+	PenaltyBoxMaxPlayers   int             // max DEFENDING players allowed in their penalty area (0 = off)
+	PenaltyBoxMaxOpponents int             // max OPPONENT (attacking) players allowed in a penalty area (0 = off)
+	GoalAreaMaxPlayers     int             // max DEFENDING players allowed in their goal area (0 = off)
+	GoalAreaMaxOpponents   int             // max OPPONENT (attacking) players allowed in a goal area (0 = off)
+	Enforcement            EnforcementMode // how violations are corrected
+	EvictGrace             float64         // seconds of tolerance before a warn-evict clamp
 }
 
 // DefaultRuleset returns the friendly, never-ending ruleset that matches the original

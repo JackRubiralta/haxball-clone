@@ -104,18 +104,20 @@ func (gf *geomFlags) fill(s *MatchSetup) error {
 
 // ruleFlags collects the match-mode flags shared by the game and server.
 type ruleFlags struct {
-	mode        string
-	minutes     float64
-	winScore    int
-	extraTime   bool
-	goldenGoal  bool
-	penalties   bool
-	directPens  bool
-	offsideFrac float64
-	penBoxMax   int
-	goalAreaMax int
-	gkBoxMax    int
-	zoneEnforce string
+	mode           string
+	minutes        float64
+	winScore       int
+	extraTime      bool
+	goldenGoal     bool
+	penalties      bool
+	directPens     bool
+	offsideFrac    float64
+	penBoxMax      int
+	penBoxMaxOpp   int
+	goalAreaMax    int
+	goalAreaMaxOpp int
+	gkBoxMax       int
+	zoneEnforce    string
 }
 
 func bindRules(fs *flag.FlagSet) *ruleFlags {
@@ -128,8 +130,10 @@ func bindRules(fs *flag.FlagSet) *ruleFlags {
 	fs.BoolVar(&rf.penalties, "penalties", false, "if a timed match is drawn, decide it on penalties")
 	fs.BoolVar(&rf.directPens, "direct-pens", false, "if a timed match is drawn, go straight to penalties")
 	fs.Float64Var(&rf.offsideFrac, "offside-frac", 0, "anti-camp line as a fraction of the pitch from a team's own goal (0 = off, e.g. 0.667)")
-	fs.IntVar(&rf.penBoxMax, "penalty-box-max", 0, "max same-team players allowed in the penalty area (0 = off)")
-	fs.IntVar(&rf.goalAreaMax, "goalarea-box-max", 0, "max same-team players allowed in the goal area (0 = off)")
+	fs.IntVar(&rf.penBoxMax, "penalty-box-max", 0, "max DEFENDING players allowed in their penalty area (0 = off)")
+	fs.IntVar(&rf.penBoxMaxOpp, "penalty-box-max-opp", 0, "max OPPONENT (attacking) players allowed in a penalty area (0 = off)")
+	fs.IntVar(&rf.goalAreaMax, "goalarea-box-max", 0, "max DEFENDING players allowed in their goal area (0 = off)")
+	fs.IntVar(&rf.goalAreaMaxOpp, "goalarea-box-max-opp", 0, "max OPPONENT (attacking) players allowed in a goal area (0 = off)")
 	fs.IntVar(&rf.gkBoxMax, "gk-box-max", 0, "deprecated alias for -goalarea-box-max")
 	fs.StringVar(&rf.zoneEnforce, "zone-enforce", "clamp", "positional-rule enforcement: clamp or evict")
 	return rf
@@ -146,7 +150,7 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 	if rf.offsideFrac < 0 || rf.offsideFrac > 1 {
 		return usagef("offside-frac must be between 0 and 1")
 	}
-	if rf.penBoxMax < 0 || rf.goalAreaMax < 0 || rf.gkBoxMax < 0 {
+	if rf.penBoxMax < 0 || rf.goalAreaMax < 0 || rf.gkBoxMax < 0 || rf.penBoxMaxOpp < 0 || rf.goalAreaMaxOpp < 0 {
 		return usagef("box-max players must not be negative")
 	}
 	switch strings.ToLower(strings.TrimSpace(rf.zoneEnforce)) {
@@ -164,7 +168,9 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 		s.Offside, s.OffsideFrac = true, rf.offsideFrac
 	}
 	s.PenaltyBoxMax = rf.penBoxMax
+	s.PenaltyBoxMaxOpp = rf.penBoxMaxOpp
 	s.GoalAreaMax = rf.goalAreaMax
+	s.GoalAreaMaxOpp = rf.goalAreaMaxOpp
 	if s.GoalAreaMax == 0 && rf.gkBoxMax > 0 {
 		s.GoalAreaMax = rf.gkBoxMax // deprecated -gk-box-max alias
 	}
