@@ -52,10 +52,10 @@ type Player struct {
 
 // Charge timing constants (seconds), shared by the sim and the renderer's gauges.
 const (
-	shootChargeMax  = 0.75 // seconds of hold for a full-power shot (faster charge)
-	trapChargeTime  = 1.25 // seconds of holding the trap button to reach full trap charge (~25% slower)
-	trapChargeDecay = 3.2  // per-second decay of trap charge once released (~25% slower release/aura fade)
-	pokeFlashSeconds = 0.3 // seconds for the middle-click poke pulse animation to fade out
+	shootChargeMax   = 0.75 // seconds of hold for a full-power shot (faster charge)
+	trapChargeTime   = 1.25 // seconds of holding the trap button to reach full trap charge (~25% slower)
+	trapChargeDecay  = 3.2  // per-second decay of trap charge once released (~25% slower release/aura fade)
+	pokeFlashSeconds = 0.3  // seconds for the middle-click poke pulse animation to fade out
 )
 
 // Trap strength shape: how the held trap's EFFECTIVE strength (`trapAura`) tracks the raw charge.
@@ -93,6 +93,10 @@ func (p *Player) TrapCharge() float64 { return p.trapCharge }
 // a max then weakens as the trap is over-held (see trapAuraShape), and shrinks to nothing after
 // release. Drives the trap effect and is exposed for the renderer's trap glow (so they match).
 func (p *Player) TrapAura() float64 { return p.trapAura }
+
+// PokeFlash returns the current 1->0 poke-press animation timer: 1 the tick a middle-click poke
+// fires, fading to 0 over pokeFlashSeconds. Exposed for the renderer's poke pulse (local play).
+func (p *Player) PokeFlash() float64 { return p.pokeFlash }
 
 // Possession returns the player's current 0..1 possession build-up (ball touching anywhere).
 func (p *Player) Possession() float64 { return p.possession }

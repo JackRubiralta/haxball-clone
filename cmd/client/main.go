@@ -34,9 +34,9 @@ type Game struct {
 	human  *input.Human
 	audio  *audio.Manager
 
-	field         *sim.Field         // cached; rebuilt only when the geometry changes
-	geo           config.Geometry    // geometry the cached field was built from
-	lastSoundTick uint64             // last tick whose sounds were played (dedupe)
+	field         *sim.Field      // cached; rebuilt only when the geometry changes
+	geo           config.Geometry // geometry the cached field was built from
+	lastSoundTick uint64          // last tick whose sounds were played (dedupe)
 }
 
 func (g *Game) Update() error {
@@ -74,7 +74,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		if e.Kind == netcode.KindBall {
 			render.BallAt(screen, e.Position, e.Radius)
 		} else {
-			render.PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge)
+			render.PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge, 0)
 		}
 	}
 	render.ZoneIndicators(screen, g.field, config.Ruleset{

@@ -143,10 +143,8 @@ func (a *App) updatePlaying() {
 		a.state = StatePaused
 		return
 	}
-	// Camera: mouse wheel zooms (when following), C cycles fit/ball/player.
-	if _, wy := ebiten.Wheel(); wy != 0 {
-		a.camera.ZoomBy(1 + 0.12*wy)
-	}
+	// Camera: C cycles fit/ball/player. Mouse-wheel zoom is intentionally NOT handled here --
+	// the wheel only adjusts zoom in Settings, so scrolling can't disturb the camera mid-match.
 	if inpututil.IsKeyJustPressed(ebiten.KeyC) {
 		a.camera.ToggleFollow()
 	}
@@ -363,6 +361,13 @@ func (a *App) screenSettings(f frame) {
 		p.Zoom = clampF(p.Zoom+float64(dir(i))*0.5, 1, 4)
 		a.applyPrefs()
 	}
+	// The mouse wheel adjusts zoom HERE only (not during play): scrolling tunes the saved zoom.
+	if !f.draw {
+		if _, wy := ebiten.Wheel(); wy != 0 {
+			p.Zoom = clampF(p.Zoom+wy*0.5, 1, 4)
+			a.applyPrefs()
+		}
+	}
 	y += rh + 14
 	f.sectionHeader("AUDIO", x0, y, w)
 	y += 30
@@ -381,7 +386,7 @@ func (a *App) screenSettings(f frame) {
 	if f.draw {
 		for _, line := range []string{
 			"WASD  move", "Mouse  aim", "Hold left-click  charge shot (release to fire)",
-			"Right-click  trap", "Mouse wheel  zoom    C  camera mode", "Esc / P  pause",
+			"Right-click  trap", "Middle-click  poke", "C  camera mode    (zoom: Settings)", "Esc / P  pause",
 		} {
 			f.ui.Text(line, x0, y+9)
 			y += 26

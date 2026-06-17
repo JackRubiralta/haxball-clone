@@ -267,7 +267,7 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
-			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
+			sim.NormShootCharge(p.ShootCharge()), p.TrapAura(), p.PokeFlash())
 	}
 	drawPossessionBarsAll(screen, m)
 	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
@@ -334,7 +334,7 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
-			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
+			sim.NormShootCharge(p.ShootCharge()), p.TrapAura(), p.PokeFlash())
 	}
 	drawPossessionBarsAll(screen, m)
 	drawZoneIndicators(newCanvas(screen), m.Field, m.Rules)
@@ -588,7 +588,7 @@ func BallAt(screen *ebiten.Image, pos geom.Vec, radius float64) {
 
 // PlayerAt draws a player as a flat coloured disc with a thick outline, a jersey
 // number, and a white dot at the front showing which way it faces.
-func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body color.RGBA, number int, shootCharge, auraLevel float64) {
+func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body color.RGBA, number int, shootCharge, auraLevel, pokeFlash float64) {
 	c := newCanvas(screen)
 	drawTrapAura(c, pos, radius, auraLevel, body) // glow under the body
 
@@ -605,6 +605,25 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 
 	c.number(itoa(number), pos.X, pos.Y, radius, ballWhite)
 	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
+	drawPokePulse(c, pos, radius, pokeFlash)                   // middle-click jab ping, over the body
+}
+
+// drawPokePulse draws a quick expanding ring when a middle-click poke fires: `flash` is a 1->0
+// timer (sim.Player.PokeFlash). The ring starts just past the body and expands outward as it
+// fades -- a crisp white "jab" ping, distinct from the soft, body-coloured trap aura.
+func drawPokePulse(c canvas, pos geom.Vec, radius, flash float64) {
+	if flash <= 0 {
+		return
+	}
+	const pokePulseReach = 20.0           // how far the ring expands past the body
+	prog := 1 - flash                     // 0 at the press, 1 at the end
+	r := radius + 4 + prog*pokePulseReach // expands outward from just past the body
+	a := uint8(flash * 200)               // bright at the press, fading as it expands
+	if a == 0 {
+		return
+	}
+	w := 1.5 + 2.5*flash // a touch thicker at the press
+	c.strokeCircle(pos.X, pos.Y, r, w, color.RGBA{255, 255, 255, a})
 }
 
 // drawTrapAura draws a soft glow ring around a player while it traps. `level` is the trap's
@@ -616,21 +635,19 @@ func drawTrapAura(c canvas, pos geom.Vec, radius, level float64, body color.RGBA
 	if level <= 0 {
 		return
 	}
-	// A glow drawn as a stack of thin concentric bands whose opacity runs as a smooth
-	// LINEAR gradient from the inner edge out: 75 (of 255) right at the body, falling
-	// to 10 at the outer rim. The alpha is read straight from the gradient (not summed
-	// across bands), so it stays a clean halo the ball reads through rather than a
-	// bright blob. The whole gradient scales with the aura level, so it swells then settles
-	// rather than popping in, and the reach tracks it too.
+	// A glow drawn as a stack of thin concentric bands whose opacity RISES along the disc: faint
+	// at the body (inner edge) and brightest at the outer rim. The opacity gradient is fixed and
+	// SIZE-INDEPENDENT -- only the reach scales with the aura level, so a small disc and a big one
+	// look identical in opacity (one is just bigger), and the bright rim reads as an expanding ring.
 	const bands = 24
-	const innerAlpha = 75.0                 // opacity at the body (inner edge), at peak level
-	const outerAlpha = 10.0                 // opacity at the outer rim, at peak level
-	reach := 4 + 16*level                   // how far the glow reaches past the body, tracks the aura level
+	const innerAlpha = 8.0                  // opacity at the body (inner edge)
+	const outerAlpha = 70.0                 // opacity at the outer rim (brightest -- opacity rises outward)
+	reach := 4 + 16*level                   // SIZE tracks the aura level (grows then shrinks); opacity does NOT
 	width := reach / float64(bands-1) * 1.1 // thin bands with a hair of overlap so they meet seamlessly
 	for i := 0; i < bands; i++ {
-		t := float64(i) / float64(bands-1) // 0 at the body, 1 at the outer rim
-		r := radius + reach*t
-		a := uint8((innerAlpha + (outerAlpha-innerAlpha)*t) * level) // linear 75 -> 10, scaled by the level
+		t := float64(i) / float64(bands-1)                 // 0 at the body, 1 at the outer rim
+		r := radius + reach*t                              //
+		a := uint8(innerAlpha + (outerAlpha-innerAlpha)*t) // rises 8 -> 70 outward; independent of disc size
 		if a == 0 {
 			continue
 		}

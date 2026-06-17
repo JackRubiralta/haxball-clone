@@ -145,6 +145,7 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 	// fires first (instant, min power, anywhere in the pull radius) if requested.
 	for _, p := range m.Players {
 		if p.wantsPoke {
+			p.pokeFlash = 1 // kick off the poke-press pulse animation (plays on the press itself)
 			if poke(p, m.Ball) {
 				m.recordTouch(p, TouchKick)
 				m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
@@ -177,6 +178,12 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 // update, the trap/charge/possession speed penalties, and movement. It does not
 // integrate the body (step 2 does). Shared by normal play and the penalty shootout.
 func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
+	// Fade the poke-press pulse animation (a cosmetic 1->0 timer set when a middle-click fires).
+	if p.pokeFlash > 0 {
+		if p.pokeFlash -= deltaTime / pokeFlashSeconds; p.pokeFlash < 0 {
+			p.pokeFlash = 0
+		}
+	}
 	if in.Aim != (geom.Vec{}) {
 		if in.AimFromCursor {
 			p.faceTowardLimited(in.Aim, deltaTime) // human cursor: turn at TurnRate, no instant snap
