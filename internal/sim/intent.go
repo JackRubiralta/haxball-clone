@@ -17,6 +17,11 @@ type Intent struct {
 	// rising edge of the cancel (right-click); the AI never sets it, so its own trap-while-
 	// charging recover move can never be mistaken for a cancel.
 	CancelCharge bool
+	// Poke is the middle-click jab: an INSTANT, minimum-power radial push of the ball that
+	// reaches any ball within the PULL radius (not just touching) and fires equally in every
+	// direction (no aim assist, no charge). A human sets it on the rising edge of middle-click;
+	// the AI leaves it false.
+	Poke bool
 	// AimFromCursor marks Aim as a raw human cursor target, so the sim turns the facing toward
 	// it at the player's TurnRate (the disk can't instantly snap to the cursor). The AI leaves it
 	// false: its facing is instant in the sim (its on-ball aim is smoothed in the control layer,

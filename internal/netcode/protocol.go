@@ -38,14 +38,14 @@ type EntityState struct {
 // Snapshot is the authoritative state the server broadcasts each tick. It carries
 // enough field geometry for a fresh client to render without prior knowledge.
 type Snapshot struct {
-	Tick       uint64
-	Entities   []EntityState
-	FieldMin   geom.Vec
-	FieldMax   geom.Vec
-	GoalWidth  float64
-	GoalHeight float64
-	LeftName   string
-	RightName  string
+	Tick        uint64
+	Entities    []EntityState
+	FieldMin    geom.Vec
+	FieldMax    geom.Vec
+	GoalWidth   float64
+	GoalHeight  float64
+	LeftName    string
+	RightName   string
 	LeftColor   color.RGBA
 	RightColor  color.RGBA
 	LeftScore   int
@@ -64,7 +64,7 @@ type Snapshot struct {
 	GoalText     string // scorer/assist/own-goal message during a celebration
 
 	// Penalty shootout tally.
-	InShootout                                            bool
+	InShootout                                               bool
 	PenLeftGoals, PenLeftTaken, PenRightGoals, PenRightTaken int
 
 	// Positional-rule state, so the client can draw the offside/box indicators.
@@ -85,13 +85,13 @@ type ClientMsg struct {
 // SnapshotOf projects a match into a wire snapshot.
 func SnapshotOf(m *sim.Match) Snapshot {
 	s := Snapshot{
-		Tick:       m.Tick,
-		FieldMin:   m.Field.Min,
-		FieldMax:   m.Field.Max,
-		GoalWidth:  m.Field.GoalWidth,
-		GoalHeight: m.Field.GoalHeight,
-		LeftName:   m.Teams[0].Name,
-		RightName:  m.Teams[1].Name,
+		Tick:        m.Tick,
+		FieldMin:    m.Field.Min,
+		FieldMax:    m.Field.Max,
+		GoalWidth:   m.Field.GoalWidth,
+		GoalHeight:  m.Field.GoalHeight,
+		LeftName:    m.Teams[0].Name,
+		RightName:   m.Teams[1].Name,
 		LeftColor:   m.Teams[0].Color,
 		RightColor:  m.Teams[1].Color,
 		LeftScore:   m.Teams[0].Score,

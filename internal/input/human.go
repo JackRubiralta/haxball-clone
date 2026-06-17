@@ -52,5 +52,6 @@ func (h *Human) Intent(_ sim.View) sim.Intent {
 		ShootHeld:     ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft),
 		Trap:          ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight),
 		CancelCharge:  inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight),
+		Poke:          inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonMiddle), // middle-click jab
 	}
 }

@@ -35,11 +35,14 @@ type Player struct {
 
 	possession    float64  // 0..1 build-up while the ball is touching anywhere; scales the grip on the ball
 	control       float64  // 0..1 build-up while the ball is touching within the front arc; tracked but unused
+	pullEnterSeq  uint64   // sequence stamp set when the ball entered this player's pull radius (0 = out of reach); the latest stamp is the sole possession builder
 	touchCoef     float64  // -1..1 touch-quality coefficient this tick from the team possession charge
 	shootCharge   float64  // seconds the shoot button has been held this charge
 	trapCharge    float64  // 0..1 trap charge; built while the trap button is held
+	trapAura      float64  // 0..1 cosmetic aura strength (stateful): humps while held, shrinks on release
 	shootHeldPrev bool     // shoot-button state last tick, for release-edge detection
 	shootCanceled bool     // current shoot charge was canceled (by a trap-tap); suppress the release-edge kick
+	wantsPoke     bool     // middle-click jab requested this tick (instant min-power radial push)
 	trapHeldPrev  bool     // trap-button state last tick, for the trap sound's rising edge
 	evictDwell    float64  // seconds spent violating a positional rule (warn-evict grace)
 	moveHeading   geom.Vec // current steering direction; rotates toward input at TurnRate
@@ -48,15 +51,43 @@ type Player struct {
 // Charge timing constants (seconds), shared by the sim and the renderer's gauges.
 const (
 	shootChargeMax  = 0.75 // seconds of hold for a full-power shot (faster charge)
-	trapChargeTime  = 1.0  // seconds of holding the trap button to reach full trap charge
-	trapChargeDecay = 4.0  // per-second decay of trap charge once the button is released
+	trapChargeTime  = 1.25 // seconds of holding the trap button to reach full trap charge (~25% slower)
+	trapChargeDecay = 3.2  // per-second decay of trap charge once released (~25% slower release/aura fade)
 )
+
+// Trap aura (cosmetic) shape: how the held trap's visual aura strength tracks the trap charge.
+const (
+	trapAuraPeak           = 0.55 // charge fraction at which the aura is strongest (its max)
+	trapAuraOverheldFloor  = 0.5  // aura strength once the trap is fully (over-)charged
+	trapAuraReleaseSeconds = 0.3  // seconds for the aura to shrink to nothing after release
+)
+
+// trapAuraShape maps the trap charge to the aura's visual strength WHILE HELD: it swells
+// (ease-out) to full at trapAuraPeak, then -- as the trap is over-held toward full charge --
+// weakens to trapAuraOverheldFloor, so the longer the trap is held past its peak the weaker the
+// aura (and the smaller the on-screen circle). Cosmetic only; the trap mechanic uses trapCharge.
+func trapAuraShape(charge float64) float64 {
+	if charge <= 0 {
+		return 0
+	}
+	if charge <= trapAuraPeak {
+		x := charge / trapAuraPeak
+		return 1 - (1-x)*(1-x) // ease-out swell to the max at the peak
+	}
+	x := (charge - trapAuraPeak) / (1 - trapAuraPeak)
+	return 1 - (1-trapAuraOverheldFloor)*x // weaken from the max to the floor as it is over-held
+}
 
 // ShootCharge returns the seconds the shoot button has been held this charge.
 func (p *Player) ShootCharge() float64 { return p.shootCharge }
 
 // TrapCharge returns the current 0..1 trap charge.
 func (p *Player) TrapCharge() float64 { return p.trapCharge }
+
+// TrapAura returns the current 0..1 cosmetic aura strength: while the trap is held it swells to
+// a max then weakens as the trap is over-held (see trapAuraShape), and shrinks to nothing after
+// release. Exposed for the renderer's trap glow.
+func (p *Player) TrapAura() float64 { return p.trapAura }
 
 // Possession returns the player's current 0..1 possession build-up (ball touching anywhere).
 func (p *Player) Possession() float64 { return p.possession }
@@ -70,6 +101,13 @@ func (p *Player) Control() float64 { return p.control }
 // touch -- higher capture, lower bounce; negative (the other team owns it) is a worse touch
 // so the ball flies off; 0 is the baseline. Exposed for the on-screen test bars.
 func (p *Player) TouchCoefficient() float64 { return p.touchCoef }
+
+// pullRadius is the surface gap within which the player can act on the ball with its
+// centre-pull: the base PullRange extended by the current trap charge (TrapRangeBonus), so a
+// held trap reaches further. Shared by the dribble attraction and the possession-steal contest.
+func (p *Player) pullRadius() float64 {
+	return p.Stats.PullRange + p.Stats.TrapRangeBonus*p.trapCharge
+}
 
 // NormShootCharge maps held seconds to a 0..1 charge fraction.
 func NormShootCharge(seconds float64) float64 {

@@ -108,17 +108,17 @@ type PlayerStats struct {
 	ShootSpeedFactor float64
 	ShootAccelFactor float64
 
-	// Aim assist: a shot is fired radially (player centre -> ball), but when the ball
-	// sits within the front cone the direction is nudged toward where the player is
-	// FACING, so the shot goes where the player aims even if the ball isn't perfectly
-	// centred. ShootAimAssist is the max blend weight (0 = pure radial, the raw physics;
-	// 1 = fire fully along the facing direction). The assist holds at full strength
-	// within ShootAimAssistConeRadians of the facing direction, then decays over the next
-	// ShootAimAssistSoftRadians to zero -- so a side- or back-of-the-body shot just fires
-	// straight out along the radial as before.
+	// Aim assist: a shot is fired radially (player centre -> ball), but when the ball sits in
+	// the front hemisphere the direction is nudged toward where the player is FACING, so the
+	// shot goes where the player aims even if the ball isn't perfectly centred. ShootAimAssist
+	// is the max blend weight (0 = pure radial, the raw physics; 1 = fire fully along the
+	// facing direction). The assist holds at full strength within ShootAimAssistConeRadians,
+	// then degrades across the rest of the front hemisphere to zero at +-90deg (much worse near
+	// the edges -- see aimAssistWeight/frontShotFalloff). ShootAimAssistSoftRadians is no longer
+	// used (the falloff now spans the whole hemisphere). A shot can't reach behind +-90deg.
 	ShootAimAssist            float64
 	ShootAimAssistConeRadians float64
-	ShootAimAssistSoftRadians float64
+	ShootAimAssistSoftRadians float64 // deprecated: superseded by the hemisphere falloff
 
 	// Trap ("good touch"): a 0..1 trap charge (built while the trap button is held)
 	// scales these -- a stronger, longer-reach centre-pull (to trap/steal a loose
@@ -251,23 +251,36 @@ func (s PlayerStats) captureConeRadians(coef float64) float64 {
 	return 0
 }
 
-// aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle`
-// radians off the facing direction: ShootAimAssist within the front cone, decaying
-// linearly to zero across the soft band, and zero beyond (side/back shots fire purely
-// radially). Returns 0 when the assist is disabled (ShootAimAssist <= 0).
+// shotFalloffExp shapes how a shot's power and aim assist fall off across the front 180deg
+// hemisphere: > 1 keeps them near full for most of the front and then drops MUCH faster toward
+// the +-90deg edges (and to nothing behind). So a left-click shot "works for the whole front
+// but gets much worse at the ends" -- both weaker and less accurately aimed near the sides.
+const shotFalloffExp = 3.0
+
+// frontShotFalloff is 1 at dead front (angle 0), falls to 0 at the front-hemisphere edge
+// (pi/2), and is 0 beyond (a shot can't reach behind), dropping much faster toward the edge.
+func frontShotFalloff(angle float64) float64 {
+	x := angle / (math.Pi / 2)
+	if x >= 1 {
+		return 0
+	}
+	return 1 - math.Pow(x, shotFalloffExp)
+}
+
+// aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle` radians
+// off the facing direction: full (ShootAimAssist) within the front cone, then degrading across
+// the rest of the front hemisphere to zero at +-90deg (much worse toward the edge), and zero
+// behind. Returns 0 when the assist is disabled (ShootAimAssist <= 0).
 func (s PlayerStats) aimAssistWeight(angle float64) float64 {
-	if s.ShootAimAssist <= 0 {
+	if s.ShootAimAssist <= 0 || angle >= math.Pi/2 {
 		return 0
 	}
-	cone, soft := s.ShootAimAssistConeRadians, s.ShootAimAssistSoftRadians
-	switch {
-	case angle <= cone:
+	cone := s.ShootAimAssistConeRadians
+	if angle <= cone {
 		return s.ShootAimAssist
-	case soft <= 0 || angle >= cone+soft:
-		return 0
-	default:
-		return s.ShootAimAssist * (1 - (angle-cone)/soft)
 	}
+	x := (angle - cone) / (math.Pi/2 - cone) // 0 at the cone edge -> 1 at +-90deg
+	return s.ShootAimAssist * (1 - math.Pow(x, shotFalloffExp))
 }
 
 // ShootDirection returns the actual launch direction of a shot: the radial direction
@@ -297,12 +310,12 @@ func DefaultStats(shootForce float64) PlayerStats {
 		Acceleration:   300,
 		TurnRate:       14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
 		TouchRange:     2,
-		PullRange:      5,                                            // reduced reach (was 6)
-		Restitution:    CurveSpec{InverseQuadraticCurve, 0.10, 0.20}, // front raised to 0.10 (head-on shots deflect more)
-		CaptureSpeed:   CurveSpec{LinearCurve, 260, 30},              // front lowered to 260 (ball clears capture more easily)
-		CenterPull:     CurveSpec{InverseQuadraticCurve, 800, 0},     // power reduced (950 -> 800)
-		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
-		Control:        CurveSpec{LinearCurve, 1500, 300},
+		PullRange:      5,                                              // reduced reach (was 6)
+		Restitution:    CurveSpec{InverseQuadraticCurve, 0.0667, 0.20}, // baseline front lowered (better neutral capture); buff/debuff kept via the multipliers
+		CaptureSpeed:   CurveSpec{LinearCurve, 290, 30},                // baseline front raised 260->290 (better neutral capture)
+		CenterPull:     CurveSpec{InverseQuadraticCurve, 800, 0},       // power reduced (950 -> 800)
+		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30},      // front restored to 420; small baseline hold at the back (0 -> 30)
+		Control:        CurveSpec{LinearCurve, 1700, 340},              // roll-to-front speed raised (was 1500/300)
 		Shoot:          CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping: 11,
 		OrbitStick:     8,
@@ -345,10 +358,10 @@ func DefaultStats(shootForce float64) PlayerStats {
 		TouchQuality: TouchQuality{
 			OwnTeamMax:        1.0,                 // owning team at full charge -> the cleanest touch
 			OtherTeam:         -1.0,                // other team at the owner's full charge -> worst-case touch (ball flies off)
-			CaptureWorst:      0.7,                 // -30% capture at the worst (ball harder to absorb)
-			CaptureBest:       1.142857142857143,   // at full charge restores capture to the OLD cone power (280 * 8/7 = 320)
-			RestitutionWorst:  2.0,                 // up to x2 bounce at the worst (a shot flies off a debuffed opponent)
-			RestitutionBest:   0.45,                // -55% bounce at full charge (received passes stay dead)
+			CaptureWorst:      0.628,               // scaled with the higher baseline so the debuffed front capture stays ~182 (290*0.628)
+			CaptureBest:       1.025,               // scaled with the higher baseline so the buffed front capture stays ~297 (290*1.025)
+			RestitutionWorst:  3.0,                 // scaled with the lower baseline so the debuffed front bounce stays ~0.24 (0.08*3.0)
+			RestitutionBest:   0.675,               // scaled with the lower baseline so the buffed front bounce stays ~0.054 (0.08*0.675)
 			ConeBonusRadians:  0.05235987755982988, // ~3deg: a slight cone widening at full team buff (biggest cone)
 			ConeDebuffRadians: 0.2617993877991494,  // ~15deg: a debuffed opponent's cone shrinks way more (catches far less)
 		},

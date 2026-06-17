@@ -23,11 +23,11 @@ func fieldPlayerStats() PlayerStats {
 	s.MaxSpeed = 140                                             // [gk 126 | mid 147 | attack 168]
 	s.Acceleration = 300                                         // [gk 340 | mid 300 | attack 320]
 	s.Shoot = CurveSpec{LinearCurve, 575, 172.5}                 // +15% power at max (was 500/150)
-	s.Restitution = CurveSpec{InverseQuadraticCurve, 0.12, 0.20} // front raised to 0.12 (head-on shots deflect more)
-	s.CaptureSpeed = CurveSpec{LinearCurve, 260, 30}             // front lowered to 260 (ball clears capture more easily)
+	s.Restitution = CurveSpec{InverseQuadraticCurve, 0.08, 0.20} // baseline front lowered 0.12->0.08 (better neutral capture; buff/debuff kept via the multipliers)
+	s.CaptureSpeed = CurveSpec{LinearCurve, 290, 30}             // baseline front raised 260->290 (better neutral capture)
 	s.CenterPull = CurveSpec{InverseQuadraticCurve, 800, 0}      // power reduced (was 950)
 	s.Stickiness = CurveSpec{InverseQuadraticCurve, 420, 30}     // front restored to 420; small baseline hold at the back (was 0)
-	s.Control = CurveSpec{LinearCurve, 1500, 300}                // [gk+mid {Lin 1500/300} | attack {Lin 1700/350}]
+	s.Control = CurveSpec{LinearCurve, 1700, 340}                // roll-to-front speed raised (was 1500/300)
 	s.CaptureConeRadians = 0.3839724354387525                    // ~22deg, widened (bigger cone; was ~16deg)
 	s.TrapPullBonus = 1.0                                        // reduced (was 1.5)
 	s.TrapRangeBonus = 6                                         // reduced (was 10)

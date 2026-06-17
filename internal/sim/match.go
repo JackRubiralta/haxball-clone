@@ -70,6 +70,13 @@ type Match struct {
 	// stays the holder while they remain in contact -- so when the ball changes hands, the new
 	// holder STEALS a fraction of the old holder's player possession (see updateBallPossessor).
 	possessor *Player
+
+	// possBuilder is the single player allowed to build player-possession this tick: of the
+	// players that currently have the ball within their pull radius, the one whose radius the
+	// ball entered MOST RECENTLY (see advancePossessionBuilder). pullSeq is the monotonic stamp
+	// source that orders those entries.
+	possBuilder *Player
+	pullSeq     uint64
 }
 
 // Celebrating reports whether a goal was just scored and the kickoff countdown is
@@ -114,9 +121,12 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 		p.Body.Update(deltaTime)
 	}
 
-	// 2.5 Update each player's possession from this frame's geometry.
+	// 2.5 Update each player's possession from this frame's geometry. Only the player whose pull
+	// radius the ball entered most recently builds possession (advancePossessionBuilder); when
+	// two players share the ball, the latest to reach it takes over the build and the rest decay.
+	m.advancePossessionBuilder()
 	for _, p := range m.Players {
-		updatePossession(m.Ball, p, deltaTime)
+		updatePossession(m.Ball, p, deltaTime, p == m.possBuilder)
 	}
 
 	// 2.55 Track who holds the ball; on a change of hands, the taker steals a slice of the
@@ -131,8 +141,16 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 	// 3. Resolve collisions and the ball-player dribble interaction.
 	m.resolveInteractions(deltaTime)
 
-	// 4. Consume kick requests, scaling by the held charge, then clear it.
+	// 4. Consume kick requests, scaling by the held charge, then clear it. A middle-click poke
+	// fires first (instant, min power, anywhere in the pull radius) if requested.
 	for _, p := range m.Players {
+		if p.wantsPoke {
+			if poke(p, m.Ball) {
+				m.recordTouch(p, TouchKick)
+				m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
+			}
+			p.wantsPoke = false
+		}
 		if p.WantsKick {
 			if shoot(p, m.Ball) {
 				m.recordTouch(p, TouchKick)
@@ -193,6 +211,10 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	}
 	p.shootHeldPrev = in.ShootHeld
 
+	// Middle-click jab: latch the instant poke request for the kick phase (it fires once on the
+	// press edge -- the human sets Poke only on the rising edge of middle-click).
+	p.wantsPoke = in.Poke
+
 	// Trap charge: build toward 1 while held, decay otherwise. (No sound on the trap/right-click
 	// rising edge -- the trap is silent by request.)
 	p.trapHeldPrev = in.Trap
@@ -205,6 +227,17 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 		p.trapCharge -= trapChargeDecay * deltaTime
 		if p.trapCharge < 0 {
 			p.trapCharge = 0
+		}
+	}
+
+	// Cosmetic aura level (stateful): WHILE HELD it follows a hump of the charge -- swelling to
+	// full at the peak charge, then weakening as the trap is over-held; on RELEASE it shrinks
+	// straight to nothing and never re-swells (it is not recomputed from the decaying charge).
+	if in.Trap {
+		p.trapAura = trapAuraShape(p.trapCharge)
+	} else if p.trapAura > 0 {
+		if p.trapAura -= deltaTime / trapAuraReleaseSeconds; p.trapAura < 0 {
+			p.trapAura = 0
 		}
 	}
 
@@ -320,6 +353,39 @@ func (m *Match) touching(p *Player) bool {
 	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange
 }
 
+// inPullRange reports whether the ball is within the player's (trap-extended) pull radius --
+// close enough to act on the ball without touching it. Used so a player can contest/steal
+// possession from arm's length (a held trap reaches further), not only in direct contact.
+func (m *Match) inPullRange(p *Player) bool {
+	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.pullRadius()
+}
+
+// advancePossessionBuilder selects the single player allowed to build player-possession this
+// tick: of the players that currently have the ball within their pull radius, the one whose
+// radius the ball entered MOST RECENTLY. Each player is stamped with an increasing sequence the
+// tick the ball first enters its pull radius (cleared when the ball leaves); the builder is the
+// in-range player with the latest stamp. So when the ball comes into a second player's reach
+// (e.g. an opponent closing down a carrier), that newcomer becomes the sole builder and the
+// earlier player stops building -- only one player's possession rises at a time. If the latest
+// builder loses the ball, the build falls back to whoever still has it in reach.
+func (m *Match) advancePossessionBuilder() {
+	var builder *Player
+	for _, p := range m.Players {
+		if !m.inPullRange(p) {
+			p.pullEnterSeq = 0 // out of reach: forget the entry so a re-entry counts as newest
+			continue
+		}
+		if p.pullEnterSeq == 0 { // rising edge: the ball just entered this player's pull radius
+			m.pullSeq++
+			p.pullEnterSeq = m.pullSeq
+		}
+		if builder == nil || p.pullEnterSeq > builder.pullEnterSeq {
+			builder = p
+		}
+	}
+	m.possBuilder = builder
+}
+
 // touchingSides reports which teams have at least one player overlapping the ball this tick.
 // Used to drive the team charge.
 func (m *Match) touchingSides() (left, right bool) {
@@ -336,44 +402,54 @@ func (m *Match) touchingSides() (left, right bool) {
 	return left, right
 }
 
-// updateBallPossessor tracks who holds the ball and resolves a CONTEST for it. The single
-// nearest OTHER player in contact is the challenger. While both the current holder and a
-// challenger are on the ball, possession transfers GRADUALLY -- the challenger gains and the
-// holder loses (see contestPossession) -- and the ball changes hands once the challenger holds
-// more than the holder. If the holder is off the ball, the nearest toucher simply takes over
-// (no contest to transfer); a passed ball carries possession 0 (shoot resets it), so a clean
-// reception starts cold.
+// updateBallPossessor tracks who holds the ball and resolves a CONTEST for it. While the holder
+// is on the ball, the nearest OTHER player with the ball in its PULL radius is the challenger --
+// it can contest/steal from arm's length (the ball within its pull reach, extended by a held
+// trap), it does not have to be in direct contact. Possession transfers GRADUALLY -- the
+// challenger gains and the holder loses (see contestPossession) -- and the ball changes hands
+// once the challenger holds more than the holder. A LOOSE ball (the holder off it) is only
+// claimed on an actual touch, so a ball merely flying past a player is not taken over. A passed
+// ball carries possession 0 (shoot resets it), so a clean reception starts cold.
 func (m *Match) updateBallPossessor(deltaTime float64) {
 	holder := m.possessor
-	holderTouching := holder != nil && m.touching(holder)
+	// The holder still "has" the ball while it is within its PULL radius (not only touching), so
+	// it can hold possession from arm's length (a held trap reaches further).
+	holderHas := holder != nil && m.inPullRange(holder)
 
-	// The nearest OTHER player in contact (deterministic: roster order breaks distance ties).
-	var taker *Player
-	best := 0.0
+	// contender: nearest OTHER player with the ball in its pull radius (can steal from a holder
+	// without touching). toucher: nearest OTHER player actually in contact (claims a loose ball).
+	// Deterministic: roster order breaks distance ties.
+	var contender, toucher *Player
+	bestC, bestT := 0.0, 0.0
 	for _, p := range m.Players {
-		if p == holder || !m.touching(p) {
+		if p == holder {
 			continue
 		}
-		if d := geom.Dist(p.Position, m.Ball.Position); taker == nil || d < best {
-			taker, best = p, d
+		d := geom.Dist(p.Position, m.Ball.Position)
+		if m.inPullRange(p) && (contender == nil || d < bestC) {
+			contender, bestC = p, d
+		}
+		if m.touching(p) && (toucher == nil || d < bestT) {
+			toucher, bestT = p, d
 		}
 	}
 
 	switch {
-	case holderTouching && taker != nil:
-		// Contest: drain possession from the holder into the challenger. The ball flips once the
-		// challenger has the larger share.
-		m.contestPossession(holder, taker, deltaTime)
-		if taker.possession > holder.possession {
-			m.possessor = taker
+	case holderHas && contender != nil:
+		// Contest: drain possession from the holder into the challenger (both with the ball in
+		// pull range, neither need touch). The ball flips once the challenger has the larger share.
+		m.contestPossession(holder, contender, deltaTime)
+		if contender.possession > holder.possession {
+			m.possessor = contender
 		}
-	case holderTouching:
-		// Holder alone on the ball: keeps it, no transfer.
-	case taker != nil:
-		// Holder is off the ball: the nearest toucher takes over (no one is fighting for it).
-		m.possessor = taker
+	case holderHas:
+		// Holder alone with the ball in its pull radius: keeps it, no transfer.
+	case toucher != nil:
+		// Holder no longer has the ball in reach: only an actual toucher claims the loose ball
+		// (a ball merely flying past a player in pull range is not taken over -- protects passes).
+		m.possessor = toucher
 	default:
-		// Nobody touching: keep the holder of record (its possession decays on its own).
+		// Nobody has it: keep the holder of record (its possession decays on its own).
 	}
 }
 

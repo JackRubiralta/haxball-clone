@@ -267,7 +267,7 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
-			sim.NormShootCharge(p.ShootCharge()), p.TrapCharge())
+			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
 	drawPossessionBarsAll(screen, m)
 	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
@@ -334,7 +334,7 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
-			sim.NormShootCharge(p.ShootCharge()), p.TrapCharge())
+			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
 	drawPossessionBarsAll(screen, m)
 	drawZoneIndicators(newCanvas(screen), m.Field, m.Rules)
@@ -588,9 +588,9 @@ func BallAt(screen *ebiten.Image, pos geom.Vec, radius float64) {
 
 // PlayerAt draws a player as a flat coloured disc with a thick outline, a jersey
 // number, and a white dot at the front showing which way it faces.
-func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body color.RGBA, number int, shootCharge, trapCharge float64) {
+func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body color.RGBA, number int, shootCharge, auraLevel float64) {
 	c := newCanvas(screen)
-	drawTrapAura(c, pos, radius, trapCharge, body) // glow under the body
+	drawTrapAura(c, pos, radius, auraLevel, body) // glow under the body
 
 	c.fillCircle(pos.X, pos.Y, radius, body)
 	// Outline inset by half its width so its outer edge sits on the body's radius (the
@@ -604,20 +604,17 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 	}
 
 	c.number(itoa(number), pos.X, pos.Y, radius, ballWhite)
-	drawShootCharge(c, pos, radius, shootCharge, body) // power gauge over the body
+	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
 }
 
-// drawTrapAura draws a soft glow ring around a player while it traps. The glow charges UP then
-// DOWN: as the trap charge builds, the aura swells to a peak and then eases back to a smaller
-// floor (it never fully vanishes while trapping), so the effect doesn't just sit at maximum.
-func drawTrapAura(c canvas, pos geom.Vec, radius, trap float64, body color.RGBA) {
-	if trap <= 0 {
+// drawTrapAura draws a soft glow ring around a player while it traps. `level` is the cosmetic
+// aura strength (sim.Player.TrapAura): it swells to a max as the trap is held, weakens as the
+// trap is over-held (so the circle grows then shrinks), and shrinks to nothing on release. Both
+// the reach and the opacity track it. (Purely cosmetic -- the trap mechanic uses the raw charge.)
+func drawTrapAura(c canvas, pos geom.Vec, radius, level float64, body color.RGBA) {
+	if level <= 0 {
 		return
 	}
-	// Visual intensity follows trapAuraLevel: bigger first, then smaller (a less-intense but
-	// still-visible glow), driving both the reach and the opacity. (Purely cosmetic -- the
-	// trap mechanic still uses the raw trap charge.)
-	level := trapAuraLevel(trap)
 	// A glow drawn as a stack of thin concentric bands whose opacity runs as a smooth
 	// LINEAR gradient from the inner edge out: 75 (of 255) right at the body, falling
 	// to 10 at the outer rim. The alpha is read straight from the gradient (not summed
@@ -637,26 +634,6 @@ func drawTrapAura(c canvas, pos geom.Vec, radius, trap float64, body color.RGBA)
 			continue
 		}
 		c.strokeCircle(pos.X, pos.Y, r, width, color.RGBA{body.R, body.G, body.B, a})
-	}
-}
-
-// trapAuraLevel maps the 0..1 trap charge to the aura's visual intensity: it rises QUICKLY to
-// full, HOLDS at full for ~0.5s of charging, then declines SLOWLY (slower than it rose) to
-// trapAuraFloor as the charge completes. Always > 0 while trapping (the aura never goes away).
-// (trapChargeTime is 1s, so a charge fraction equals seconds held: hold spans 0.2->0.7 = ~0.5s.)
-func trapAuraLevel(trap float64) float64 {
-	const (
-		trapAuraRiseEnd = 0.2  // charge fraction to reach full aura (quick rise)
-		trapAuraHoldEnd = 0.7  // charge fraction the aura holds at full (a ~0.5s hold)
-		trapAuraFloor   = 0.40 // aura intensity once fully charged (never goes away)
-	)
-	switch {
-	case trap <= trapAuraRiseEnd:
-		return trap / trapAuraRiseEnd // quick rise 0 -> 1
-	case trap <= trapAuraHoldEnd:
-		return 1 // hold at full (~0.5s)
-	default:
-		return 1 - (1-trapAuraFloor)*((trap-trapAuraHoldEnd)/(1-trapAuraHoldEnd)) // slow decline 1 -> floor
 	}
 }
 
@@ -708,16 +685,26 @@ func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, teamCharge, 
 	c.fillRect(x, y2, w*clamp01(teamCharge), h, fill)
 }
 
-// drawShootCharge draws a radial power gauge around a player that fills from the top
-// as the shoot charge grows (0..1), brightening toward full.
-func drawShootCharge(c canvas, pos geom.Vec, radius, charge float64, body color.RGBA) {
+// drawShootCharge draws the power gauge as a 180deg arc over the FRONT hemisphere the player
+// faces (matching where the left-click shot can fire). The fill loads from BOTH edges
+// (+-90deg off the facing) inward and meets in the middle (dead front) at full charge,
+// brightening toward full.
+func drawShootCharge(c canvas, pos, facing geom.Vec, radius, charge float64, body color.RGBA) {
 	if charge <= 0 {
 		return
 	}
 	r := radius + 5
-	c.strokeCircle(pos.X, pos.Y, r, 2, color.RGBA{body.R, body.G, body.B, 70})
+	f := -math.Pi / 2 // fallback front = up if facing is unset
+	if geom.Norm(facing) > 0 {
+		f = math.Atan2(facing.Y, facing.X)
+	}
+	// Faint outline of the front 180deg hemisphere (centred on the facing direction).
+	strokeArc(c, pos, r, f-math.Pi/2, f+math.Pi/2, 2, color.RGBA{body.R, body.G, body.B, 70})
+	// Two fill arcs grow inward from the +-90deg edges, meeting at the middle (f) at full charge.
 	arc := color.RGBA{body.R, body.G, body.B, uint8(150 + 105*charge)}
-	strokeArc(c, pos, r, -math.Pi/2, -math.Pi/2+2*math.Pi*charge, 3, arc)
+	sweep := (math.Pi / 2) * charge
+	strokeArc(c, pos, r, f-math.Pi/2, f-math.Pi/2+sweep, 3, arc) // from the -90deg edge toward front
+	strokeArc(c, pos, r, f+math.Pi/2, f+math.Pi/2-sweep, 3, arc) // from the +90deg edge toward front
 }
 
 // strokeArc draws an arc as a run of short line segments (the vector package has no

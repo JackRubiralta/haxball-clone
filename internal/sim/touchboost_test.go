@@ -52,6 +52,59 @@ func bothTouch(m *Match, leftP, rightP *Player) {
 	m.Ball.Position = geom.NewVec(0, 0)
 }
 
+// TestPossessionStealFromPullRange: a challenger that is NOT touching the ball but has it within
+// its pull radius can still contest/steal the holder's possession, and the trap extends that
+// reach (a gap out of the base pull radius becomes reachable while trapping).
+func TestPossessionStealFromPullRange(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
+
+	// setup: a holds the ball (touching, possession 0.8); b sits at surface gap `gap` from the
+	// ball with trap charge `trap`. Everyone else is parked far away.
+	setup := func(gap, trap float64) {
+		for _, p := range m.Players {
+			p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
+		}
+		m.Ball.Position = geom.NewVec(0, 0)
+		a.Position = geom.NewVec(0, 0) // a overlaps the ball -> touching
+		a.possession, a.control = 0.8, 0
+		b.possession, b.control, b.trapCharge = 0, 0, trap
+		b.Position = geom.NewVec(b.Radius()+m.Ball.Radius()+gap, 0)
+		m.possessor = a
+	}
+
+	// 1. In the base pull radius but NOT touching: the steal works.
+	setup(3, 0) // gap 3: >= TouchRange (not touching), < PullRange (in pull radius)
+	if m.touching(b) {
+		t.Fatalf("test setup: b should not be touching at gap 3")
+	}
+	m.updateBallPossessor(dt)
+	if !(b.possession > 0 && a.possession < 0.8) {
+		t.Errorf("a challenger in pull range (not touching) should steal possession: a=%.3f b=%.3f", a.possession, b.possession)
+	}
+
+	// 2. Beyond the base pull radius with no trap: no steal.
+	setup(8, 0)
+	if m.inPullRange(b) {
+		t.Fatalf("test setup: gap 8 should be beyond the base pull radius")
+	}
+	m.updateBallPossessor(dt)
+	if !(b.possession == 0 && a.possession == 0.8) {
+		t.Errorf("a challenger beyond the pull radius should not steal: a=%.3f b=%.3f", a.possession, b.possession)
+	}
+
+	// 3. The trap EXTENDS the reach: the same gap 8 is now within the trap-extended pull radius.
+	setup(8, 1)
+	if !m.inPullRange(b) {
+		t.Fatalf("test setup: a full trap should bring gap 8 into the extended pull radius")
+	}
+	m.updateBallPossessor(dt)
+	if !(b.possession > 0 && a.possession < 0.8) {
+		t.Errorf("a trapping challenger should steal from the extended pull radius (gap 8): a=%.3f b=%.3f", a.possession, b.possession)
+	}
+}
+
 // TestPossessionContestGradualTransfer: while the holder and a challenger are BOTH on the ball,
 // possession flows gradually from the holder to the challenger, and a sustained contest hands
 // the ball over once the challenger holds more.
@@ -113,6 +166,35 @@ func TestPossessionControlBonusAndCone(t *testing.T) {
 	}
 	if r := fieldPlayerStats(); math.Abs(r.CaptureConeRadians-s.CaptureConeRadians) > 1e-9 {
 		t.Errorf("role cone %.6f should match DefaultStats %.6f", r.CaptureConeRadians, s.CaptureConeRadians)
+	}
+}
+
+// TestBaselineCaptureImprovedKeepsEndpoints: the neutral baseline capture is improved (higher
+// CaptureSpeed, lower Restitution) while the buffed and debuffed FRONT results are kept the same
+// (the multipliers were scaled inversely to the baseline change).
+func TestBaselineCaptureImprovedKeepsEndpoints(t *testing.T) {
+	s := fieldPlayerStats() // the in-game preset
+	tq := s.TouchQuality
+	capFront := s.CaptureSpeed.Front
+	restFront := s.Restitution.Front
+
+	// Buffed/debuffed FRONT capture unchanged (~297 / ~182).
+	if got := capFront * tq.captureMul(tq.OwnTeamMax); math.Abs(got-297) > 2 {
+		t.Errorf("buffed front capture should stay ~297, got %.1f", got)
+	}
+	if got := capFront * tq.captureMul(tq.OtherTeam); math.Abs(got-182) > 2 {
+		t.Errorf("debuffed front capture should stay ~182, got %.1f", got)
+	}
+	// Buffed/debuffed FRONT restitution unchanged (~0.054 / ~0.24).
+	if got := restFront * tq.restitutionMul(tq.OwnTeamMax); math.Abs(got-0.054) > 0.005 {
+		t.Errorf("buffed front restitution should stay ~0.054, got %.4f", got)
+	}
+	if got := restFront * tq.restitutionMul(tq.OtherTeam); math.Abs(got-0.24) > 0.01 {
+		t.Errorf("debuffed front restitution should stay ~0.24, got %.4f", got)
+	}
+	// Baseline improved: higher capture and lower bounce than before (260 / 0.12).
+	if !(capFront > 260 && restFront < 0.12) {
+		t.Errorf("baseline should be improved: capture %.0f (want >260), restitution %.3f (want <0.12)", capFront, restFront)
 	}
 }
 
@@ -325,8 +407,11 @@ func TestTeamChargeShapesContact(t *testing.T) {
 	if math.Abs(own.X) > 5 {
 		t.Errorf("owning team at full charge should capture a %.0f ball (vx ~ 0), got %.2f", mid, own.X)
 	}
-	if !(other.X > base.X && base.X >= 0) {
-		t.Errorf("conceding team should bounce a ball further than baseline: other=%.2f base=%.2f", other.X, base.X)
+	// Team-charge SHAPING (robust to the contact impulse-scaling tuning): the conceding team
+	// flings the mid ball off harder than the owning team (which absorbs it) and harder than a
+	// neutral baseline touch.
+	if !(other.X > own.X && other.X > base.X) {
+		t.Errorf("conceding team should fling the ball further than owning/baseline: own=%.2f base=%.2f other=%.2f", own.X, base.X, other.X)
 	}
 
 	// A hard contact, well above any capture threshold: bounces off both, but more off the

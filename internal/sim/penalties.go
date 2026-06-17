@@ -233,9 +233,10 @@ func (m *Match) stepPenaltyPlay(inputs map[int]Intent, dt float64) {
 			p.Body.Update(dt)
 		}
 	}
+	m.advancePossessionBuilder()
 	for _, p := range active {
 		if p != nil {
-			updatePossession(m.Ball, p, dt)
+			updatePossession(m.Ball, p, dt, p == m.possBuilder)
 		}
 	}
 	if spd := m.Field.ConfineBall(m.Ball); spd > ballHitMinSpeed {

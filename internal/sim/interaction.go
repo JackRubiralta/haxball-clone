@@ -19,6 +19,22 @@ func ballAngle(normal, facing geom.Vec) float64 {
 	return math.Acos(cos)
 }
 
+// uniformImpulseScale: when true (the chosen default -- "less bouncing"), a ball-player BOUNCE
+// is mass-ratio damped at every angle, so the ball flings off players less, uniformly, instead of
+// keeping the full impulse in the front cone. A clean CAPTURE still absorbs fully so the ball
+// seats. Flip to false to restore the original angle-dependent blend (full front, damped off).
+const uniformImpulseScale = true
+
+// A really hard ball impact is the ONE place the ball moves the player. ballPushThreshold is the
+// approach speed below which a contact never shoves the player (so dribbling and soft contacts
+// leave it planted); above it, the EXCESS approach momentum -- scaled by the ball/player mass
+// ratio and ballPushFactor -- knocks the player back along the ball's travel, so a heavier or
+// faster ball pushes harder (the ball's mass means something).
+const (
+	ballPushThreshold = 250.0
+	ballPushFactor    = 1.5
+)
+
 // handleBallToPlayerInteraction resolves everything between the ball and a player
 // except shooting: the attraction that lets the player dribble, and the contact,
 // which either sticks the ball or bounces it off.
@@ -109,7 +125,19 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			// bump). The player is still never moved (only the ball's velocity changes).
 			massRatio := player.Stats.Mass / (player.Stats.Mass + ball.Mass())
 			impulseScale := massRatio + (1-massRatio)*cone
+			if uniformImpulseScale && restitution > 0 {
+				impulseScale = massRatio // bounce: mass-ratio damped at every angle (less bouncing, uniformly)
+			}
 			ball.Velocity = ball.Velocity.Sub(normal.Scale((1 + restitution) * relativeNormal * impulseScale))
+
+			// A really hard hit shoves the player back -- the only place the ball moves the
+			// player. The approach momentum above ballPushThreshold transfers to the player along
+			// the ball's travel (-normal), scaled by the ball/player mass ratio (heavier/faster
+			// ball = bigger shove). Dribble and soft contacts (below the threshold) never move it.
+			if excess := approachSpeed - ballPushThreshold; excess > 0 {
+				push := ballPushFactor * (1 + restitution) * (ball.Mass() / player.Stats.Mass) * excess
+				player.Velocity = player.Velocity.Sub(normal.Scale(push))
+			}
 		}
 		return true, bounce
 	}
@@ -151,7 +179,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	centerPullGrip := player.Stats.centerPullGrip(player.possession)
 	stickinessGrip := player.Stats.stickinessGrip(player.possession)
 	trapPullMul := 1 + player.Stats.TrapPullBonus*player.trapCharge
-	pullRange := player.Stats.PullRange + player.Stats.TrapRangeBonus*player.trapCharge
+	pullRange := player.pullRadius()
 
 	// Centre-pull: a gap-scaled spring toward the player centre, active only while the
 	// ball is near but NOT yet touching, scaled by the centre-pull grip and the trap. It
@@ -282,29 +310,17 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 // updatePossession maintains two related states from the ball's position relative to the
 // player, writing only the player (the ball and the body are untouched):
 //
-//   - possession: built toward 1 whenever the ball is TOUCHING the player anywhere (at any
-//     angle), decayed otherwise. This is the "ball at my feet" state -- it drives the grip
-//     on the ball (centre-pull and stickiness, so the ball sticks to the player) and pairs
-//     with the touch test in applyIntent for the carry slowdown. Its EFFECTS are unchanged;
-//     only its gate is the full touch range now, not the front arc.
+//   - possession: built toward 1 only while `build` is true -- i.e. this player is the sole
+//     possession builder for the tick: the player whose (trap-extended) PULL radius the ball
+//     entered MOST RECENTLY (chosen by advancePossessionBuilder) -- and decayed otherwise. So a
+//     player "has" the ball from arm's length, but when two players share it only the latest one
+//     to reach it builds up; the rest fall away. It drives the grip on the ball (centre-pull and
+//     stickiness, so the ball sticks to the player).
 //   - control: built toward 1 while the ball is touching AND within the front
 //     PossessionArcRadians, decayed otherwise. This is the tighter "ball under control out
 //     in front" state. It is TRACKED but currently UNUSED -- no mechanic reads it yet.
-func updatePossession(ball *Ball, player *Player, deltaTime float64) {
-	toBall := ball.Position.Sub(player.Position)
-	dist := geom.Norm(toBall)
-	touching := false // ball in contact anywhere -> possession
-	inArc := false    // ball in contact within the front arc -> control
-	if dist > 0 {
-		gap := dist - player.Radius() - ball.Radius()
-		if gap < player.Stats.TouchRange {
-			touching = true
-			angle := ballAngle(toBall.Scale(1/dist), player.Facing)
-			inArc = angle <= player.Stats.PossessionArcRadians
-		}
-	}
-
-	if touching {
+func updatePossession(ball *Ball, player *Player, deltaTime float64, build bool) {
+	if build {
 		player.possession += deltaTime / player.Stats.PossessionBuildSeconds
 		if player.possession > 1 {
 			player.possession = 1
@@ -313,6 +329,17 @@ func updatePossession(ball *Ball, player *Player, deltaTime float64) {
 		player.possession -= deltaTime / player.Stats.PossessionReleaseSeconds
 		if player.possession < 0 {
 			player.possession = 0
+		}
+	}
+
+	// control: built only while the ball is touching within the front arc.
+	inArc := false
+	toBall := ball.Position.Sub(player.Position)
+	if dist := geom.Norm(toBall); dist > 0 {
+		gap := dist - player.Radius() - ball.Radius()
+		if gap < player.Stats.TouchRange {
+			angle := ballAngle(toBall.Scale(1/dist), player.Facing)
+			inArc = angle <= player.Stats.PossessionArcRadians
 		}
 	}
 
@@ -350,17 +377,51 @@ func shoot(player *Player, ball *Ball) bool {
 		dir = toBall.Scale(1 / distance)
 		angle = ballAngle(dir, player.Facing)
 	}
+	// The left-click shot only works in the front 180deg the player faces -- it cannot kick a
+	// ball sitting behind it.
+	if angle >= math.Pi/2 {
+		return false
+	}
 
 	charge := NormShootCharge(player.shootCharge)
 	factor := player.Stats.MinShootFactor + (1-player.Stats.MinShootFactor)*charge
-	// Power follows the radial angle (front shots strongest); the LAUNCH DIRECTION is the
-	// radial nudged toward the facing by the aim assist, so the shot goes where the player
-	// aims when the ball is in the front cone and fires straight out (radial) at the side/back.
-	power := player.Stats.Shoot.Eval(angle) * factor
+	// Power is full at dead front and degrades across the front hemisphere, much faster toward
+	// the +-90deg edges (frontShotFalloff). The LAUNCH DIRECTION is the radial nudged toward the
+	// facing by the aim assist (which also degrades toward the edges), so a centred shot goes
+	// where the player aims and an edge-of-hemisphere shot is weak and barely assisted.
+	power := player.Stats.Shoot.Eval(0) * factor * frontShotFalloff(angle)
 	if distance > 0 {
 		dir = player.Stats.ShootDirection(dir, player.Facing)
 	}
 
+	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
+	player.possession = 0
+	player.control = 0
+	return true
+}
+
+// pokePowerFactor is how hard the middle-click poke fires, as a multiple of the front shot
+// power. It is a STRONG jab -- well above even a full-charge left-click shot -- so the instant,
+// no-aim, no-touch poke hits much harder than a held shot.
+const pokePowerFactor = 1.5
+
+// poke is the middle-click jab: an INSTANT radial push of the ball at a STRONG power
+// (pokePowerFactor of the front shot), EQUAL in every direction (no angle falloff, no aim
+// assist), reaching any ball within the PULL radius (not just touching). Because it never
+// charges it fires faster than the held shot AND hits much harder. Returns whether it fired
+// (a ball was in range).
+func poke(player *Player, ball *Ball) bool {
+	toBall := ball.Position.Sub(player.Position)
+	distance := geom.Norm(toBall)
+	gap := distance - player.Radius() - ball.Radius()
+	if gap >= player.Stats.PullRange { // works anywhere in the pull radius, not just touching
+		return false
+	}
+	dir := player.Facing
+	if distance > 0 {
+		dir = toBall.Scale(1 / distance) // pure radial (player centre -> ball), no aim assist
+	}
+	power := player.Stats.Shoot.Eval(0) * pokePowerFactor // a strong jab, the same in every direction
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
 	player.control = 0
