@@ -57,20 +57,20 @@ func NewAISkill(id int, skill Skill) *AI {
 }
 
 // Intent decides this player's action for the tick.
-// enforceAbilityExclusivity clamps an intent so at most ONE of Trap > Poke > Shoot is active,
+// enforceAbilityExclusivity clamps an intent so at most ONE of Trap > Push > Shoot is active,
 // exactly as the human controller does -- a player has three mouse buttons and cannot use more than
 // one ability at a time (the ai-capability-boundary rule: the AI may do only what a human can input).
-// When a trap or poke takes over a charging shot, the shot is CANCELLED rather than fired: ShootHeld
+// When a trap or push takes over a charging shot, the shot is CANCELLED rather than fired: ShootHeld
 // is kept asserted with CancelCharge set, because the sim only honours a cancel while shoot reads
 // held (a bare release would instead fire the charged shot -- see Match.applyIntent).
 func enforceAbilityExclusivity(in sim.Intent) sim.Intent {
 	switch {
-	case in.Trap: // trap takes precedence over both poke and shoot
-		in.Poke = false
+	case in.Trap: // trap takes precedence over both push and shoot
+		in.Push = false
 		if in.ShootHeld {
 			in.CancelCharge = true
 		}
-	case in.Poke: // poke takes precedence over shoot
+	case in.Push: // push takes precedence over shoot
 		if in.ShootHeld {
 			in.CancelCharge = true
 		}
@@ -106,9 +106,9 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 	}
 
 	// Capability boundary: a human uses three mutually-exclusive mouse buttons, so it can do only ONE
-	// of {trap, poke, shoot} at a time (see input.Human and the ai-capability-boundary rule). Enforce
-	// the same precedence (Trap > Poke > Shoot) on the AI -- it must never trap-while-charging or
-	// poke-while-charging. A higher-priority ability CANCELS a live shot charge (dropped, not fired).
+	// of {trap, push, shoot} at a time (see input.Human and the ai-capability-boundary rule). Enforce
+	// the same precedence (Trap > Push > Shoot) on the AI -- it must never trap-while-charging or
+	// push-while-charging. A higher-priority ability CANCELS a live shot charge (dropped, not fired).
 	in = enforceAbilityExclusivity(in)
 
 	in = a.applyMoveJitter(p, in)
@@ -123,9 +123,9 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 	}
 
 	a.cached = in
-	// A poke is an instant one-shot edge action, not a held button: never let the reaction-delay
+	// A push is an instant one-shot edge action, not a held button: never let the reaction-delay
 	// replay re-fire it on the cached ticks (that would compound the jab). Fire it only this tick.
-	a.cached.Poke = false
+	a.cached.Push = false
 	a.haveCached = true
 	step := a.params.reactTicks
 	if step < 1 {

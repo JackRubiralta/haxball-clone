@@ -160,20 +160,20 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 	// 3. Resolve collisions and the ball-player dribble interaction.
 	m.resolveInteractions(deltaTime)
 
-	// 4. Consume kick requests, scaling by the held charge, then clear it. A middle-click poke
+	// 4. Consume kick requests, scaling by the held charge, then clear it. A middle-click push
 	// fires first (instant, min power, anywhere in the pull radius) if requested.
 	for _, p := range m.Players {
-		if p.wantsPoke {
+		if p.wantsPush {
 			// Fire the cosmetic pulse on the ATTEMPT, anchored on the player: a middle-click jab
 			// animates over the player every time it is pressed, even when the ball is out of reach
 			// (a whiff still shows the effect). Only a CONNECT registers a touch and kick sound.
-			p.pokeFlash = 1
-			p.pokeFlashPos = p.Position
-			if poke(p, m.Ball) {
+			p.pushFlash = 1
+			p.pushFlashPos = p.Position
+			if push(p, m.Ball) {
 				m.recordTouch(p, TouchKick)
 				m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
 			}
-			p.wantsPoke = false
+			p.wantsPush = false
 		}
 		if p.WantsKick {
 			if shoot(p, m.Ball) {
@@ -207,10 +207,10 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 // update, the trap/charge/possession speed penalties, and movement. It does not
 // integrate the body (step 2 does). Shared by normal play and the penalty shootout.
 func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
-	// Fade the poke-press pulse animation (a cosmetic 1->0 timer set when a middle-click fires).
-	if p.pokeFlash > 0 {
-		if p.pokeFlash -= deltaTime / pokeFlashSeconds; p.pokeFlash < 0 {
-			p.pokeFlash = 0
+	// Fade the push-press pulse animation (a cosmetic 1->0 timer set when a middle-click fires).
+	if p.pushFlash > 0 {
+		if p.pushFlash -= deltaTime / pushFlashSeconds; p.pushFlash < 0 {
+			p.pushFlash = 0
 		}
 	}
 	if in.Aim != (geom.Vec{}) {
@@ -247,9 +247,9 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	}
 	p.shootHeldPrev = in.ShootHeld
 
-	// Middle-click jab: latch the instant poke request for the kick phase (it fires once on the
-	// press edge -- the human sets Poke only on the rising edge of middle-click).
-	p.wantsPoke = in.Poke
+	// Middle-click jab: latch the instant push request for the kick phase (it fires once on the
+	// press edge -- the human sets Push only on the rising edge of middle-click).
+	p.wantsPush = in.Push
 
 	// Trap charge: build toward 1 while held, decay otherwise. (No sound on the trap/right-click
 	// rising edge -- the trap is silent by request.)

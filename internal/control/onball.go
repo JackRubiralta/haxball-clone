@@ -108,11 +108,11 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 
 	switch best {
 	case actShoot:
-		// Toe-poke under pressure: from close range, with the ball already lined up at the mouth
+		// Toe-push under pressure: from close range, with the ball already lined up at the mouth
 		// and a defender about to block a charged shot, jab it in instantly (no charge to wind up).
-		if p.pressureOnMe > a.tune.pokePressure && a.pokeShotOn(p) {
+		if p.pressureOnMe > a.tune.pushPressure && a.pushShotOn(p) {
 			a.lastOnBall = actShoot
-			return a.pokeIntent(p)
+			return a.pushIntent(p)
 		}
 		dist := geom.Dist(p.me.Position(), p.enemyGoal)
 		desired := a.desiredCharge(dist)
@@ -136,10 +136,10 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 		a.passReceiver = passReceiver // keep the pass tracking the (moving) receiver
 		return a.shootAt(p, in, a.applyAim(p, passTarget), dc, a.tune.shootAlignRad)
 	case actClear:
-		// Under heavy pressure, BOOT it clear instantly with a poke (no time to charge) -- but only
+		// Under heavy pressure, BOOT it clear instantly with a push (no time to charge) -- but only
 		// when the radial sends it upfield/wide, never back toward our own goal.
-		if p.pressureOnMe > a.tune.pokePressure && a.pokeClears(p) {
-			return a.pokeIntent(p)
+		if p.pressureOnMe > a.tune.pushPressure && a.pushClears(p) {
+			return a.pushIntent(p)
 		}
 		// Otherwise a quick charged clear: low charge + wide tolerance so it boots away fast (loose aim).
 		return a.shootAt(p, in, a.applyAim(p, a.clearTarget(p)), a.tune.clearCharge, a.tune.clearAlignRad)

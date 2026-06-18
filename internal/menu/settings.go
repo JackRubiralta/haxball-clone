@@ -68,7 +68,7 @@ type AppPrefs struct {
 
 // DefaultAppPrefs returns the default camera/audio preferences.
 func DefaultAppPrefs() AppPrefs {
-	return AppPrefs{CameraMode: "ball", Zoom: 2, Volume: 0.8}
+	return AppPrefs{CameraMode: "ball", Zoom: 1, Volume: 0.8}
 }
 
 var (

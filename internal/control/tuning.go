@@ -82,9 +82,9 @@ type aiTuning struct {
 	clearThird     float64 // normalized depth of own goal under which a clearance is favoured
 	clearCharge    float64 // charge for a clearance -- low, so it fires quickly
 	clearAlignRad  float64 // alignment tolerance for a clearance -- wide, so it boots it away fast
-	// Middle-click poke (instant, no-charge, no-aim radial jab) usage.
-	pokePressure        float64 // pressure above which the carrier/keeper jabs the ball away (poke) instead of charging a clear/shot
-	pokeClearMinForward float64 // min radial component along our attack axis for a poke to count as clearing (never poke it back toward our own goal)
+	// Middle-click push (instant, no-charge, no-aim radial jab) usage.
+	pushPressure        float64 // pressure above which the carrier/keeper jabs the ball away (push) instead of charging a clear/shot
+	pushClearMinForward float64 // min radial component along our attack axis for a push to count as clearing (never push it back toward our own goal)
 	settlePossession    float64 // build possession to this before shooting/passing (don't kick a loose touch)
 	settleThrottle      float64 // throttle while nursing a fresh touch into control
 	actPressure         float64 // pressure above which the carrier must act now instead of settling
@@ -183,8 +183,8 @@ func defaultAITuning() aiTuning {
 		clearThird:          0.32,
 		clearCharge:         0.45,
 		clearAlignRad:       0.4886921905584123,
-		pokePressure:        0.62, // an opponent within ~46u (centre-to-centre): boot it now, no time to charge
-		pokeClearMinForward: 0.15, // only poke-clear when the radial sends the ball clearly upfield/wide
+		pushPressure:        0.62, // an opponent within ~46u (centre-to-centre): boot it now, no time to charge
+		pushClearMinForward: 0.15, // only push-clear when the radial sends the ball clearly upfield/wide
 		settlePossession:    0.45,
 		settleThrottle:      0.72,
 		actPressure:         0.55,

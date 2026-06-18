@@ -413,16 +413,16 @@ func shoot(player *Player, ball *Ball) bool {
 	return true
 }
 
-// pokePowerFactor is how hard the middle-click poke fires, as a fraction of the front shot
-// power: 0.7 = 70% of a full-charge left-click shot. The instant, no-aim, no-touch poke is a
+// pushPowerFactor is how hard the middle-click push fires, as a fraction of the front shot
+// power: 0.7 = 70% of a full-charge left-click shot. The instant, no-aim, no-touch push is a
 // quick jab (stronger than a tap, just under a full shot).
-const pokePowerFactor = 0.7
+const pushPowerFactor = 0.7
 
-// poke is the middle-click jab: an INSTANT radial push of the ball at 70% of the front shot power
-// (pokePowerFactor of the front shot), EQUAL in every direction (no angle falloff, no aim
+// push is the middle-click jab: an INSTANT radial push of the ball at 70% of the front shot power
+// (pushPowerFactor of the front shot), EQUAL in every direction (no angle falloff, no aim
 // assist), reaching any ball within the PULL radius (not just touching). Because it never
 // charges it fires faster than a held shot. Returns whether it fired (a ball was in range).
-func poke(player *Player, ball *Ball) bool {
+func push(player *Player, ball *Ball) bool {
 	toBall := ball.Position.Sub(player.Position)
 	distance := geom.Norm(toBall)
 	gap := distance - player.Radius() - ball.Radius()
@@ -433,7 +433,7 @@ func poke(player *Player, ball *Ball) bool {
 	if distance > 0 {
 		dir = toBall.Scale(1 / distance) // pure radial (player centre -> ball), no aim assist
 	}
-	power := player.Stats.Shoot.Eval(0) * pokePowerFactor // a 70%-power jab, the same in every direction
+	power := player.Stats.Shoot.Eval(0) * pushPowerFactor // a 70%-power jab, the same in every direction
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
 	player.control = 0

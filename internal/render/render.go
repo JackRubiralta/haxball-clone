@@ -46,8 +46,8 @@ var (
 	coneInner    = color.RGBA{252, 206, 130, 255}
 	hudColor     = color.RGBA{0, 0, 0, 110}
 	bannerColor  = color.RGBA{0, 0, 0, 165}
-	hudText      = color.RGBA{240, 244, 240, 255} // legible HUD text
-	hudDim       = color.RGBA{210, 218, 210, 200} // secondary HUD text (controls hint)
+	hudText      = color.RGBA{226, 234, 226, 255} // legible HUD text (matches the menu Text)
+	hudDim       = color.RGBA{170, 188, 172, 235} // secondary HUD text (matches the menu TextDim)
 	offsideLine  = color.RGBA{235, 240, 235, 105} // translucent white anti-camp line
 )
 
@@ -391,7 +391,7 @@ func (u UI) Title(s string, cx, y, sizeWorld float64, clr color.Color) {
 // Match draws a complete local match.
 func Match(screen *ebiten.Image, m *sim.Match) {
 	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
-	drawPokePulses(screen, m) // under the ball and players, so the burst wells up from beneath the player instead of covering it
+	drawPushPulses(screen, m) // under the ball and players, so the burst wells up from beneath the player instead of covering it
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
@@ -455,7 +455,7 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 
 	camActive, camCenter, camZoom = true, cam.center, cam.Zoom
 	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
-	drawPokePulses(screen, m) // under the ball and players, so the burst wells up from beneath the player instead of covering it
+	drawPushPulses(screen, m) // under the ball and players, so the burst wells up from beneath the player instead of covering it
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
@@ -709,7 +709,7 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 
 	c.fillCircle(pos.X, pos.Y, radius, body)
 	// Outline inset by half its width so its outer edge sits on the body's radius (the
-	// collision surface) -- it no longer pokes past it and overlaps a wall.
+	// collision surface) -- it no longer protrudes past it and overlaps a wall.
 	const outlineWidth = 3.0
 	c.strokeCircle(pos.X, pos.Y, radius-outlineWidth/2, outlineWidth, outlineColor)
 
@@ -722,31 +722,31 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
 }
 
-// drawPokePulses draws the middle-click poke effect. For each player whose poke just fired
-// (PokeFlash > 0, set on every attempt -- even a whiff with no ball in reach), it paints a soft
+// drawPushPulses draws the middle-click push effect. For each player whose push just fired
+// (PushFlash > 0, set on every attempt -- even a whiff with no ball in reach), it paints a soft
 // burst centred on the PLAYER that expands outward in all directions as the press fades -- the
-// original player-anchored poke ping (rather than the ball-anchored variant), so it reads as a
+// original player-anchored push ping (rather than the ball-anchored variant), so it reads as a
 // shockwave radiating from the jabbing player. Drawn BEFORE the ball and players (see Match/Frame)
 // so the burst renders UNDER them -- it wells up from beneath the player instead of covering it.
-func drawPokePulses(screen *ebiten.Image, m *sim.Match) {
+func drawPushPulses(screen *ebiten.Image, m *sim.Match) {
 	c := newCanvas(screen)
 	for _, p := range m.Players {
-		flash := p.PokeFlash()
+		flash := p.PushFlash()
 		if flash <= 0 {
 			continue
 		}
-		drawPokePulse(c, p.Position, p.Radius(), p.PokeRange(), flash, p.Team.Color)
+		drawPushPulse(c, p.Position, p.Radius(), p.PushRange(), flash, p.Team.Color)
 	}
 }
 
-// drawPokePulse draws one middle-click poke as a soft, semi-transparent burst centred on the
+// drawPushPulse draws one middle-click push as a soft, semi-transparent burst centred on the
 // PLAYER: it starts at the player's surface and swells outward to ~2x the pull range in all
 // directions as the press fades -- brightest near the player and fading to nothing at its leading
 // edge, so it reads as a shockwave radiating out from the jabbing player. `flash` is the 1->0 press
-// timer (sim.Player.PokeFlash); `body` is the poking team's colour (the blue team -> blue), matching
+// timer (sim.Player.PushFlash); `body` is the pushing team's colour (the blue team -> blue), matching
 // the trap-aura and shoot-charge tints. This is the original player-anchored expanding ring, kept
 // blue, distance-faded, and bounded to ~2x the pull reach.
-func drawPokePulse(c canvas, center geom.Vec, innerRadius, pullRange, flash float64, body color.RGBA) {
+func drawPushPulse(c canvas, center geom.Vec, innerRadius, pullRange, flash float64, body color.RGBA) {
 	if flash <= 0 {
 		return
 	}
@@ -974,8 +974,8 @@ const (
 
 // hudPanel/hudEdge mirror the menu's panel + edge so the card reads as the same UI family.
 var (
-	hudPanel  = color.RGBA{22, 30, 38, 225} // dark rounded panel fill (matches menu Panel feel)
-	hudEdge   = color.RGBA{96, 140, 130, 200}
+	hudPanel  = color.RGBA{22, 40, 28, 235}   // dark green rounded panel fill (matches the menu Panel)
+	hudEdge   = color.RGBA{96, 140, 104, 235} // matches the menu Edge so the card reads as the same UI family
 	hudScored = color.RGBA{96, 220, 110, 255} // shootout scored dot
 	hudMissed = color.RGBA{210, 78, 78, 255}  // shootout missed dot
 	hudEmpty  = color.RGBA{210, 218, 210, 80} // untaken dot
@@ -1100,7 +1100,7 @@ func hudColorForPhase(phase string) color.RGBA {
 	case "GOLDEN GOAL", "PENALTIES":
 		return color.RGBA{255, 196, 90, 255}
 	case "FULL TIME":
-		return color.RGBA{255, 120, 120, 255}
+		return color.RGBA{150, 220, 160, 255} // the menu accent (mint), not a clashing red
 	default:
 		return hudText
 	}

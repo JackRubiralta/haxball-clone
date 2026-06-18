@@ -21,12 +21,12 @@ func NewHuman() *Human { return &Human{} }
 
 // Intent reads WASD into a movement direction, the cursor into an aim point, and the three
 // mouse buttons into the ball abilities: held left = a charging shot (fired on release), held
-// right = a trap, middle = an instant poke jab. A right-click also cancels an in-progress shot
+// right = a trap, middle = an instant push jab. A right-click also cancels an in-progress shot
 // charge: you abort a mistaken shot and settle the ball with the same press.
 //
 // The three abilities are MUTUALLY EXCLUSIVE -- a player can only do one at a time, so holding
-// or pressing one stops the others. Precedence is Trap > Poke > Shoot: a held trap (right) blocks
-// a middle-click jab entirely (you can never poke while a trap is held) and also overrides a
+// or pressing one stops the others. Precedence is Trap > Push > Shoot: a held trap (right) blocks
+// a middle-click jab entirely (you can never push while a trap is held) and also overrides a
 // shoot charge (matching the existing right-click-cancels-shoot); a middle-click jab otherwise
 // overrides a shoot charge; and shoot (left) only acts when neither of the others is engaged.
 // Engaging a higher-priority ability also CANCELS an in-progress shot so it does not fire.
@@ -58,21 +58,21 @@ func (h *Human) Intent(_ sim.View) sim.Intent {
 	left := ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft)
 	right := ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight)
 	rightEdge := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight)
-	// A held trap (right) blocks the poke entirely: middle-click can never fire while right is held.
-	poke := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonMiddle) && !right
+	// A held trap (right) blocks the push entirely: middle-click can never fire while right is held.
+	push := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonMiddle) && !right
 
-	// Resolve the precedence Trap > Poke > Shoot:
-	trapHeld := right // a held trap takes precedence; it has already suppressed the poke above
+	// Resolve the precedence Trap > Push > Shoot:
+	trapHeld := right // a held trap takes precedence; it has already suppressed the push above
 	// Shoot is suppressed whenever a higher-priority ability is engaged...
-	suppressShoot := trapHeld || poke
-	// ...but on the very tick one TAKES OVER (a trap just pressed, or a poke), keep the shoot
+	suppressShoot := trapHeld || push
+	// ...but on the very tick one TAKES OVER (a trap just pressed, or a push), keep the shoot
 	// button asserted so the cancel below actually drops a live charge -- the sim only honours a
 	// cancel while shoot reads held; a bare release would instead FIRE the charged shot.
-	takeover := rightEdge || poke
+	takeover := rightEdge || push
 	shootHeld := left && (!suppressShoot || takeover)
-	// A higher-priority ability (a just-pressed trap, or a poke) cancels a charging shot so it is
+	// A higher-priority ability (a just-pressed trap, or a push) cancels a charging shot so it is
 	// dropped, not released as a shot. (rightEdge preserves the original right-click cancel.)
-	cancelCharge := rightEdge || poke
+	cancelCharge := rightEdge || push
 
 	cursorX, cursorY := ebiten.CursorPosition()
 	return sim.Intent{
@@ -83,6 +83,6 @@ func (h *Human) Intent(_ sim.View) sim.Intent {
 		ShootHeld:     shootHeld,
 		Trap:          trapHeld,
 		CancelCharge:  cancelCharge,
-		Poke:          poke,
+		Push:          push,
 	}
 }

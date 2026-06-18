@@ -599,8 +599,8 @@ func (a *App) screenSettings(f frame) {
 		p.CameraMode = cycle(cameraPresets, p.CameraMode, dir(i))
 		a.applyPrefs()
 	}
-	if d, i := cf.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 1, 64), col.x, col.row(), col.w); d || i {
-		p.Zoom = clampF(p.Zoom+float64(dir(i))*0.5, 1, 4)
+	if d, i := cf.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 2, 64)+"x", col.x, col.row(), col.w); d || i {
+		p.Zoom = clampF(p.Zoom+float64(dir(i))*0.25, 1, 4)
 		a.applyPrefs()
 	}
 	col.gapRow(0.3)
@@ -617,7 +617,7 @@ func (a *App) screenSettings(f frame) {
 	cf.sectionHeader("CONTROLS", col.x, col.header(1), col.w)
 	for _, line := range []string{
 		"WASD  move", "Mouse  aim", "Hold left-click  charge shot (release to fire)",
-		"Right-click  trap", "Middle-click  poke", "C  camera mode", "Esc / P  pause",
+		"Right-click  trap", "Middle-click  push", "C  camera mode", "Esc / P  pause",
 	} {
 		y := col.row()
 		if cf.draw {

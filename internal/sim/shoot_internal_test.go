@@ -7,15 +7,15 @@ import (
 	"phootball/internal/geom"
 )
 
-// TestPokeAndFrontHemisphereShot covers the middle-click poke and the redesigned left-click
-// shot: the poke is an instant min-power radial push that reaches the whole pull radius and is
+// TestPushAndFrontHemisphereShot covers the middle-click push and the redesigned left-click
+// shot: the push is an instant min-power radial push that reaches the whole pull radius and is
 // equal in every direction; the shot fires only in the front 180deg and its power degrades
 // (much faster) toward the +-90deg edges.
-func TestPokeAndFrontHemisphereShot(t *testing.T) {
+func TestPushAndFrontHemisphereShot(t *testing.T) {
 	s := fieldPlayerStats()
 	const ballR = 10.0
 	d0 := s.Radius + ballR // distance at zero gap
-	pokePower := s.Shoot.Eval(0) * pokePowerFactor
+	pushPower := s.Shoot.Eval(0) * pushPowerFactor
 
 	newP := func() *Player {
 		p := NewPlayer(0, geom.NewVec(0, 0), s, nil)
@@ -23,34 +23,34 @@ func TestPokeAndFrontHemisphereShot(t *testing.T) {
 		return p
 	}
 
-	// --- POKE fires within the PULL radius even when NOT touching, at the poke power. ---
+	// --- PUSH fires within the PULL radius even when NOT touching, at the push power. ---
 	gap := 3.0 // between TouchRange (2) and PullRange (5)
 	if !(gap < s.PullRange && gap >= s.TouchRange) {
 		t.Fatalf("test setup: gap %.1f should sit between TouchRange %.1f and PullRange %.1f", gap, s.TouchRange, s.PullRange)
 	}
 	pf := NewBall(geom.NewVec(d0+gap, 0), ballR)
-	if !poke(newP(), pf) {
-		t.Fatalf("poke should fire on a ball within the pull radius (gap %.1f)", gap)
+	if !push(newP(), pf) {
+		t.Fatalf("push should fire on a ball within the pull radius (gap %.1f)", gap)
 	}
-	if got := geom.Norm(pf.Velocity); math.Abs(got-pokePower) > 1e-6 {
-		t.Errorf("poke power should be the poke power %.1f, got %.1f", pokePower, got)
+	if got := geom.Norm(pf.Velocity); math.Abs(got-pushPower) > 1e-6 {
+		t.Errorf("push power should be the push power %.1f, got %.1f", pushPower, got)
 	}
-	// The poke fires at 70% of a full-charge front shot.
-	if math.Abs(pokePower-0.7*s.Shoot.Eval(0)) > 1e-6 {
-		t.Errorf("poke should be ~70%% of a full front shot (%.1f), got %.1f", 0.7*s.Shoot.Eval(0), pokePower)
+	// The push fires at 70% of a full-charge front shot.
+	if math.Abs(pushPower-0.7*s.Shoot.Eval(0)) > 1e-6 {
+		t.Errorf("push should be ~70%% of a full front shot (%.1f), got %.1f", 0.7*s.Shoot.Eval(0), pushPower)
 	}
 	// A held shot must NOT fire there -- it still needs the ball touching.
 	if shoot(newP(), NewBall(geom.NewVec(d0+gap, 0), ballR)) {
 		t.Errorf("a held shot should not fire on a ball only in the pull radius (gap %.1f >= TouchRange %.1f)", gap, s.TouchRange)
 	}
-	// Poke power is EQUAL in every direction: a ball directly behind gets the same speed.
+	// Push power is EQUAL in every direction: a ball directly behind gets the same speed.
 	pb := NewBall(geom.NewVec(-(d0+gap), 0), ballR)
-	poke(newP(), pb)
-	if got := geom.Norm(pb.Velocity); math.Abs(got-pokePower) > 1e-6 {
-		t.Errorf("poke power should be equal in every direction (%.1f), behind got %.1f", pokePower, got)
+	push(newP(), pb)
+	if got := geom.Norm(pb.Velocity); math.Abs(got-pushPower) > 1e-6 {
+		t.Errorf("push power should be equal in every direction (%.1f), behind got %.1f", pushPower, got)
 	}
 	if pb.Velocity.X >= 0 {
-		t.Errorf("a poke on a ball behind should push it backward, vx=%.2f", pb.Velocity.X)
+		t.Errorf("a push on a ball behind should push it backward, vx=%.2f", pb.Velocity.X)
 	}
 
 	// --- SHOOT: front 180deg only, power degrading toward the edges. ---

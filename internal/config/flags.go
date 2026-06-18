@@ -247,7 +247,7 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	aiBoth := fs.Bool("ai-both", false, "AI controls both teams (spectate)")
 	solo := fs.Bool("solo", false, "single human player + ball only, no opponents (for testing)")
 	duo := fs.Bool("duo", false, "two players you switch control of with 1 and 2 (for testing)")
-	zoom := fs.Float64("zoom", 2, "camera zoom (used with -camera ball/player; mouse wheel adjusts in game)")
+	zoom := fs.Float64("zoom", 1, "camera zoom (used with -camera ball/player; mouse wheel adjusts in game)")
 	camera := fs.String("camera", "ball", "camera mode: ball (follow), player (follow you), or fit (whole pitch)")
 	mute := fs.Bool("mute", false, "silence all sound")
 	volume := fs.Float64("volume", 0.8, "master volume 0..1")

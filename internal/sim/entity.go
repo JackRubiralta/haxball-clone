@@ -43,9 +43,9 @@ type Player struct {
 	trapAura      float64  // 0..1 EFFECTIVE trap strength (stateful): humps while held (grow->peak->weaken), shrinks on release; drives BOTH the trap effect and its visual aura
 	shootHeldPrev bool     // shoot-button state last tick, for release-edge detection
 	shootCanceled bool     // current shoot charge was canceled (by a trap-tap); suppress the release-edge kick
-	wantsPoke     bool     // middle-click jab requested this tick (instant min-power radial push)
-	pokeFlash     float64  // 1->0 cosmetic timer set whenever a middle-click poke is ATTEMPTED (even a whiff with no ball in reach); drives the poke pulse animation over the player
-	pokeFlashPos  geom.Vec // player position at the moment of the poke -- anchors the pulse on the player
+	wantsPush     bool     // middle-click jab requested this tick (instant min-power radial push)
+	pushFlash     float64  // 1->0 cosmetic timer set whenever a middle-click push is ATTEMPTED (even a whiff with no ball in reach); drives the push pulse animation over the player
+	pushFlashPos  geom.Vec // player position at the moment of the push -- anchors the pulse on the player
 	trapHeldPrev  bool     // trap-button state last tick, for the trap sound's rising edge
 	evictDwell    float64  // seconds spent violating a positional rule (warn-evict grace)
 	moveHeading   geom.Vec // current steering direction; rotates toward input at TurnRate
@@ -56,7 +56,7 @@ const (
 	shootChargeMax   = 0.75 // seconds of hold for a full-power shot (faster charge)
 	trapChargeTime   = 1.25 // seconds of holding the trap button to reach full trap charge (~25% slower)
 	trapChargeDecay  = 3.2  // per-second decay of trap charge once released (~25% slower release/aura fade)
-	pokeFlashSeconds = 0.3  // seconds for the middle-click poke pulse animation to fade out
+	pushFlashSeconds = 0.3  // seconds for the middle-click push pulse animation to fade out
 )
 
 // Trap strength shape: how the held trap's EFFECTIVE strength (`trapAura`) tracks the raw charge.
@@ -95,19 +95,19 @@ func (p *Player) TrapCharge() float64 { return p.trapCharge }
 // release. Drives the trap effect and is exposed for the renderer's trap glow (so they match).
 func (p *Player) TrapAura() float64 { return p.trapAura }
 
-// PokeFlash returns the current 1->0 poke-press animation timer: 1 the tick a middle-click poke is
-// pressed (whether or not it connects with the ball), fading to 0 over pokeFlashSeconds. Exposed for
-// the renderer's poke pulse (local play).
-func (p *Player) PokeFlash() float64 { return p.pokeFlash }
+// PushFlash returns the current 1->0 push-press animation timer: 1 the tick a middle-click push is
+// pressed (whether or not it connects with the ball), fading to 0 over pushFlashSeconds. Exposed for
+// the renderer's push pulse (local play).
+func (p *Player) PushFlash() float64 { return p.pushFlash }
 
-// PokeFlashPos returns the player's position at the moment of the poke. Vestigial: the renderer now
+// PushFlashPos returns the player's position at the moment of the push. Vestigial: the renderer now
 // anchors the pulse on the live player position directly.
-func (p *Player) PokeFlashPos() geom.Vec { return p.pokeFlashPos }
+func (p *Player) PushFlashPos() geom.Vec { return p.pushFlashPos }
 
-// PokeRange returns the surface-gap reach of the middle-click poke -- the BASE PullRange, NOT the
-// trap-extended pullRadius (the poke fires on any ball whose surface gap is below this; see poke).
-// Exposed so the renderer can size and gate the poke-pulse animation to the poke's actual reach.
-func (p *Player) PokeRange() float64 { return p.Stats.PullRange }
+// PushRange returns the surface-gap reach of the middle-click push -- the BASE PullRange, NOT the
+// trap-extended pullRadius (the push fires on any ball whose surface gap is below this; see push).
+// Exposed so the renderer can size and gate the push-pulse animation to the push's actual reach.
+func (p *Player) PushRange() float64 { return p.Stats.PullRange }
 
 // Possession returns the player's current 0..1 possession build-up (ball touching anywhere).
 func (p *Player) Possession() float64 { return p.possession }
