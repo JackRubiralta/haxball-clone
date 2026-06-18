@@ -144,3 +144,109 @@ func TestBoxCapKeepsEstablishedNotNewcomer(t *testing.T) {
 		t.Error("the newcomer poking in at the edge should be the one walled out, not the established occupant")
 	}
 }
+
+// TestGoalAreaKeeperOnly: the keeper-only goal-area mode admits ONLY the box owner's keeper and
+// walls out everyone else (an own outfielder AND an opponent) at the line -- as a one-tick clamp
+// just outside, never a teleport. It also confirms the wall rests just clear of the marking
+// (boxLineClearance) rather than flush on it.
+func TestGoalAreaKeeperOnly(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 4, config.Default())
+	m.Rules.Enforcement = config.EnforceClamp // correct immediately, no grace
+	m.Rules.OffsideEnabled = false
+	m.Rules.PenaltyBoxMaxPlayers, m.Rules.PenaltyBoxMaxOpponents = 0, 0
+	m.Rules.GoalAreaMaxPlayers, m.Rules.GoalAreaMaxOpponents = 0, 0
+	m.Rules.GoalAreaKeeperOnly = true
+
+	var defTeam, oppTeam *Team
+	for _, tm := range m.Teams {
+		if tm.Side == SideLeft {
+			defTeam = tm // owns the left goal area
+		} else {
+			oppTeam = tm
+		}
+	}
+	box := m.Field.GoalAreaBox(SideLeft)
+	if box.empty() {
+		t.Fatal("standard field should have a left goal area")
+	}
+	if defTeam.Players[0].Role != RoleGoalkeeper {
+		t.Fatalf("expected P0 of the owning team to be the keeper")
+	}
+	rad := defTeam.Players[0].Radius()
+	midY := (box.Min.Y + box.Max.Y) / 2
+	deepInside := geom.NewVec((box.Min.X+box.Max.X)/2, midY)
+	away := geom.NewVec((box.Min.X+box.Max.X)/2, box.Min.Y-10*rad)
+
+	for _, p := range m.Players {
+		p.Position = away
+	}
+	keeper := defTeam.Players[0]
+	ownOutfield := defTeam.Players[1]
+	opponent := oppTeam.Players[1]
+	keeper.Position = deepInside
+	ownOutfield.Position = deepInside
+	opponent.Position = deepInside
+
+	enforceZoneRules(m, 1.0/60)
+
+	if !box.overlapsCircle(keeper.Position, rad) {
+		t.Error("keeper-only: the owner's keeper must remain inside the goal area")
+	}
+	if box.overlapsCircle(ownOutfield.Position, rad) {
+		t.Error("keeper-only: an own outfielder must be walled out of the goal area")
+	}
+	if box.overlapsCircle(opponent.Position, rad) {
+		t.Error("keeper-only: an opponent must be walled out of the goal area")
+	}
+	// Not a teleport: the walled-out outfielder is clamped just OUTSIDE the pitch-facing (max-X)
+	// face, its edge resting at the line's outer edge (radius + half the line width), not flush.
+	wantX := box.Max.X + rad + boxLineClearance
+	if d := ownOutfield.Position.X - wantX; d < -1e-9 || d > 1e-9 {
+		t.Errorf("walled-out outfielder X = %g, want a one-tick clamp to %g (just clear of the line)", ownOutfield.Position.X, wantX)
+	}
+}
+
+// TestGoalAreaNumericCaps: with keeper-only OFF, the numeric goal-area cap still admits exactly
+// cap-1 (one) and cap-2 (two) of the owning team's players (keeper kept first), walling out the
+// rest -- so cap-1/cap-2 remain selectable via the numeric cap.
+func TestGoalAreaNumericCaps(t *testing.T) {
+	box := NewStandardField().GoalAreaBox(SideLeft)
+	if box.empty() {
+		t.Fatal("standard field should have a left goal area")
+	}
+	for _, cap := range []int{1, 2} {
+		m := BuildMatchFromConfig(NewStandardField(), 4, config.Default())
+		m.Rules.Enforcement = config.EnforceClamp
+		m.Rules.OffsideEnabled = false
+		m.Rules.PenaltyBoxMaxPlayers, m.Rules.PenaltyBoxMaxOpponents = 0, 0
+		m.Rules.GoalAreaKeeperOnly = false
+		m.Rules.GoalAreaMaxPlayers = cap
+		m.Rules.GoalAreaMaxOpponents = 0
+
+		var def *Team
+		for _, tm := range m.Teams {
+			if tm.Side == SideLeft {
+				def = tm
+			}
+		}
+		rad := def.Players[0].Radius()
+		midY := (box.Min.Y + box.Max.Y) / 2
+		// Stack all of the owning team deep inside, each at a slightly different depth so the
+		// deepest-kept ranking is deterministic.
+		for i, p := range def.Players {
+			p.Position = geom.NewVec(box.Min.X+rad*2+float64(i)*0.01, midY)
+		}
+
+		enforceZoneRules(m, 1.0/60)
+
+		inside := 0
+		for _, p := range def.Players {
+			if box.overlapsCircle(p.Position, rad) {
+				inside++
+			}
+		}
+		if inside != cap {
+			t.Errorf("cap-%d: %d players remained inside the goal area, want %d", cap, inside, cap)
+		}
+	}
+}

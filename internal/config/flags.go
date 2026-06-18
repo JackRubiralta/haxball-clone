@@ -116,6 +116,7 @@ type ruleFlags struct {
 	penBoxMaxOpp   int
 	goalAreaMax    int
 	goalAreaMaxOpp int
+	goalAreaKeeper bool
 	gkBoxMax       int
 	zoneEnforce    string
 }
@@ -134,6 +135,7 @@ func bindRules(fs *flag.FlagSet) *ruleFlags {
 	fs.IntVar(&rf.penBoxMaxOpp, "penalty-box-max-opp", 0, "max OPPONENT (attacking) players allowed in a penalty area (0 = off)")
 	fs.IntVar(&rf.goalAreaMax, "goalarea-box-max", 0, "max DEFENDING players allowed in their goal area (0 = off)")
 	fs.IntVar(&rf.goalAreaMaxOpp, "goalarea-box-max-opp", 0, "max OPPONENT (attacking) players allowed in a goal area (0 = off)")
+	fs.BoolVar(&rf.goalAreaKeeper, "goalarea-keeper-only", false, "goal area is keeper-only: only the box owner's keeper may enter (overrides the numeric goal-area caps)")
 	fs.IntVar(&rf.gkBoxMax, "gk-box-max", 0, "deprecated alias for -goalarea-box-max")
 	fs.StringVar(&rf.zoneEnforce, "zone-enforce", "clamp", "positional-rule enforcement: clamp or evict")
 	return rf
@@ -171,6 +173,7 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 	s.PenaltyBoxMaxOpp = rf.penBoxMaxOpp
 	s.GoalAreaMax = rf.goalAreaMax
 	s.GoalAreaMaxOpp = rf.goalAreaMaxOpp
+	s.GoalAreaKeeperOnly = rf.goalAreaKeeper
 	if s.GoalAreaMax == 0 && rf.gkBoxMax > 0 {
 		s.GoalAreaMax = rf.gkBoxMax // deprecated -gk-box-max alias
 	}

@@ -17,16 +17,17 @@ type MatchSetup struct {
 
 	// Boxes: existence + size overrides + per-box caps (0 = no cap). Each box caps the
 	// defending team and the opponent (attackers) separately.
-	PenaltyArea      bool
-	PenaltyWidth     float64
-	PenaltyDepth     float64
-	PenaltyBoxMax    int // defending players allowed in the penalty area
-	PenaltyBoxMaxOpp int // opponent (attacking) players allowed in the penalty area
-	GoalArea         bool
-	GoalAreaWidth    float64
-	GoalAreaDepth    float64
-	GoalAreaMax      int // defending players allowed in the goal area
-	GoalAreaMaxOpp   int // opponent (attacking) players allowed in the goal area
+	PenaltyArea        bool
+	PenaltyWidth       float64
+	PenaltyDepth       float64
+	PenaltyBoxMax      int // defending players allowed in the penalty area
+	PenaltyBoxMaxOpp   int // opponent (attacking) players allowed in the penalty area
+	GoalArea           bool
+	GoalAreaWidth      float64
+	GoalAreaDepth      float64
+	GoalAreaMax        int  // defending players allowed in the goal area
+	GoalAreaMaxOpp     int  // opponent (attacking) players allowed in the goal area
+	GoalAreaKeeperOnly bool // if set, only the box-owner's keeper may enter the goal area (overrides the numeric goal-area caps)
 
 	// Positional rules.
 	Offside     bool
@@ -164,6 +165,7 @@ func (s MatchSetup) Ruleset() (Ruleset, error) {
 	if s.GoalAreaMaxOpp > 0 {
 		r.GoalAreaMaxOpponents = s.GoalAreaMaxOpp
 	}
+	r.GoalAreaKeeperOnly = s.GoalAreaKeeperOnly
 	r.Enforcement = s.Enforcement
 	r.EvictGrace = s.EvictGrace
 	return r, nil

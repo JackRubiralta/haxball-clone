@@ -45,7 +45,6 @@ var (
 	hudColor     = color.RGBA{0, 0, 0, 110}
 	bannerColor  = color.RGBA{0, 0, 0, 165}
 	offsideLine  = color.RGBA{235, 240, 235, 105} // translucent white anti-camp line
-	boxLimitFill = color.RGBA{40, 10, 10, 50}     // faint RED keep-out wash over a player-capped box (premultiplied ~rgb(204,51,51)@0.2)
 )
 
 // Line widths (world units). EVERY painted pitch line -- the boundary, the goal line that closes
@@ -295,15 +294,17 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 	}
 }
 
-// ZoneIndicators draws the positional-rule indicators (offside lines, capped-box wash)
-// over an already-drawn field. The network client calls it from a ruleset rebuilt from
-// the snapshot, so the lines show on a remote client too.
+// ZoneIndicators draws the positional-rule indicators (offside lines) over an
+// already-drawn field. The network client calls it from a ruleset rebuilt from the
+// snapshot, so the lines show on a remote client too.
 func ZoneIndicators(screen *ebiten.Image, f *sim.Field, r config.Ruleset) {
 	drawZoneIndicators(newCanvas(screen), f, r)
 }
 
-// drawZoneIndicators draws the offside line(s) as translucent white verticals and a
-// faint wash over any player-capped box, so the limits are always visible.
+// drawZoneIndicators draws the offside line(s) as translucent white verticals. The
+// player-capped boxes carry NO overlay -- they are shown only by their normal white line
+// outline (drawn from the same field geometry the physics walls use), with surplus
+// players walled out at that line.
 func drawZoneIndicators(c canvas, f *sim.Field, r config.Ruleset) {
 	if r.OffsideEnabled {
 		frac := r.OffsideFrac
@@ -314,18 +315,6 @@ func drawZoneIndicators(c canvas, f *sim.Field, r config.Ruleset) {
 		rx := f.OffsideLineX(sim.SideRight, frac)
 		c.line(lx, f.Min.Y, lx, f.Max.Y, markingWidth, offsideLine)
 		c.line(rx, f.Min.Y, rx, f.Max.Y, markingWidth, offsideLine)
-	}
-	if r.GoalAreaMaxPlayers > 0 && f.Geo.HasGoalArea {
-		for _, side := range [2]sim.Side{sim.SideLeft, sim.SideRight} {
-			b := f.GoalArea(side)
-			c.fillRect(b.Min.X, b.Min.Y, b.Max.X-b.Min.X, b.Max.Y-b.Min.Y, boxLimitFill)
-		}
-	}
-	if r.PenaltyBoxMaxPlayers > 0 && f.Geo.HasPenaltyArea {
-		for _, side := range [2]sim.Side{sim.SideLeft, sim.SideRight} {
-			b := f.PenaltyArea(side)
-			c.fillRect(b.Min.X, b.Min.Y, b.Max.X-b.Min.X, b.Max.Y-b.Min.Y, boxLimitFill)
-		}
 	}
 }
 

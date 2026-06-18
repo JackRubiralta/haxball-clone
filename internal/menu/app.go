@@ -292,6 +292,10 @@ func (a *App) screenMatchSetup(f frame) {
 	if d, i := f.rowStepper("  Area max/team", capLabel(s.GoalAreaMax), lx, ly, colW); d || i {
 		s.GoalAreaMax = clampInt(s.GoalAreaMax+dir(i), 0, 11)
 	}
+	ly += rh
+	if f.rowToggle("  Area keeper-only", s.GoalAreaKeeperOnly, lx, ly, colW) {
+		s.GoalAreaKeeperOnly = !s.GoalAreaKeeperOnly
+	}
 
 	// Right column: rules & match.
 	ry := y0

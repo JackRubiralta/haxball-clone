@@ -70,6 +70,7 @@ type Ruleset struct {
 	PenaltyBoxMaxOpponents int             // max OPPONENT (attacking) players allowed in a penalty area (0 = off)
 	GoalAreaMaxPlayers     int             // max DEFENDING players allowed in their goal area (0 = off)
 	GoalAreaMaxOpponents   int             // max OPPONENT (attacking) players allowed in a goal area (0 = off)
+	GoalAreaKeeperOnly     bool            // if set, ONLY the box-owner's keeper may enter the goal area (everyone else, own team and opponents, is walled out); overrides the numeric goal-area caps
 	Enforcement            EnforcementMode // how violations are corrected
 	EvictGrace             float64         // seconds of tolerance before a warn-evict clamp
 }

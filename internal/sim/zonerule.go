@@ -9,13 +9,14 @@ import (
 )
 
 // boxLineClearance keeps a clamped / walled-out player's body just OUTSIDE a boundary marking
-// rather than flush on it. The pitch markings are drawn fieldLineWidth (4) wide, centred on the
-// geometric boundary, so a player clamped edge-flush covers the near half of the line. This is
-// that half-width, so the player's edge rests at the line's far edge and no longer overlaps it.
-// Shared by every positional-rule wall (box keep-out + offside) for a uniform look. (The arena
-// boundary in Field.ConfinePlayer has the same flush clamp and could use this too -- left
-// untouched here to avoid changing core arena physics.)
-const boxLineClearance = 2.0
+// rather than flush on it. The pitch markings are drawn PitchLineWidth wide, centred on the
+// geometric boundary, so a player clamped edge-flush would cover the near half of the line. This
+// is that half-width -- single-sourced from the SAME PitchLineWidth the renderer draws the line at
+// (and the box geometry the physics uses), so the player's edge rests exactly at the line's outer
+// edge and never overlaps it for the current markings. Shared by every positional-rule wall (box
+// keep-out + offside) for a uniform look. (The arena boundary in Field.ConfinePlayer has the same
+// flush clamp and could use this too -- left untouched here to avoid changing core arena physics.)
+const boxLineClearance = PitchLineWidth / 2
 
 // ZoneRect is an axis-aligned rectangle in world coordinates used by the positional
 // rules. It mirrors config.Rect but lives in the simulation so the rules can be written
@@ -71,7 +72,7 @@ func enforceZoneRules(m *Match, deltaTime float64) {
 	}
 	r := m.Rules
 	penActive := r.PenaltyBoxMaxPlayers > 0 || r.PenaltyBoxMaxOpponents > 0
-	gkActive := r.GoalAreaMaxPlayers > 0 || r.GoalAreaMaxOpponents > 0
+	gkActive := r.GoalAreaKeeperOnly || r.GoalAreaMaxPlayers > 0 || r.GoalAreaMaxOpponents > 0
 	if !r.OffsideEnabled && !penActive && !gkActive {
 		return
 	}
@@ -96,8 +97,15 @@ func enforceZoneRules(m *Match, deltaTime float64) {
 		}
 		if gkActive {
 			box := m.Field.GoalAreaBox(t.Side)
-			m.enforceBoxCap(box, t.Side, t, r.GoalAreaMaxPlayers, pending)
-			m.enforceBoxCap(box, t.Side, opp, r.GoalAreaMaxOpponents, pending)
+			if r.GoalAreaKeeperOnly {
+				// Keeper-only: admit ONLY the box owner's keeper; wall out every other player
+				// (own team and opponents). A keeper-only goal area has no opponents either.
+				m.enforceBoxKeeperOnly(box, t.Side, t, pending)
+				m.enforceBoxKeeperOnly(box, t.Side, opp, pending)
+			} else {
+				m.enforceBoxCap(box, t.Side, t, r.GoalAreaMaxPlayers, pending)
+				m.enforceBoxCap(box, t.Side, opp, r.GoalAreaMaxOpponents, pending)
+			}
 		}
 	}
 
@@ -222,6 +230,31 @@ func (m *Match) enforceBoxCap(box ZoneRect, boxSide Side, team *Team, max int, p
 	}
 }
 
+// enforceBoxKeeperOnly is the keeper-only goal-area mode: of `team`'s players overlapping `box`,
+// ONLY the box owner's keeper is admitted; every other player (and every player of a team that is
+// not the box owner -- i.e. the opponent) is walled out at the line, exactly like enforceBoxCap's
+// surplus wall. It is never a teleport: each surplus player is clamped one frame just outside the
+// nearest pitch-facing face with its into-wall velocity reflected (boxKeepOut). boxSide is the goal
+// the box guards.
+func (m *Match) enforceBoxKeeperOnly(box ZoneRect, boxSide Side, team *Team, pending map[int]pendingPush) {
+	if box.empty() {
+		return
+	}
+	leftSide := boxSide == SideLeft
+	owner := team.Side == boxSide
+	for _, p := range team.Players {
+		if !box.overlapsCircle(p.Position, p.Radius()) {
+			continue // body not in the box
+		}
+		if owner && p.Role == RoleGoalkeeper {
+			continue // the owner's keeper is the only admitted player
+		}
+		if push, ok := boxKeepOut(p, box, leftSide); ok {
+			pending[p.PlayerID] = push
+		}
+	}
+}
+
 // boxInsideness measures how deep a player's circle sits inside the box: the distance from the
 // nearest face it would be pushed out through (the same faces boxKeepOut uses). Larger = more
 // settled inside; a player only just overlapping a face scores near zero. The cap keeps the
@@ -242,8 +275,9 @@ func boxInsideness(p *Player, box ZoneRect, leftSide bool) float64 {
 
 // boxKeepOut keeps a player's circle outside the box, pushing it out the
 // least-penetration PITCH-FACING face (the goal-line face is the arena boundary, owned
-// by ConfinePlayer, and is never an exit). Only the chosen axis's into-wall velocity is
-// reflected, so the player slides along the face.
+// by ConfinePlayer, and is never an exit). The chosen axis's into-wall velocity is ZEROED
+// (no bounce off the goal/penalty box), so the player stops dead at the line and slides
+// along the face; the along-face component is left untouched.
 func boxKeepOut(p *Player, box ZoneRect, leftSide bool) (pendingPush, bool) {
 	// margin clears the player's body PLUS the boundary line's half-width, so the walled-out
 	// player rests just outside the marking instead of overlapping it.
@@ -267,23 +301,24 @@ func boxKeepOut(p *Player, box ZoneRect, leftSide bool) (pendingPush, bool) {
 		xPen = c.X - xTarget
 	}
 
+	// Zero bounce: KILL the into-wall velocity component (set to 0) rather than reflecting it, so the
+	// player stops dead at the box line instead of rebounding off it. The other (along-the-face)
+	// component is left untouched, so the player still slides freely along the line.
 	vel := p.Velocity
 	switch {
 	case xPen <= upPen && xPen <= downPen:
-		if leftSide && vel.X < 0 {
-			vel.X = -playerWallRestitution * vel.X
-		} else if !leftSide && vel.X > 0 {
-			vel.X = -playerWallRestitution * vel.X
+		if (leftSide && vel.X < 0) || (!leftSide && vel.X > 0) {
+			vel.X = 0
 		}
 		return pendingPush{pos: geom.NewVec(xTarget, c.Y), vel: vel}, true
 	case upPen <= downPen:
 		if vel.Y > 0 {
-			vel.Y = -playerWallRestitution * vel.Y
+			vel.Y = 0
 		}
 		return pendingPush{pos: geom.NewVec(c.X, box.Min.Y-margin), vel: vel}, true
 	default:
 		if vel.Y < 0 {
-			vel.Y = -playerWallRestitution * vel.Y
+			vel.Y = 0
 		}
 		return pendingPush{pos: geom.NewVec(c.X, box.Max.Y+margin), vel: vel}, true
 	}
