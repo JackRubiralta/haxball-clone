@@ -136,9 +136,9 @@ func TestResetKickoffStagedArmsAndPlacesTaker(t *testing.T) {
 	if !m.KickoffArmed() {
 		t.Fatal("staged resetKickoff should arm the kickoff flag")
 	}
-	// The taker sits just behind the ball (on the centre dot) with a small gap, facing the goal.
+	// The taker sits a bit behind the ball, inside the centre circle, facing the goal.
 	gap := geom.Dist(taker.Position, m.Ball.Position)
-	wantGap := m.Ball.Radius() + taker.Radius() + 1
+	wantGap := m.Ball.Radius() + taker.Radius() + kickoffTakerStandoff
 	if d := gap - wantGap; d > 0.01 || d < -0.01 {
 		t.Errorf("taker gap = %.2f, want %.2f", gap, wantGap)
 	}
@@ -188,16 +188,16 @@ func TestStepDisarmsKickoffOnTouch(t *testing.T) {
 	if !m.KickoffArmed() {
 		t.Fatal("precondition: kickoff should be armed")
 	}
-	// Drive the taker to strike the ball: it sits on the dot, charge a shot toward the goal.
+	// Drive the taker into the ball and strike: it starts a bit off the ball (inside the circle),
+	// so move toward the goal (the ball is just ahead) while charging, then release.
 	taker := m.kickoffTaker(m.KickoffSide())
 	in := map[int]Intent{
-		taker.PlayerID: {ShootHeld: true, Aim: geom.NewVec(1, 0)},
+		taker.PlayerID: {Move: geom.NewVec(1, 0), Throttle: 1, ShootHeld: true, Aim: geom.NewVec(1, 0)},
 	}
-	// Hold the charge a few ticks, then release.
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 30; i++ {
 		m.Step(in, 1.0/60.0)
 	}
-	in[taker.PlayerID] = Intent{ShootHeld: false}
+	in[taker.PlayerID] = Intent{Move: geom.NewVec(1, 0), Throttle: 1, ShootHeld: false}
 	m.Step(in, 1.0/60.0)
 	if m.LastTouch == nil {
 		t.Fatal("expected the taker to have touched the ball")

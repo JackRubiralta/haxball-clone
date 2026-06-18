@@ -93,9 +93,25 @@ func jerseyFace(sizePx int) font.Face {
 	return f
 }
 
-// view is the most recent world->framebuffer transform, kept so ScreenToWorld can
-// invert a cursor position. It is refreshed every time a frame is drawn.
-var view = canvas{scale: 1}
+// Viewport is the resolved world->framebuffer transform for one drawn frame: exactly what
+// is needed to invert a cursor (framebuffer) position back to world coordinates. Frame,
+// Field, and BeginUI each return the Viewport they drew with, so cursor mapping is
+// REENTRANT -- a caller holds the viewport from the frame it drew rather than reading any
+// hidden package state. The zero Viewport maps a cursor to itself (identity), which is what
+// a controller sees before the first frame is drawn.
+type Viewport struct {
+	scale  float64
+	ox, oy float64
+}
+
+// ScreenToWorld converts a framebuffer (cursor) coordinate back into world space using the
+// transform this viewport was drawn with.
+func (vp Viewport) ScreenToWorld(x, y int) geom.Vec {
+	if vp.scale == 0 {
+		return geom.NewVec(float64(x), float64(y))
+	}
+	return geom.NewVec((float64(x)-vp.ox)/vp.scale, (float64(y)-vp.oy)/vp.scale)
+}
 
 // worldW and worldH are the logical world size the canvas fits to the window. They
 // default to the standard surface and are set from the field's geometry whenever a
@@ -138,9 +154,12 @@ func newCanvas(dst *ebiten.Image) canvas {
 	} else {
 		c = canvas{dst: dst, scale: base, ox: (w - worldW*base) / 2, oy: (h - worldH*base) / 2}
 	}
-	view = c
 	return c
 }
+
+// viewport returns the cursor-inversion transform for this canvas (its scale and origin,
+// without the destination image).
+func (c canvas) viewport() Viewport { return Viewport{scale: c.scale, ox: c.ox, oy: c.oy} }
 
 // newHUDCanvas builds a fit-to-window canvas for the HUD. It never pans or zooms and,
 // crucially, does NOT touch view -- so a HUD drawn after the world leaves view holding
@@ -229,9 +248,10 @@ const measureRefPx = 64
 
 // textSized draws text at a UI/world position in the smooth vector (jersey) font,
 // sized in the same units as the coordinates (world/UI units, scaled by c.scale).
-// align picks the horizontal anchor at x: AlignLeft/AlignCenter/AlignRight. The
-// baseline is vertically centred on y. Centring uses text.BoundString -- no
-// len(s)*k fudging -- so it is correct for any glyphs.
+// align picks the horizontal anchor at x: AlignLeft/AlignCenter/AlignRight (using the
+// per-string glyph box, so the visible glyphs centre correctly). The text is vertically
+// centred on y using the FONT METRICS (ascent/descent), not the per-string box, so words
+// with and without tall letters share one baseline and a row of mixed words stays aligned.
 func (c canvas) textSized(s string, x, y, sizePx float64, align int, clr color.Color) {
 	if s == "" {
 		return
@@ -247,8 +267,11 @@ func (c canvas) textSized(s string, x, y, sizePx float64, align int, clr color.C
 	default:
 		px -= float64(b.Min.X)
 	}
-	oy := float64(c.py(y)) - float64(b.Min.Y) - float64(b.Dy())/2
-	text.Draw(c.dst, s, face, int(px), int(oy), clr)
+	// Vertical: place the baseline so the font's LINE box (ascent/descent) centres on y,
+	// independent of which glyphs s contains -- so "easy" (no ascenders) and "hard" align.
+	m := face.Metrics()
+	baseline := float64(c.py(y)) + (float64(m.Ascent)-float64(m.Descent))/(2*64)
+	text.Draw(c.dst, s, face, int(px), int(baseline), clr)
 }
 
 // measureUI returns the rendered width of s, in UI units, for vector text drawn
@@ -262,12 +285,6 @@ func measureUI(s string, sizeUI float64) float64 {
 	}
 	b := text.BoundString(jerseyFace(measureRefPx), s)
 	return float64(b.Dx()) * sizeUI / float64(measureRefPx)
-}
-
-// ScreenToWorld converts a framebuffer (cursor) coordinate back to world space using
-// the most recent frame's transform.
-func ScreenToWorld(x, y int) geom.Vec {
-	return geom.NewVec((float64(x)-view.ox)/view.scale, (float64(y)-view.oy)/view.scale)
 }
 
 // UIWidth and UIHeight are the fixed logical size menus lay out in, independent of the
@@ -290,12 +307,16 @@ type UI struct {
 	full *ebiten.Image
 }
 
-// BeginUI prepares a UI surface for this frame. It sets the transform that
-// ScreenToWorld inverts, so a menu can map the cursor into UI coordinates.
+// BeginUI prepares a UI surface for this frame. Call Viewport on the result to map the
+// cursor into UI coordinates.
 func BeginUI(screen *ebiten.Image) UI {
 	worldW, worldH = UIWidth, UIHeight
 	return UI{c: newCanvas(screen), full: screen}
 }
+
+// Viewport returns the cursor-inversion transform for this UI surface, so a menu can map
+// the cursor into UI coordinates without any package global.
+func (u UI) Viewport() Viewport { return u.c.viewport() }
 
 // PushClip restricts subsequent drawing to the UI-coordinate rectangle [x,y,w,h],
 // returning a UI whose canvas targets a SubImage of the framebuffer with the SAME
@@ -449,7 +470,9 @@ func drawZoneIndicators(c canvas, f *sim.Field, r config.Ruleset) {
 // through the camera transform (pan/zoom); the HUD is drawn fit-to-window so it never
 // pans or zooms. ScreenToWorld inverts the camera transform, so aim stays correct at any
 // zoom or pan.
-func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
+// Frame returns the camera Viewport it drew with, so the caller can invert the cursor for
+// aim at any pan/zoom.
+func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) Viewport {
 	worldW, worldH = m.Field.Geo.ScreenWidth, m.Field.Geo.ScreenHeight
 	cam.prepare(worldW, worldH, m, dt)
 
@@ -462,11 +485,14 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
 	drawPossessionBarsAll(screen, m)
-	drawZoneIndicators(newCanvas(screen), m.Field, m.Rules)
+	zc := newCanvas(screen)
+	drawZoneIndicators(zc, m.Field, m.Rules)
+	vp := zc.viewport() // the camera transform, captured before the HUD's fit pass
 	camActive = false
 
 	DrawHUD(screen, hudFromMatch(m))
 	drawMatchOverlays(screen, m)
+	return vp
 }
 
 // goalMessage describes the most recent goal (scorer, assist, own goal, deflection).
@@ -520,9 +546,10 @@ func winnerMessage(m *sim.Match) string {
 	}
 }
 
-// Field draws the pitch: a striped lawn, boundary and markings, the two goals with
-// nets, and any obstacles.
-func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA) {
+// Field draws the pitch: a striped lawn, boundary and markings, the two goals with nets,
+// and any obstacles. It returns the Viewport it drew with so a caller that assembles its
+// own frame (the network client) can invert the cursor for aim without a package global.
+func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA) Viewport {
 	worldW, worldH = f.Geo.ScreenWidth, f.Geo.ScreenHeight
 	screen.Fill(stadiumColor)
 	c := newCanvas(screen)
@@ -599,6 +626,7 @@ func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA)
 	for _, ob := range f.Obstacles {
 		drawCone(c, ob.Position, ob.Radius())
 	}
+	return c.viewport()
 }
 
 // drawGoal draws a goal: a netted pocket with a team-coloured frame, posts, and goal
@@ -962,14 +990,15 @@ func HUDFromSnapshot(leftName, rightName string, leftColor, rightColor color.RGB
 const (
 	hudCardTop  = 8.0   // margin above the floating card
 	hudCardH    = 52.0  // card height
-	hudScoreS   = 26.0  // big vector score size
-	hudNameS    = 14.0  // team name
+	hudScoreS   = 26.0  // big vector score size (kept -- it reads well)
+	hudNameS    = 17.0  // team name (bumped from 14 -- it was too small)
 	hudClockS   = 14.0  // clock
 	hudPhaseS   = 12.0  // phase label
-	hudSwatchW  = 16.0  // team-colour swatch (rounded square / dot)
+	hudSwatchW  = 16.0  // team-colour swatch (a dot)
 	hudCardPad  = 16.0  // inner horizontal padding
-	hudColGap   = 10.0  // gap between swatch / name / score blocks
-	hudSideSpan = 132.0 // width reserved for each team's (swatch + name) block
+	hudColGap   = 9.0   // gap between a swatch and its team name
+	hudSideGap  = 20.0  // gap between each team block and the central score (kept tight)
+	hudNameMaxW = 120.0 // max team-name width before truncation
 )
 
 // hudPanel/hudEdge mirror the menu's panel + edge so the card reads as the same UI family.
@@ -991,35 +1020,42 @@ func DrawHUD(screen *ebiten.Image, h HUDModel) {
 	c := newHUDCanvas(screen)
 	w := worldW
 
-	// Card geometry: width sized to the score plus the two team blocks, centred at the top.
+	// Card geometry: size each team block to its actual (swatch + name) content and keep both a
+	// fixed small gap from the central score, so the teams sit CLOSE to the score instead of at
+	// the card's far edges. Both sides reserve the wider block's width so the score stays
+	// perfectly centred even with unequal names.
 	score := itoa(h.LeftScore) + " - " + itoa(h.RightScore)
 	scoreW := measureUI(score, hudScoreS)
-	cardW := 2*hudSideSpan + scoreW + 2*hudCardPad + 2*hudColGap
-	if min := 360.0; cardW < min {
-		cardW = min
+	leftName := fitText(h.LeftName, hudNameMaxW, hudNameS)
+	rightName := fitText(h.RightName, hudNameMaxW, hudNameS)
+	leftBlockW := hudSwatchW + hudColGap + measureUI(leftName, hudNameS)
+	rightBlockW := hudSwatchW + hudColGap + measureUI(rightName, hudNameS)
+	sideW := leftBlockW
+	if rightBlockW > sideW {
+		sideW = rightBlockW
 	}
+	cardW := scoreW + 2*hudSideGap + 2*sideW + 2*hudCardPad
 	cardX := (w - cardW) / 2
 	cardY := hudCardTop
 	cx := w / 2
 
-	// Panel fill + edge (the menu look).
+	// Panel fill + edge -- 2px stroke to match the menu panels.
 	c.fillRect(cardX, cardY, cardW, hudCardH, hudPanel)
-	c.strokeRect(cardX, cardY, cardW, hudCardH, 1.5, hudEdge)
+	c.strokeRect(cardX, cardY, cardW, hudCardH, 2, hudEdge)
 
 	scoreMidY := cardY + hudCardH*0.38 // score sits in the upper portion; clock/phase below
 	c.textSized(score, cx, scoreMidY, hudScoreS, AlignCenter, hudText)
 
-	// Left team block: swatch then name, growing inward from the card's left padding.
-	lx := cardX + hudCardPad
+	// Left block [swatch][name], hugging the score's left side.
+	leftEnd := cx - scoreW/2 - hudSideGap
+	lx := leftEnd - leftBlockW
 	drawTeamSwatch(c, lx, scoreMidY, hudSwatchW, h.LeftColor)
-	c.textSized(fitText(h.LeftName, hudSideSpan-hudSwatchW-hudColGap, hudNameS),
-		lx+hudSwatchW+hudColGap, scoreMidY, hudNameS, AlignLeft, hudText)
+	c.textSized(leftName, lx+hudSwatchW+hudColGap, scoreMidY, hudNameS, AlignLeft, hudText)
 
-	// Right team block: name then swatch, mirrored against the card's right padding.
-	rx := cardX + cardW - hudCardPad
-	drawTeamSwatch(c, rx-hudSwatchW, scoreMidY, hudSwatchW, h.RightColor)
-	c.textSized(fitText(h.RightName, hudSideSpan-hudSwatchW-hudColGap, hudNameS),
-		rx-hudSwatchW-hudColGap, scoreMidY, hudNameS, AlignRight, hudText)
+	// Right block [name][swatch], mirrored, hugging the score's right side.
+	rStart := cx + scoreW/2 + hudSideGap
+	c.textSized(rightName, rStart, scoreMidY, hudNameS, AlignLeft, hudText)
+	drawTeamSwatch(c, rStart+measureUI(rightName, hudNameS)+hudColGap, scoreMidY, hudSwatchW, h.RightColor)
 
 	// Clock + phase below the score, compact and centred.
 	subY := cardY + hudCardH*0.76
@@ -1054,7 +1090,7 @@ func drawShootoutRow(c canvas, h HUDModel, cardX, rowY, cardW float64) {
 	const rowH = 20.0
 	cx := cardX + cardW/2
 	c.fillRect(cardX, rowY, cardW, rowH, hudPanel)
-	c.strokeRect(cardX, rowY, cardW, rowH, 1.5, hudEdge)
+	c.strokeRect(cardX, rowY, cardW, rowH, 2, hudEdge)
 	c.textSized("PENALTIES", cx, rowY+rowH/2, 11, AlignCenter, hudDim)
 
 	dotR := 4.0

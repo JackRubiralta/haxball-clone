@@ -15,7 +15,7 @@ import (
 func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 	in := a.abortCharge(p, sim.Intent{})
 	reach := p.me.Radius() + p.ballRadius
-	ip := interceptPoint(p.me.Position(), p.me.Stats().MaxSpeed, p.me.Stats().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+	ip := interceptPoint(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 
 	// Receiving an incoming pass (a loose, moving ball our side is collecting uncontested):
 	// don't charge the fast ball head-on at the first point we can touch it -- run ONTO its
@@ -84,8 +84,8 @@ func (a *AI) receivingPass(p perception) bool {
 func (a *AI) receivePoint(p perception) geom.Vec {
 	reach := p.me.Radius() + p.ballRadius
 	from := p.me.Position()
-	maxSpeed := p.me.Stats().MaxSpeed
-	turnRate := p.me.Stats().TurnRate
+	maxSpeed := p.me.Tuning().MaxSpeed
+	turnRate := p.me.Tuning().TurnRate
 	heading := p.me.Heading()
 	penalize := a.tune.turnPenaltyGain > 0 && turnRate > 0 && geom.Norm(heading) > 1e-9
 
@@ -120,9 +120,11 @@ func (a *AI) receivePoint(p perception) geom.Vec {
 // so slowing to trap would lose the race.
 func (a *AI) contested(p perception) bool {
 	reach := p.me.Radius() + p.ballRadius
-	mine := interceptTime(p.me.Position(), p.me.Stats().MaxSpeed, p.me.Stats().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+	mine := interceptTime(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 	for _, o := range p.opponents {
-		ot := interceptTime(o.Position(), o.Stats().MaxSpeed, o.Stats().TurnRate, o.Heading(), o.Radius()+p.ballRadius, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+		// An opponent's speed/turn-rate are hidden (not rendered), so assume the nominal
+		// values; its committed steering heading is hidden too, so use its VISIBLE facing.
+		ot := interceptTime(o.Position(), a.tune.assumedOppSpeed, a.tune.assumedOppTurn, o.Facing(), o.Radius()+p.ballRadius, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 		if ot <= mine+a.tune.contestMargin {
 			return true
 		}
@@ -145,7 +147,7 @@ func (a *AI) shouldPrechargeClear(p perception) bool {
 		return false // uncontested in our third: control it and play out, don't hoof it away
 	}
 	reach := p.me.Radius() + p.ballRadius
-	eta := interceptTime(p.me.Position(), p.me.Stats().MaxSpeed, p.me.Stats().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+	eta := interceptTime(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 	return eta <= a.tune.prechargeETA
 }
 
@@ -256,7 +258,7 @@ func (a *AI) receiveSpot(p perception, fwdBias float64) geom.Vec {
 // markSpot stands goal-side of the most dangerous unattended attacker (the one nearest our
 // goal), cutting the line between that attacker and our goal.
 func (a *AI) markSpot(p perception) geom.Vec {
-	var mark sim.PlayerView
+	var mark sim.ObservedView
 	bestThreat := -1e9
 	for _, o := range p.opponents {
 		if o.Role() == sim.RoleGoalkeeper {

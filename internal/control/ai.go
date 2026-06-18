@@ -28,19 +28,19 @@ type AI struct {
 	cached         sim.Intent // last decided intent, reused during the reaction-delay window
 	nextDecision   uint64     // tick at which we re-decide (reaction latency)
 	haveCached     bool
-	charging       bool           // a shot charge is in progress (the charge controller's state)
-	shotTarget     geom.Vec       // committed aim point while charging
-	shotDesired    float64        // committed charge fraction to reach before releasing
-	shotAlignRad   float64        // committed base alignment tolerance (tight for shots/passes, wide for clears)
-	chargeStart    uint64         // tick the current charge began, for a give-up timeout
-	chargedAt      uint64         // tick the charge first reached target (0 = not yet), for aim-relax
-	passReceiver   sim.PlayerView // receiver of an in-progress pass, so its target tracks the runner
-	kickCooldown   uint64         // tick until which the player won't kick again (forces a real touch between kicks)
-	lastDribbleDir geom.Vec       // last dribble heading, for turn-rate limiting (ball retention)
-	lastOnBall     onBallKind     // last on-ball action, for decision hysteresis
-	runUntil       uint64         // tick until which, having just passed, the player makes a give-and-go run
-	recovering     bool           // hysteretic: facing the ball to scoop it back to the front (anti-jitter)
-	recoverTrap    bool           // previous tick we were trapping to scoop the ball home mid-commit (for the cancel/release sequencing)
+	charging       bool             // a shot charge is in progress (the charge controller's state)
+	shotTarget     geom.Vec         // committed aim point while charging
+	shotDesired    float64          // committed charge fraction to reach before releasing
+	shotAlignRad   float64          // committed base alignment tolerance (tight for shots/passes, wide for clears)
+	chargeStart    uint64           // tick the current charge began, for a give-up timeout
+	chargedAt      uint64           // tick the charge first reached target (0 = not yet), for aim-relax
+	passReceiver   sim.ObservedView // receiver of an in-progress pass, so its target tracks the runner
+	kickCooldown   uint64           // tick until which the player won't kick again (forces a real touch between kicks)
+	lastDribbleDir geom.Vec         // last dribble heading, for turn-rate limiting (ball retention)
+	lastOnBall     onBallKind       // last on-ball action, for decision hysteresis
+	runUntil       uint64           // tick until which, having just passed, the player makes a give-and-go run
+	recovering     bool             // hysteretic: facing the ball to scoop it back to the front (anti-jitter)
+	recoverTrap    bool             // previous tick we were trapping to scoop the ball home mid-commit (for the cancel/release sequencing)
 }
 
 // NewAI creates an AI controller for the given player at the default skill tier.
@@ -79,6 +79,11 @@ func enforceAbilityExclusivity(in sim.Intent) sim.Intent {
 }
 
 func (a *AI) Intent(view sim.View) sim.Intent {
+	// Defensive: a nil or foreign view, or one that does not contain this controller's player,
+	// yields a neutral (idle) intent rather than panicking.
+	if view == nil {
+		return sim.Intent{}
+	}
 	me, ok := view.Me(a.ID)
 	if !ok {
 		return sim.Intent{}
@@ -166,7 +171,7 @@ func (a *AI) capAim(p perception, in sim.Intent) sim.Intent {
 // applyMoveJitter adds a little skill-scaled wander to the movement direction, so players
 // don't track perfectly straight lines. It never touches the kick/trap buttons.
 func (a *AI) applyMoveJitter(p perception, in sim.Intent) sim.Intent {
-	if a.params.moveJitter <= 0 || in.Move == (sim.Intent{}).Move {
+	if a.params.moveJitter <= 0 || in.Move == (geom.Vec{}) {
 		return in
 	}
 	j := a.params.moveJitter

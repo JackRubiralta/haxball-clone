@@ -21,6 +21,14 @@ type aiTuning struct {
 	interceptQuantum float64 // round intercept times to this, for stable presser election
 	turnPenaltyGain  float64 // turn-rate awareness: weight on the time lost rotating to face a target before useful closing (0 = ignore turn cost)
 
+	// Opponent/teammate motion estimates. A controller may NOT read another player's hidden
+	// speed/turn-rate tuning (that is not visible to a human), so it assumes these nominal
+	// values for everyone else. Defaulted to the shared field-player MaxSpeed/TurnRate, so the
+	// nominal case matches what the AI used to read directly.
+	assumedOppSpeed float64 // assumed top speed of any other player (px/s)
+	assumedOppTurn  float64 // assumed turn rate of any other player (rad/s)
+	leadGain        float64 // 0..1: how much of the assumed-speed facing lead to apply when passing to a team-mate (velocity is hidden, so this is a conservative observable estimate)
+
 	// Formation shape.
 	defenderDepth float64 // normalized depth (0=own goal,1=enemy goal) of the back line
 	forwardDepth  float64 // normalized depth of the front line
@@ -36,7 +44,6 @@ type aiTuning struct {
 	shootRange       float64 // distance to goal under which shooting is considered at all
 	tapRange         float64 // at/under this range a tap (min charge) is enough
 	fullRange        float64 // at/over this range aim for a full-power charge
-	shootGap         float64 // extra standoff behind the ball when lining up a radial shot
 	shootAlignRad    float64 // alignment tolerance (radians) the shot must reach before releasing
 	shootAlignMaxRad float64 // widest alignment tolerance (radians) once a shot has fully relaxed
 	cornerInset      float64 // base safety margin inside the goal opening the shot aims (world units)
@@ -58,6 +65,12 @@ type aiTuning struct {
 	passSpeedMin      float64 // clamp on a calibrated pass launch speed (min)
 	passSpeedMax      float64 // clamp on a calibrated pass launch speed (max)
 	passDistPenalty   float64 // small score penalty per unit of pass distance (favour simple safe balls)
+	// bestPass scoring weights (per unit of each term) for ranking pass candidates.
+	passAdvanceWeight float64 // weight on goalward advancement of the pass
+	passSpaceWeight   float64 // weight on the receiver's open space
+	passSafetyWeight  float64 // weight on the lane-safety margin
+	passOpenWeight    float64 // weight on how long the receive spot stays open
+	passRecycleCap    float64 // score ceiling for a non-forward (recycle) pass, so it never out-rates real progress
 
 	// Off-ball receiving movement.
 	supportForwardBias float64 // upfield bias of a supporting receiver's search (world units)
@@ -88,6 +101,8 @@ type aiTuning struct {
 	settlePossession    float64 // build possession to this before shooting/passing (don't kick a loose touch)
 	settleThrottle      float64 // throttle while nursing a fresh touch into control
 	actPressure         float64 // pressure above which the carrier must act now instead of settling
+	stickBonus          float64 // hysteresis bonus to repeating last tick's on-ball action, to stop flip-flopping
+	recoverThrottle     float64 // throttle scale while recovering a loose ball (trap-first, ease the chase)
 	kickCooldownTicks   uint64  // ticks after a kick during which the player dribbles, not kicks
 	shootHurryWindow    float64 // open-window (seconds) under which the shot is hurried (less charge)
 	contestMargin       float64 // intercept-time margin within which the ball is "contested" (don't trap)
@@ -96,12 +111,10 @@ type aiTuning struct {
 	turnTrapRad         float64 // dribble heading change above which the player traps and eases the turn
 	maxTurnRad          float64 // max facing change per decision with a settled ball (anti-fling)
 	minTurnRad          float64 // max facing change per decision with a loose ball (it lags more, turn gentler)
-	turnTrapSettled     float64 // ball-settledness below which the dribbler traps to keep the ball glued
 	dribbleWallAvoid    float64 // penalty weight steering a dribble heading away from carrying the ball into a wall
 
 	// Trap usage.
-	trapApproachFactor float64 // (reserved) trap to receive when ball approach speed exceeds capture*this
-	trapReceiveFactor  float64 // trap to receive once an incoming ball's closing speed exceeds capture*this
+	trapReceiveFactor float64 // trap to receive once an incoming ball's closing speed exceeds capture*this
 	trapReceiveRange   float64 // surface gap within which the receiver sets trap for a clean touch
 	stealRange         float64 // trap to steal when within this gap of an enemy fresh-touch ball
 	prechargeETA       float64 // seconds-to-ball under which the presser pre-charges a clearance
@@ -126,6 +139,9 @@ func defaultAITuning() aiTuning {
 		avoidPush:    0.8,
 
 		interceptStep:    0.05,
+		assumedOppSpeed:  140, // = shared DefaultPlayerTuning MaxSpeed (was read directly before)
+		assumedOppTurn:   14,  // = shared DefaultPlayerTuning TurnRate
+		leadGain:         0, // no lead: a mate's velocity is hidden, so aim at where it IS (set >0 to lead along its visible facing)
 		interceptHorizon: 2.5,
 		interceptQuantum: 0.05,
 		turnPenaltyGain:  0.40,
@@ -143,7 +159,6 @@ func defaultAITuning() aiTuning {
 		shootRange:       360,
 		tapRange:         120,
 		fullRange:        260,
-		shootGap:         3,
 		shootAlignRad:    0.06981317007977318, // 4deg: tighter lineup so corner shots fly true
 		shootAlignMaxRad: 0.10471975511965977, // 6deg: still relaxes to fire if the lineup drags
 		cornerInset:      4,
@@ -164,6 +179,11 @@ func defaultAITuning() aiTuning {
 		passSpeedMin:      150, // even the shortest pass arrives gently (was 185, above the new capture floor)
 		passSpeedMax:      430,
 		passDistPenalty:   0.0004,
+		passAdvanceWeight: 0.009,
+		passSpaceWeight:   0.006,
+		passSafetyWeight:  0.5,
+		passOpenWeight:    0.4,
+		passRecycleCap:    1.12,
 
 		supportForwardBias:    40,
 		supportRangeFrac:      0.3,
@@ -188,6 +208,8 @@ func defaultAITuning() aiTuning {
 		settlePossession:    0.45,
 		settleThrottle:      0.72,
 		actPressure:         0.55,
+		stickBonus:          0.15,
+		recoverThrottle:     0.6,
 		kickCooldownTicks:   22,
 		shootHurryWindow:    0.45,
 		contestMargin:       0.1,
@@ -196,11 +218,9 @@ func defaultAITuning() aiTuning {
 		turnTrapRad:         0.4363323129985824,
 		maxTurnRad:          0.22689280275926285,
 		minTurnRad:          0.08726646259971647,
-		turnTrapSettled:     0.5,
 		dribbleWallAvoid:    3.0,
 
-		trapApproachFactor: 0.7,
-		trapReceiveFactor:  0.4,
+		trapReceiveFactor: 0.4,
 		trapReceiveRange:   44,
 		stealRange:         10,
 		prechargeETA:       0.33,
@@ -271,4 +291,18 @@ func SkillFromString(s string) (Skill, bool) {
 	default:
 		return DefaultSkill, false
 	}
+}
+
+// ValidSkill reports whether s names a known difficulty tier (any accepted alias, or the
+// empty/"default" string). It is the single source of truth for difficulty validation -- the
+// cmd layer calls it instead of config keeping its own hand-copied copy of the name set
+// (config cannot import control without an import cycle).
+func ValidSkill(s string) bool {
+	_, ok := SkillFromString(s)
+	return ok
+}
+
+// SkillNames returns the canonical tier names for help text and validation messages.
+func SkillNames() []string {
+	return []string{"easy", "normal", "hard", "impossible"}
 }

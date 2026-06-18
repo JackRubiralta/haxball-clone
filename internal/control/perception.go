@@ -1,6 +1,8 @@
 package control
 
 import (
+	"math"
+
 	"phootball/internal/geom"
 	"phootball/internal/sim"
 )
@@ -11,7 +13,7 @@ import (
 // team coordination deterministic).
 type perception struct {
 	view sim.View
-	me   sim.PlayerView
+	me   sim.SelfView
 	dt   float64
 
 	ball    geom.Vec
@@ -25,15 +27,15 @@ type perception struct {
 	iControl  bool    // ball is within my touch range
 	myCharge  float64 // my current shoot charge in seconds
 
-	carrier      sim.PlayerView // who is in firm possession (nil if loose)
+	carrier      sim.ObservedView // who is in firm possession (nil if loose)
 	carrierMine  bool
 	carrierEnemy bool
 	ballLoose    bool
 
-	teammates []sim.PlayerView // my team, excluding me
-	opponents []sim.PlayerView // the other team
+	teammates []sim.ObservedView // my team, excluding me
+	opponents []sim.ObservedView // the other team
 
-	nearestOppToMe  sim.PlayerView
+	nearestOppToMe  sim.ObservedView
 	nearestOppDist  float64
 	pressureOnMe    float64 // 0..~1: how hard the nearest opponent is bearing down on me
 	pressureOnCarry float64 // pressure on whoever holds the ball
@@ -44,7 +46,7 @@ type perception struct {
 }
 
 // perceive builds the per-tick perception for player me from the match view.
-func perceive(view sim.View, me sim.PlayerView, dt float64) perception {
+func perceive(view sim.View, me sim.SelfView, dt float64) perception {
 	ball := view.Ball()
 	p := perception{
 		view:       view,
@@ -54,7 +56,8 @@ func perceive(view sim.View, me sim.PlayerView, dt float64) perception {
 		ballVel:    ball.Velocity(),
 		ballRadius: ball.Radius(),
 		friction:   view.BallFriction(),
-		seed:       uint64(view.Seed()) * 0x9e3779b97f4a7c15,
+		// Per-(match, self) salt: deterministic variety run-to-run without seeing the raw seed.
+		seed: uint64(view.NoiseSalt(me.ID())),
 	}
 
 	p.enemyGoal = view.AttackingGoalCenter(me)
@@ -66,7 +69,7 @@ func perceive(view sim.View, me sim.PlayerView, dt float64) perception {
 	}
 
 	p.gapToBall = geom.Dist(me.Position(), p.ball) - me.Radius() - p.ballRadius
-	p.iControl = p.gapToBall < me.Stats().TouchRange
+	p.iControl = p.gapToBall < me.Tuning().TouchRange
 	p.myCharge = me.ShootCharge()
 
 	if c, ok := view.Carrier(); ok {
@@ -100,13 +103,14 @@ func perceive(view sim.View, me sim.PlayerView, dt float64) perception {
 	return p
 }
 
-// nearest returns the closest player in list to point, and the distance to it.
-func nearest(point geom.Vec, list []sim.PlayerView) (sim.PlayerView, float64) {
-	var best sim.PlayerView
-	bestD := 0.0
+// nearest returns the closest player in list to point, and the distance to it. An empty list
+// yields (nil, +Inf) -- "no one, infinitely far" -- so a caller comparing distances treats an
+// absent player as never the nearest (rather than the old 0.0, which read as "right here").
+func nearest(point geom.Vec, list []sim.ObservedView) (sim.ObservedView, float64) {
+	var best sim.ObservedView
+	bestD := math.Inf(1)
 	for _, q := range list {
-		d := geom.Dist(point, q.Position())
-		if best == nil || d < bestD {
+		if d := geom.Dist(point, q.Position()); best == nil || d < bestD {
 			best, bestD = q, d
 		}
 	}
@@ -116,7 +120,7 @@ func nearest(point geom.Vec, list []sim.PlayerView) (sim.PlayerView, float64) {
 // pressure scores how threatened a point is by the given players: it rises as the nearest
 // one closes in (1 at contact, ~0 beyond a couple of player-lengths). It is a smooth
 // proxy the AI uses to decide when to shield, clear, or release the ball quickly.
-func pressure(point geom.Vec, threats []sim.PlayerView) float64 {
+func pressure(point geom.Vec, threats []sim.ObservedView) float64 {
 	q, d := nearest(point, threats)
 	if q == nil {
 		return 0
@@ -145,10 +149,12 @@ func (a *AI) openDuration(p perception, at geom.Vec) float64 {
 	best := a.tune.interceptHorizon * 3 // effectively "a long time"
 	for _, o := range p.opponents {
 		gap := geom.Dist(o.Position(), at) - o.Radius() - p.me.Radius()
-		// Bias by the opponent's current closing speed so a defender already sprinting in
-		// shortens the window more than a stationary one.
-		speed := o.Stats().MaxSpeed
-		if closing := geom.Dot(o.Velocity(), geom.Unit(at.Sub(o.Position()))); closing > speed*0.5 {
+		// The opponent's top speed and velocity are hidden state, so assume the nominal speed
+		// and estimate "is it closing" from its VISIBLE facing: a defender facing toward the
+		// point shuts the window faster than one facing away (the same bias as before, but from
+		// observable facing rather than an unreadable velocity).
+		speed := a.tune.assumedOppSpeed
+		if closing := geom.Dot(geom.Unit(o.Facing()).Scale(speed), geom.Unit(at.Sub(o.Position()))); closing > speed*0.5 {
 			speed = closing
 		}
 		t := (gap - a.tune.pressureRadius) / speed

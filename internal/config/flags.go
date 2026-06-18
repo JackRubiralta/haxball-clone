@@ -174,7 +174,7 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 		s.Enforcement = EnforceClamp
 	case "evict":
 		s.Enforcement = EnforceWarnEvict
-		s.EvictGrace = 0.5
+		s.EvictGrace = DefaultEvictGrace
 	default:
 		return usagef("unknown zone-enforce %q (want clamp or evict)", rf.zoneEnforce)
 	}
@@ -195,17 +195,6 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 		s.GoalAreaMax = rf.gkBoxMax // deprecated -gk-box-max alias
 	}
 	return nil
-}
-
-// validDifficulty reports whether s names a known AI difficulty tier (matching
-// control.SkillFromString). Empty means "use the default tier".
-func validDifficulty(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", "default", "easy", "normal", "medium", "hard", "pro", "impossible", "perfect":
-		return true
-	default:
-		return false
-	}
 }
 
 func parseError(err error) error {
@@ -248,7 +237,7 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	solo := fs.Bool("solo", false, "single human player + ball only, no opponents (for testing)")
 	duo := fs.Bool("duo", false, "two players you switch control of with 1 and 2 (for testing)")
 	zoom := fs.Float64("zoom", 1, "camera zoom (used with -camera ball/player; mouse wheel adjusts in game)")
-	camera := fs.String("camera", "ball", "camera mode: ball (follow), player (follow you), or fit (whole pitch)")
+	camera := fs.String("camera", "ball", "camera mode: ball (alias follow), player (alias active), or fit (whole pitch)")
 	mute := fs.Bool("mute", false, "silence all sound")
 	volume := fs.Float64("volume", 0.8, "master volume 0..1")
 	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, or impossible")
@@ -281,9 +270,8 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	if *volume < 0 || *volume > 1 {
 		return GameOptions{}, usagef("volume must be between 0 and 1")
 	}
-	if !validDifficulty(*difficulty) {
-		return GameOptions{}, usagef("unknown difficulty %q (want easy, normal, hard, or impossible)", *difficulty)
-	}
+	// Difficulty is validated by the cmd layer via control.ValidSkill (the single source of
+	// truth); config cannot import control without an import cycle.
 	setup := MatchSetup{TeamSize: *teamSize, HomeSize: *homeSize, AwaySize: *awaySize, Seed: *seed}
 	if err := gf.fill(&setup); err != nil {
 		return GameOptions{}, err
@@ -364,9 +352,7 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	if strings.TrimSpace(*addr) == "" {
 		return ServerOptions{}, usagef("addr must not be empty")
 	}
-	if !validDifficulty(*difficulty) {
-		return ServerOptions{}, usagef("unknown difficulty %q (want easy, normal, hard, or impossible)", *difficulty)
-	}
+	// Difficulty is validated by the cmd layer via control.ValidSkill (see ParseGame).
 	setup := MatchSetup{TeamSize: *teamSize, HomeSize: *homeSize, AwaySize: *awaySize, Seed: *seed}
 	if err := gf.fill(&setup); err != nil {
 		return ServerOptions{}, err

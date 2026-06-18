@@ -92,20 +92,20 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			// to the side/back floor, so the ball bounces off; trapping raises it back.
 			// The team possession buff widens the cone slightly for the owning team (and
 			// narrows it for the conceding team) via the touch coefficient.
-			coneRadians := player.Stats.captureConeRadians(quality)
+			coneRadians := player.Tuning.captureConeRadians(quality, player.trapAura)
 			cone := 1.0
 			if over := angle - coneRadians; over > 0 {
-				if player.Stats.CaptureConeSoft <= 0 {
+				if player.Tuning.CaptureConeSoft <= 0 {
 					cone = 0
-				} else if cone = 1 - over/player.Stats.CaptureConeSoft; cone < 0 {
+				} else if cone = 1 - over/player.Tuning.CaptureConeSoft; cone < 0 {
 					cone = 0
 				}
 			}
 
-			side := player.Stats.CaptureSpeed.Back
-			captureSpeed := side + (player.Stats.CaptureSpeed.Eval(angle)-side)*cone
-			captureSpeed *= player.Stats.TouchQuality.captureMul(quality)
-			captureSpeed += player.Stats.TrapCaptureBonus * player.trapAura
+			side := player.Tuning.CaptureSpeed.Back
+			captureSpeed := side + (player.Tuning.CaptureSpeed.Eval(angle)-side)*cone
+			captureSpeed *= player.Tuning.TouchQuality.captureMul(quality)
+			captureSpeed += player.Tuning.TrapCaptureBonus * player.trapAura
 
 			restitution := 0.0
 			if approachSpeed > captureSpeed {
@@ -113,27 +113,28 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 				// (scaled by TrapRestitutionFactor and the trap's effective strength `trapAura`,
 				// which swells then weakens as the trap is over-held -- see entity.trapAuraShape),
 				// and the touch quality scales it too -- a clean touch deadens it, a cold one livens it.
-				trapDeaden := 1 - math.Min(1, player.trapAura*player.Stats.TrapRestitutionFactor)
-				restitution = player.Stats.Restitution.Eval(angle) * (1 + (1 - cone)) * trapDeaden
-				restitution *= player.Stats.TouchQuality.restitutionMul(quality)
+				trapDeaden := 1 - math.Min(1, player.trapAura*player.Tuning.TrapRestitutionFactor)
+				restitution = player.Tuning.Restitution.Eval(angle) * (1 + (1 - cone)) * trapDeaden
+				restitution *= player.Tuning.TouchQuality.restitutionMul(quality)
 				if restitution > 0.95 {
 					restitution = 0.95
 				}
 				bounce = approachSpeed // a hard bounce, not a soft capture
 			}
 
-			// Collision mass: in a real collision a stationary ball (mass m_b) struck by
-			// the player (mass m_p) only takes on a fraction m_p/(m_p+m_b) of the impulse,
-			// so a heavier ball is harder to launch by bumping it. That ratio is applied to
-			// the contact impulse, but ONLY off-front: inside the capture cone (cone->1) the
-			// full impulse is kept so a front touch still absorbs cleanly and sticks
-			// first-time; off-front (cone->0), where a lively bounce would otherwise FLING
-			// the ball, the mass ratio takes over (heavier ball = less fling off a back/side
-			// bump). The player is still never moved (only the ball's velocity changes).
-			massRatio := player.Stats.Mass / (player.Stats.Mass + ball.Mass())
-			impulseScale := massRatio + (1-massRatio)*cone
-			if uniformImpulseScale && restitution > 0 {
-				impulseScale = massRatio // bounce: mass-ratio damped at every angle (less bouncing, uniformly)
+			// A CAPTURE (restitution 0) removes the inbound normal velocity COMPLETELY so the ball
+			// seats first-time -- the player is grabbing it, not colliding, so mass plays no part
+			// (impulseScale 1). Only a BOUNCE applies the collision mass ratio m_p/(m_p+m_b) -- a
+			// heavier ball takes less of the impulse and so flings off players less: uniformly at
+			// every angle when uniformImpulseScale, else the original angle blend (full impulse in
+			// the front cone, mass-ratio damped off-front). The player is never moved here.
+			massRatio := player.Tuning.Mass / (player.Tuning.Mass + ball.Mass())
+			impulseScale := 1.0
+			if restitution > 0 {
+				impulseScale = massRatio
+				if !uniformImpulseScale {
+					impulseScale = massRatio + (1-massRatio)*cone
+				}
 			}
 			ball.Velocity = ball.Velocity.Sub(normal.Scale((1 + restitution) * relativeNormal * impulseScale))
 
@@ -142,7 +143,7 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			// the ball's travel (-normal), scaled by the ball/player mass ratio (heavier/faster
 			// ball = bigger shove). Dribble and soft contacts (below the threshold) never move it.
 			if excess := approachSpeed - ballPushThreshold; excess > 0 {
-				push := ballPushFactor * (1 + restitution) * (ball.Mass() / player.Stats.Mass) * excess
+				push := ballPushFactor * (1 + restitution) * (ball.Mass() / player.Tuning.Mass) * excess
 				player.Velocity = player.Velocity.Sub(normal.Scale(push))
 			}
 		}
@@ -183,21 +184,25 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	// always present -- CenterPullGripFloor is high), while stickiness is, if anything, very
 	// slightly REDUCED by possession (StickinessPossessionDebuff). Plus the trap modifiers
 	// (a held trap strengthens and lengthens the centre-pull).
-	centerPullGrip := player.Stats.centerPullGrip(player.possession)
-	stickinessGrip := player.Stats.stickinessGrip(player.possession)
-	trapPullMul := 1 + player.Stats.TrapPullBonus*player.trapAura
+	centerPullGrip := player.Tuning.centerPullGrip(player.possession)
+	stickinessGrip := player.Tuning.stickinessGrip(player.possession)
+	trapPullMul := 1 + player.Tuning.TrapPullBonus*player.trapAura
 	pullRange := player.pullRadius()
 
 	// Centre-pull: a gap-scaled spring toward the player centre, active only while the
 	// ball is near but NOT yet touching, scaled by the centre-pull grip and the trap. It
 	// draws a drifting (or an opponent's loose) ball in to make contact; once the ball is
 	// touching, the sticky hold below takes over instead.
-	if gap >= player.Stats.TouchRange && gap < pullRange {
-		strength := player.Stats.CenterPull.Eval(angle) * centerPullGrip * trapPullMul
+	if gap >= player.Tuning.TouchRange && gap < pullRange {
+		// Full centre-pull within its own cone (player-possession + trap widened, NOT team
+		// buff/debuff), then the CenterPull curve from that edge -- like control and stickiness.
+		cp := player.Tuning.CenterPull
+		ccone := player.Tuning.centerPullConeRadians(player.possession, player.trapAura)
+		strength := cp.Curve(cp.Front, cp.Back, ccone, math.Pi, angle) * centerPullGrip * trapPullMul
 		// Distance falloff: STRONGEST near the surface, dropping off steeply as the ball gets
 		// further out (the exponent exaggerates how fast it weakens), so the player only draws in
 		// a ball that is already close -- a far ball in the pull radius is barely pulled.
-		t := (gap - player.Stats.TouchRange) / (pullRange - player.Stats.TouchRange) // 0 at the surface, 1 at the far edge
+		t := (gap - player.Tuning.TouchRange) / (pullRange - player.Tuning.TouchRange) // 0 at the surface, 1 at the far edge
 		falloff := math.Pow(1-t, centerPullFalloffExp)
 		ball.Velocity = ball.Velocity.Add(normal.Scale(-strength * falloff * deltaTime))
 	}
@@ -211,7 +216,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	// is absorbed by the restitution-0 contact, and the sticky + control damping below
 	// keep it with the player, so no damping acts during the approach (no repulsion).
 	if gap < pullRange {
-		closeness := 1 - gap/player.Stats.TouchRange
+		closeness := 1 - gap/player.Tuning.TouchRange
 		if closeness < 0 {
 			closeness = 0
 		} else if closeness > 1 {
@@ -233,31 +238,36 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	}
 
 	// While the ball is ACTUALLY touching: hold it, roll it to the front, and seat it.
-	if gap < player.Stats.TouchRange {
-		// Sticky hold (radial): resist the ball separating from the player up to a
-		// capped holding impulse, scaled by the stickiness grip (near-constant, a hair
-		// lower at full possession). Below the cap the separation is cancelled (the ball
-		// clings); a push past it -- a shot or a hard bump -- frees the ball with the
-		// excess. Strongest at the front, with a small baseline hold even at the back.
-		separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal)
-		holdCap := player.Stats.Stickiness.Eval(angle) * stickinessGrip *
-			(1 + player.Stats.TrapStickinessBonus*player.trapAura) * deltaTime
+	if gap < player.Tuning.TouchRange {
+		// The control cone (full-strength half-angle, widened by the player's own possession and a
+		// little by a held trap) is SHARED by both the sticky hold and the roll-to-front control
+		// below: within the cone the ball is held AND steered at full strength, then both taper
+		// from the cone edge -- so the ball is never steered firmly to a spot it holds weakly.
+		cs := player.Tuning.Control
+		st := player.Tuning.Stickiness
+		controlCone := player.Tuning.controlConeRadians(player.possession, player.trapAura)
 
-		// RETENTION measures how well the player's FULL hold contains the ball this
-		// frame: the sticky cap above PLUS the centripetal stick's full inward pull
-		// (which scales with how fast the ball is orbiting). It is 1 whenever that hold
-		// can contain the ball, so every case the player keeps the ball -- including a
-		// very fast rotation -- behaves EXACTLY as before: the centripetal stick keeps
-		// its full strength and the settling forces run in full. Only once the ball
-		// overcomes the WHOLE hold -- genuinely flinging off faster than even the
-		// centripetal stick can arrest -- does retention ease below 1, and then it fades
-		// ONLY the settling forces (roll-to-front, sideways damping, seat), never the
-		// centripetal pull itself. So the anti-fling keeps its original strength while a
-		// ball that truly breaks away leaves carrying its orbital momentum instead of
-		// having it bled off at the surface as it goes.
+		// Sticky hold (radial): resist the ball separating from the player up to a capped holding
+		// impulse, scaled by the stickiness grip (near-constant, a hair lower at full possession).
+		// Full hold within the control cone, then the Stickiness curve from that edge (a small
+		// baseline hold even at the back). Below the cap the separation is cancelled (the ball
+		// clings); a push past it -- a shot or a hard bump -- frees the ball with the excess.
+		separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal)
+		holdCap := st.Curve(st.Front, st.Back, controlCone, math.Pi, angle) * stickinessGrip *
+			(1 + player.Tuning.TrapStickinessBonus*player.trapAura) * deltaTime
+
+		// RETENTION measures how well the player's FULL hold contains the ball this frame: the sticky
+		// cap above PLUS the centripetal stick's full inward pull (which scales with how fast the ball
+		// is orbiting). It is 1 whenever that hold can contain the ball, so every case the player keeps
+		// the ball -- including a very fast rotation -- behaves the same: the centripetal stick keeps
+		// its full strength and the settling forces run in full. Only once the ball overcomes the WHOLE
+		// hold -- genuinely flinging off faster than even the centripetal stick can arrest -- does
+		// retention ease below 1, and then it fades ONLY the settling forces (roll-to-front, sideways
+		// damping, seat), never the centripetal pull itself, so a ball that truly breaks away leaves
+		// carrying its orbital momentum instead of having it bled off at the surface as it goes.
 		orbitVel := ball.Velocity.Sub(player.Velocity)
 		orbitSpeed := geom.Norm(orbitVel.Sub(normal.Scale(geom.Dot(orbitVel, normal))))
-		bindCap := holdCap + player.Stats.OrbitStick*orbitSpeed*deltaTime
+		bindCap := holdCap + player.Tuning.OrbitStick*orbitSpeed*deltaTime
 		retention := 1.0
 		if separating > bindCap {
 			retention = bindCap / separating
@@ -277,32 +287,31 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// Trapping strengthens this, snapping the ball to the front for a clean touch.
 		// Both fade with retention, so a ball that is decisively breaking away is neither
 		// steered toward the front nor slowed -- it keeps the orbital momentum it has.
-		// Control (roll-to-front) gets the trap bonus AND a small per-player possession boost
-		// (1 + PossessionControlBonus*possession), so a settled carrier rolls the ball to its
-		// front a touch more crisply -- a player boost, independent of the team charge.
-		strength := player.Stats.Control.Eval(angle) *
-			(1 + player.Stats.TrapControlBonus*player.trapAura) *
-			(1 + player.Stats.PossessionControlBonus*player.possession)
+		// Control (roll-to-front): FULL strength within the shared control cone (above), then the
+		// Control curve from that edge to the back. It still gets the trap and per-player
+		// possession MAGNITUDE boosts on top of the cone widening.
+		strength := cs.Curve(cs.Front, cs.Back, controlCone, math.Pi, angle) *
+			(1 + player.Tuning.TrapControlBonus*player.trapAura) *
+			(1 + player.Tuning.PossessionControlBonus*player.possession)
 		tangential := player.Facing.Sub(normal.Scale(cos))
 		ball.Velocity = ball.Velocity.Add(tangential.Scale(strength * deltaTime * retention))
 
 		relative := ball.Velocity.Sub(player.Velocity)
 		sideways := relative.Sub(normal.Scale(geom.Dot(relative, normal)))
-		damping := player.Stats.ControlDamping * deltaTime
+		damping := player.Tuning.ControlDamping * deltaTime
 		if damping > 1 {
 			damping = 1
 		}
 		ball.Velocity = ball.Velocity.Sub(sideways.Scale(damping * retention))
 
-		// Centripetal stick: pull the ball inward in proportion to how fast it is still
-		// orbiting the player, so a hard/fast turn curves the ball around the player
-		// instead of flinging it off the surface. FULL strength always -- this IS the
-		// anti-fling and keeps its original holding power (never scaled down). It
-		// vanishes on its own once the ball settles (orbit -> 0), so it never disturbs a
-		// resting ball.
+		// Centripetal stick: pull the ball inward in proportion to how fast it is still orbiting the
+		// player, so a hard/fast turn curves the ball around the player instead of flinging it off the
+		// surface. FULL strength always -- this IS the anti-fling and keeps its holding power (never
+		// scaled down). It vanishes on its own once the ball settles (orbit -> 0), so it never disturbs
+		// a resting ball.
 		orbit := ball.Velocity.Sub(player.Velocity)
 		orbitNow := geom.Norm(orbit.Sub(normal.Scale(geom.Dot(orbit, normal))))
-		ball.Velocity = ball.Velocity.Sub(normal.Scale(player.Stats.OrbitStick * orbitNow * deltaTime))
+		ball.Velocity = ball.Velocity.Sub(normal.Scale(player.Tuning.OrbitStick * orbitNow * deltaTime))
 
 		// Seat: gently draw the ball flush to the surface so there is no visible gap.
 		// Position-based and proportional to the gap, so it vanishes at the surface (no
@@ -310,7 +319,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// faded with retention so a ball that is leaving is not re-seated against the
 		// player.
 		if gap > 0 {
-			seat := gap * player.Stats.SeatStrength * deltaTime * retention
+			seat := gap * player.Tuning.SeatStrength * deltaTime * retention
 			if seat > gap {
 				seat = gap
 			}
@@ -333,11 +342,11 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 func updatePossession(ball *Ball, player *Player, deltaTime float64, build, drain bool) {
 	switch {
 	case build:
-		player.possession += deltaTime / player.Stats.PossessionBuildSeconds
+		player.possession += deltaTime / player.Tuning.PossessionBuildSeconds
 	case drain:
-		player.possession -= player.Stats.PossessionStealRate * deltaTime
+		player.possession -= player.Tuning.PossessionStealRate * deltaTime
 	default:
-		player.possession -= deltaTime / player.Stats.PossessionReleaseSeconds
+		player.possession -= deltaTime / player.Tuning.PossessionReleaseSeconds
 	}
 	if player.possession > 1 {
 		player.possession = 1
@@ -350,19 +359,19 @@ func updatePossession(ball *Ball, player *Player, deltaTime float64, build, drai
 	toBall := ball.Position.Sub(player.Position)
 	if dist := geom.Norm(toBall); dist > 0 {
 		gap := dist - player.Radius() - ball.Radius()
-		if gap < player.Stats.TouchRange {
+		if gap < player.Tuning.TouchRange {
 			angle := ballAngle(toBall.Scale(1/dist), player.Facing)
-			inArc = angle <= player.Stats.PossessionArcRadians
+			inArc = angle <= player.Tuning.PossessionArcRadians
 		}
 	}
 
 	if inArc {
-		player.control += deltaTime / player.Stats.PossessionBuildSeconds
+		player.control += deltaTime / player.Tuning.PossessionBuildSeconds
 		if player.control > 1 {
 			player.control = 1
 		}
 	} else {
-		player.control -= deltaTime / player.Stats.PossessionReleaseSeconds
+		player.control -= deltaTime / player.Tuning.PossessionReleaseSeconds
 		if player.control < 0 {
 			player.control = 0
 		}
@@ -380,7 +389,7 @@ func shoot(player *Player, ball *Ball) bool {
 	toBall := ball.Position.Sub(player.Position)
 	distance := geom.Norm(toBall)
 	gap := distance - player.Radius() - ball.Radius()
-	if gap >= player.Stats.TouchRange {
+	if gap >= player.Tuning.TouchRange {
 		return false
 	}
 
@@ -397,14 +406,14 @@ func shoot(player *Player, ball *Ball) bool {
 	}
 
 	charge := NormShootCharge(player.shootCharge)
-	factor := player.Stats.MinShootFactor + (1-player.Stats.MinShootFactor)*charge
+	factor := player.Tuning.MinShootFactor + (1-player.Tuning.MinShootFactor)*charge
 	// Power is full at dead front and degrades across the front hemisphere, much faster toward
 	// the +-90deg edges (frontShotFalloff). The LAUNCH DIRECTION is the radial nudged toward the
 	// facing by the aim assist (which also degrades toward the edges), so a centred shot goes
 	// where the player aims and an edge-of-hemisphere shot is weak and barely assisted.
-	power := player.Stats.Shoot.Eval(0) * factor * frontShotFalloff(angle)
+	power := player.Tuning.Shoot.Eval(0) * factor * frontShotFalloff(angle)
 	if distance > 0 {
-		dir = player.Stats.ShootDirection(dir, player.Facing)
+		dir = player.Tuning.ShootDirection(dir, player.Facing)
 	}
 
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
@@ -426,14 +435,14 @@ func push(player *Player, ball *Ball) bool {
 	toBall := ball.Position.Sub(player.Position)
 	distance := geom.Norm(toBall)
 	gap := distance - player.Radius() - ball.Radius()
-	if gap >= player.Stats.PullRange { // works anywhere in the pull radius, not just touching
+	if gap >= player.Tuning.PullRange { // works anywhere in the pull radius, not just touching
 		return false
 	}
 	dir := player.Facing
 	if distance > 0 {
 		dir = toBall.Scale(1 / distance) // pure radial (player centre -> ball), no aim assist
 	}
-	power := player.Stats.Shoot.Eval(0) * pushPowerFactor // a 70%-power jab, the same in every direction
+	power := player.Tuning.Shoot.Eval(0) * pushPowerFactor // a 70%-power jab, the same in every direction
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
 	player.control = 0

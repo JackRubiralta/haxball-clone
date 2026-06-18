@@ -90,7 +90,7 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 	dribbleScore += noise(a.ID, p.view.Tick(), 3^p.seed) * jitter
 
 	// Hysteresis: a small bonus to repeating last tick's action stops flip-flopping.
-	const stick = 0.15
+	stick := a.tune.stickBonus
 	best, bestScore := actDribble, dribbleScore
 	consider := func(k onBallKind, s float64) {
 		if k == a.lastOnBall {
@@ -215,7 +215,7 @@ func (a *AI) bestCorner(p perception) (geom.Vec, float64) {
 
 // laneClearance returns the smallest distance from any player to the segment from->to,
 // minus that player's radius -- how much room the ball has to travel the lane untouched.
-func laneClearance(from, to geom.Vec, players []sim.PlayerView, ballRadius float64) float64 {
+func laneClearance(from, to geom.Vec, players []sim.ObservedView, ballRadius float64) float64 {
 	worst := 1e9
 	for _, q := range players {
 		d := segPointDist(q.Position(), from, to) - q.Radius() - ballRadius
@@ -231,17 +231,17 @@ func laneClearance(from, to geom.Vec, players []sim.PlayerView, ballRadius float
 // progress play (forward) unless we are under pressure and need an outlet. Returns the best
 // target, its receiver, and a score on the same scale as dribble (1.0), or a negative score
 // if no worthwhile pass exists -- so the carrier keeps the ball rather than spraying it.
-func (a *AI) bestPass(p perception) (geom.Vec, sim.PlayerView, float64) {
+func (a *AI) bestPass(p perception) (geom.Vec, sim.ObservedView, float64) {
 	pressured := p.pressureOnMe > a.tune.actPressure
 	trapped := a.trapped(p)
 	best := -1.0
 	var bestTarget geom.Vec
-	var bestRecv sim.PlayerView
+	var bestRecv sim.ObservedView
 
 	// consider scores one candidate target on the dribble (1.0) scale. A pass must be safe
 	// (lane clear with margin) and to an open man; progressive balls out-rate keeping it,
 	// while a square/back recycle only beats losing the ball (used when trapped).
-	consider := func(mate sim.PlayerView, target geom.Vec, kindBonus float64) {
+	consider := func(mate sim.ObservedView, target geom.Vec, kindBonus float64) {
 		dist := geom.Dist(p.ball, target)
 		// Judge interception against the ACTUAL pace this pass would be played at (which is
 		// itself paced up to beat the lane), so the safety check and the delivery agree.
@@ -254,7 +254,7 @@ func (a *AI) bestPass(p perception) (geom.Vec, sim.PlayerView, float64) {
 		// path, but over a long pass opponents converge on the DESTINATION during the flight, so
 		// we race them to the target too -- this is what stops passes being cut out on a big map.
 		ballT := a.passFlightTime(p, target)
-		recvT := timeToPoint(mate, target, p.ballRadius)
+		recvT := timeToPoint(mate, target, p.ballRadius, a.tune.assumedOppSpeed)
 		if recvT > ballT+a.tune.passReachMargin {
 			return // ball would arrive well before the receiver -> it runs to no one
 		}
@@ -263,7 +263,7 @@ func (a *AI) bestPass(p perception) (geom.Vec, sim.PlayerView, float64) {
 			controlT = recvT
 		}
 		for _, o := range p.opponents {
-			if timeToPoint(o, target, p.ballRadius) < controlT+a.tune.passContestMargin {
+			if timeToPoint(o, target, p.ballRadius, a.tune.assumedOppSpeed) < controlT+a.tune.passContestMargin {
 				return // an opponent reaches the target first/together -> contested, don't gift it
 			}
 		}
@@ -282,11 +282,11 @@ func (a *AI) bestPass(p perception) (geom.Vec, sim.PlayerView, float64) {
 		// the ball by pass is faster and safer than carrying it, so the team actually plays
 		// football instead of one player dribbling forever.
 		openDur := clampFloat(a.openDuration(p, target), 0, 1.5)
-		score := 1.0 + kindBonus + advance*0.009 + space*0.006 + safety*0.5 + openDur*0.4 - dist*a.tune.passDistPenalty
+		score := 1.0 + kindBonus + advance*a.tune.passAdvanceWeight + space*a.tune.passSpaceWeight + safety*a.tune.passSafetyWeight + openDur*a.tune.passOpenWeight - dist*a.tune.passDistPenalty
 		if forward {
 			score += a.tune.passForwardBonus
 		} else {
-			score = clampFloat(score, 0, 1.12) // a recycle never out-rates real progress
+			score = clampFloat(score, 0, a.tune.passRecycleCap) // a recycle never out-rates real progress
 		}
 		if score > best {
 			best, bestTarget, bestRecv = score, target, mate
@@ -338,30 +338,37 @@ func (a *AI) passFlightTime(p perception, target geom.Vec) float64 {
 // leadPoint returns where to aim a pass so it meets a moving mate: its current position
 // plus its velocity over the ball's FLIGHT TIME (not a fixed gain), so a long pass to a
 // runner is led the right amount instead of arriving behind them.
-func (a *AI) leadPoint(p perception, mate sim.PlayerView) geom.Vec {
-	t := a.passFlightTime(p, mate.Position()) // estimate flight from the mate's spot now
-	return mate.Position().Add(mate.Velocity().Scale(t))
+func (a *AI) leadPoint(p perception, mate sim.ObservedView) geom.Vec {
+	// The mate's velocity is hidden state (not rendered), so a controller cannot lead a precise
+	// pass off an exact velocity the way the old omniscient code did. It leads modestly along
+	// the mate's VISIBLE facing -- a human passes ahead of a team-mate by watching which way it
+	// is running -- scaled by leadGain so a near-stationary or mis-facing mate is not over-led.
+	t := a.passFlightTime(p, mate.Position())
+	return mate.Position().Add(geom.Unit(mate.Facing()).Scale(a.tune.assumedOppSpeed * a.tune.leadGain * t))
 }
 
 // timeToPoint estimates how long a player takes to reach a point at top speed (its body
 // reaching within a ball's touch of it). Used to check a pass is actually collectable.
-func timeToPoint(q sim.PlayerView, point geom.Vec, ballRadius float64) float64 {
+// timeToPoint estimates how long a player takes to reach a point at the given top speed (its
+// body reaching within a ball's touch of it). The speed is supplied by the caller (the assumed
+// nominal speed) because another player's actual MaxSpeed is hidden state.
+func timeToPoint(q sim.ObservedView, point geom.Vec, ballRadius, speed float64) float64 {
 	d := geom.Dist(q.Position(), point) - q.Radius() - ballRadius
 	if d < 0 {
 		return 0
 	}
-	return d / q.Stats().MaxSpeed
+	return d / speed
 }
 
 // passChargeFor maps the pass launch speed to a shoot charge via the shoot curve, so the
 // pass is played with exactly enough power -- no more.
 func (a *AI) passChargeFor(p perception, target geom.Vec) float64 {
-	front := p.me.Stats().Shoot.Eval(0)
+	front := p.me.Tuning().Shoot.Eval(0)
 	if front <= 0 {
 		return 0.3
 	}
 	factor := a.passSpeedFor(p, target) / front
-	charge := (factor - p.me.Stats().MinShootFactor) / (1 - p.me.Stats().MinShootFactor)
+	charge := (factor - p.me.Tuning().MinShootFactor) / (1 - p.me.Tuning().MinShootFactor)
 	return clampFloat(charge, 0, 1)
 }
 
@@ -382,7 +389,12 @@ func (a *AI) bestDribble(p perception) (geom.Vec, float64) {
 	if geom.Dist(p.me.Position(), p.enemyGoal) < a.tune.shootRange*1.5 {
 		w *= 0.25
 	}
-	away := geom.Unit(p.me.Position().Sub(p.nearestOppToMe.Position()))
+	// Peel away from the nearest marker; with no opponents (nil) there is no pressure (w==0),
+	// so the away term drops out and the dribble drives straight at goal.
+	var away geom.Vec
+	if p.nearestOppToMe != nil {
+		away = geom.Unit(p.me.Position().Sub(p.nearestOppToMe.Position()))
+	}
 	prefer := geom.Unit(toGoal.Scale(1 - w).Add(away.Scale(w)))
 	if prefer == (geom.Vec{}) {
 		prefer = toGoal
@@ -449,9 +461,12 @@ func (a *AI) shieldScore(p perception, passScore float64) float64 {
 // trap to firm up control, and edges away from the pressure.
 func (a *AI) shield(p perception, in sim.Intent) sim.Intent {
 	in = a.abortCharge(p, in)
-	away := geom.Unit(p.me.Position().Sub(p.nearestOppToMe.Position()))
+	var away geom.Vec
+	if p.nearestOppToMe != nil {
+		away = geom.Unit(p.me.Position().Sub(p.nearestOppToMe.Position()))
+	}
 	if away == (geom.Vec{}) {
-		away = geom.NewVec(p.attackX, 0)
+		away = geom.NewVec(p.attackX, 0) // no marker (or coincident): just edge up-field
 	}
 	target := p.me.Position().Add(away.Scale(60))
 	mv, th := a.steer(p, confineSlot(p, target), false)
@@ -514,7 +529,7 @@ func (a *AI) dribble(p perception, in sim.Intent, target geom.Vec) sim.Intent {
 // possession build-up and how flush the ball sits to the surface. A settled ball can be
 // turned more sharply without flinging it; a loose one must be coaxed gently.
 func (a *AI) ballSettled(p perception) float64 {
-	gapFactor := 1 - clampFloat(p.gapToBall/p.me.Stats().PullRange, 0, 1)
+	gapFactor := 1 - clampFloat(p.gapToBall/p.me.Tuning().PullRange, 0, 1)
 	return clampFloat(0.5*p.me.Possession()+0.5*gapFactor, 0, 1)
 }
 

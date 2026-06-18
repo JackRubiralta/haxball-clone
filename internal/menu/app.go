@@ -50,6 +50,12 @@ type App struct {
 	camera *render.Camera
 	audio  *audio.Manager
 
+	// The transforms last drawn this frame, used to invert the cursor in the next update
+	// pass without any render-package global: worldViewport for in-match aim (camera
+	// pan/zoom), uiViewport for menu hit-testing.
+	worldViewport render.Viewport
+	uiViewport    render.Viewport
+
 	practice bool
 	human    bool
 	quit     bool
@@ -128,15 +134,15 @@ func (a *App) Update() error {
 	case StatePlaying:
 		a.updatePlaying()
 	case StateMenu:
-		a.screenMenu(updateFrame())
+		a.screenMenu(a.updateFrame())
 	case StateMatchSetup:
-		a.screenMatchSetup(updateFrame())
+		a.screenMatchSetup(a.updateFrame())
 	case StateSettings:
-		a.screenSettings(updateFrame())
+		a.screenSettings(a.updateFrame())
 	case StatePaused:
-		a.screenPaused(updateFrame())
+		a.screenPaused(a.updateFrame())
 	case StateResult:
-		a.screenResult(updateFrame())
+		a.screenResult(a.updateFrame())
 	}
 	if a.quit {
 		return ebiten.Termination
@@ -161,9 +167,17 @@ func (a *App) updatePlaying() {
 		if inpututil.IsKeyJustPressed(ebiten.KeyDigit2) {
 			a.activeID = 1
 		}
+		a.duoHuman.SetViewport(a.worldViewport)
 		a.match.Step(map[int]sim.Intent{a.activeID: a.duoHuman.Intent(a.match.View())}, dt)
 		a.afterStep()
 		return
+	}
+	// Tell each human controller which frame transform to invert the cursor with (the
+	// camera viewport from the last draw), so aim is correct at any pan/zoom.
+	for _, c := range a.controllers {
+		if h, ok := c.(*input.Human); ok {
+			h.SetViewport(a.worldViewport)
+		}
 	}
 	inputs := make(map[int]sim.Intent, len(a.controllers))
 	for id, c := range a.controllers {
@@ -177,19 +191,19 @@ func (a *App) updatePlaying() {
 func (a *App) Draw(screen *ebiten.Image) {
 	switch a.state {
 	case StatePlaying:
-		render.Frame(screen, a.match, a.camera, dt)
+		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
 	case StatePaused:
-		render.Frame(screen, a.match, a.camera, dt)
-		a.screenPaused(drawFrame(screen))
+		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
+		a.screenPaused(a.drawFrame(screen))
 	case StateResult:
-		render.Frame(screen, a.match, a.camera, dt)
-		a.screenResult(drawFrame(screen))
+		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
+		a.screenResult(a.drawFrame(screen))
 	case StateMenu:
-		a.screenMenu(drawFrame(screen))
+		a.screenMenu(a.drawFrame(screen))
 	case StateMatchSetup:
-		a.screenMatchSetup(drawFrame(screen))
+		a.screenMatchSetup(a.drawFrame(screen))
 	case StateSettings:
-		a.screenSettings(drawFrame(screen))
+		a.screenSettings(a.drawFrame(screen))
 	}
 }
 
@@ -203,22 +217,6 @@ func (a *App) DebugRenderScreen(dst *ebiten.Image, state AppState, tab int, m *s
 	}
 	a.state = state
 	a.Draw(dst)
-}
-
-// DebugScrollSetup pre-sets a Match Setup tab's scroll offset (screenshot tooling only).
-func (a *App) DebugScrollSetup(tab int, offset float64) { a.setupScroll[tab].offset = offset }
-
-// DebugSetRules forces draw-resolution settings (screenshot tooling only) so the rules summary
-// can be captured for a given combo.
-func (a *App) DebugSetRules(winByTime, extraTime, golden, goldenCapped, penalties bool, extraMin float64) {
-	a.settings.WinByTime = winByTime
-	a.settings.ExtraTime = extraTime
-	a.settings.GoldenGoal = golden
-	a.settings.GoldenGoalCapped = goldenCapped
-	a.settings.Penalties = penalties
-	a.settings.ExtraMinutes = extraMin
-	a.settings.PenaltyBestOf = 5
-	a.settings.ClampDependents()
 }
 
 func (a *App) startMatch(practice, human bool) {
@@ -359,12 +357,12 @@ func (a *App) setupTeams(f frame, col *colLayout) {
 			tc.Human = sel == 0
 			s.ClampDependents()
 		}
-		if d, i := f.rowStepper("Size", strconv.Itoa(tc.Size), c.x, c.row(), c.w); d || i {
+		if d, i := f.rowStepper("Size", strconv.Itoa(tc.Size), c.x, c.row(), c.w, float64(tc.Size), 1, 7); d || i {
 			tc.Size = clampInt(tc.Size+dir(i), 1, 7)
 			s.ClampDependents()
 		}
 		if tc.Human {
-			if d, i := f.rowStepper("Human slot", strconv.Itoa(tc.HumanSlot), c.x, c.row(), c.w); d || i {
+			if d, i := f.rowStepper("Human slot", strconv.Itoa(tc.HumanSlot), c.x, c.row(), c.w, float64(tc.HumanSlot), 1, float64(tc.Size)); d || i {
 				tc.HumanSlot = clampInt(tc.HumanSlot+dir(i), 1, tc.Size)
 				s.ClampDependents()
 			}
@@ -405,31 +403,37 @@ func (a *App) setupPitch(f frame, col *colLayout) {
 	by := col.row()
 	bw := (col.w - 2*theme.PanelPad) / 3
 	bh := theme.RowH - 10
+	selected := s.SelectedPreset() // "" unless the current dims exactly match a preset
 	for i, name := range fieldPresets {
-		if f.button(labels[i], col.x+float64(i)*(bw+theme.PanelPad), by, bw, bh) {
+		if f.selectButton(labels[i], name == selected, col.x+float64(i)*(bw+theme.PanelPad), by, bw, bh) {
 			s.ApplyPreset(name)
 		}
 	}
 
-	if d, i := f.rowStepper("Pitch length", dimLabel(s.PlayWidth), col.x, col.row(), col.w); d || i {
-		s.PlayWidth = stepDim(s.PlayWidth, dir(i), 40, 400, 2400)
+	// Dimensions show the effective value (resolving an inherited preset to a concrete number --
+	// never "auto"); editing one makes it an explicit override clamped to [min, max].
+	pw, ph := s.effectivePitch()
+	if d, i := f.rowStepper("Pitch length", strconv.Itoa(int(pw)), col.x, col.row(), col.w, pw, 400, 2400); d || i {
+		s.PlayWidth = clampF(pw+float64(dir(i))*40, 400, 2400)
 		s.ClampDependents()
 	}
-	if d, i := f.rowStepper("Pitch width", dimLabel(s.PlayHeight), col.x, col.row(), col.w); d || i {
-		s.PlayHeight = stepDim(s.PlayHeight, dir(i), 40, 240, 1600)
+	if d, i := f.rowStepper("Pitch width", strconv.Itoa(int(ph)), col.x, col.row(), col.w, ph, 240, 1600); d || i {
+		s.PlayHeight = clampF(ph+float64(dir(i))*40, 240, 1600)
 		s.ClampDependents()
 	}
-	if d, i := f.rowStepper("Goal width", strconv.Itoa(int(s.GoalWidth)), col.x, col.row(), col.w); d || i {
+	if d, i := f.rowStepper("Goal width", strconv.Itoa(int(s.GoalWidth)), col.x, col.row(), col.w, s.GoalWidth, 40, 240); d || i {
 		s.GoalWidth = clampF(s.GoalWidth+float64(dir(i))*10, 40, 240)
 		s.ClampDependents()
 	}
-	if d, i := f.rowStepper("Goal depth", dimLabel(s.GoalDepth), col.x, col.row(), col.w); d || i {
-		s.GoalDepth = stepDim(s.GoalDepth, dir(i), 5, 10, 80)
+	gd := s.effectiveGoalDepth()
+	if d, i := f.rowStepper("Goal depth", strconv.Itoa(int(gd)), col.x, col.row(), col.w, gd, 10, 80); d || i {
+		s.GoalDepth = clampF(gd+float64(dir(i))*5, 10, 80)
 		s.ClampDependents()
 	}
-	if f.draw {
-		f.ui.TextS("\"auto\" = derive from the base; quick-fill makes every value explicit.",
-			col.x, col.row()+theme.RowH/2, theme.Small, theme.TextDim)
+	// Centre circle, shown and bounded by its DIAMETER (max = half the pitch length). The ball
+	// kicks off in here; players start outside it (the conceding side gets a taker inside).
+	if d, i := f.rowStepper("Centre circle Ø", strconv.Itoa(int(2*s.effectiveCircle())), col.x, col.row(), col.w, s.effectiveCircle(), s.circleMin(), s.circleMax()); d || i {
+		s.stepCircle(dir(i))
 	}
 }
 
@@ -443,18 +447,18 @@ func (a *App) setupBoxes(f frame, col *colLayout) {
 		s.ClampDependents()
 	}
 	if s.PenaltyArea {
-		if d, i := f.rowStepper("Width", strconv.Itoa(int(s.PenaltyWidth)), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Width", strconv.Itoa(int(s.PenaltyWidth)), col.x, col.row(), col.w, s.PenaltyWidth, 40, 800); d || i {
 			s.PenaltyWidth = clampF(s.PenaltyWidth+float64(dir(i))*20, 40, 800)
 			s.ClampDependents()
 		}
-		if d, i := f.rowStepper("Depth", strconv.Itoa(int(s.PenaltyDepth)), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Depth", strconv.Itoa(int(s.PenaltyDepth)), col.x, col.row(), col.w, s.PenaltyDepth, 20, 600); d || i {
 			s.PenaltyDepth = clampF(s.PenaltyDepth+float64(dir(i))*10, 20, 600)
 			s.ClampDependents()
 		}
-		if d, i := f.rowStepper("Max defenders", capLabel(s.PenaltyBoxMax), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Max defenders", capLabel(s.PenaltyBoxMax), col.x, col.row(), col.w, float64(s.PenaltyBoxMax), 0, 11); d || i {
 			s.PenaltyBoxMax = clampInt(s.PenaltyBoxMax+dir(i), 0, 11)
 		}
-		if d, i := f.rowStepper("Max attackers", capLabel(s.PenaltyBoxMaxOpp), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Max attackers", capLabel(s.PenaltyBoxMaxOpp), col.x, col.row(), col.w, float64(s.PenaltyBoxMaxOpp), 0, 11); d || i {
 			s.PenaltyBoxMaxOpp = clampInt(s.PenaltyBoxMaxOpp+dir(i), 0, 11)
 		}
 	} else {
@@ -468,11 +472,11 @@ func (a *App) setupBoxes(f frame, col *colLayout) {
 		s.ClampDependents()
 	}
 	if s.GoalArea {
-		if d, i := f.rowStepper("Width", strconv.Itoa(int(s.GoalAreaWidth)), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Width", strconv.Itoa(int(s.GoalAreaWidth)), col.x, col.row(), col.w, s.GoalAreaWidth, 40, 700); d || i {
 			s.GoalAreaWidth = clampF(s.GoalAreaWidth+float64(dir(i))*20, 40, 700)
 			s.ClampDependents()
 		}
-		if d, i := f.rowStepper("Depth", strconv.Itoa(int(s.GoalAreaDepth)), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Depth", strconv.Itoa(int(s.GoalAreaDepth)), col.x, col.row(), col.w, s.GoalAreaDepth, 20, 500); d || i {
 			s.GoalAreaDepth = clampF(s.GoalAreaDepth+float64(dir(i))*10, 20, 500)
 			s.ClampDependents()
 		}
@@ -482,10 +486,10 @@ func (a *App) setupBoxes(f frame, col *colLayout) {
 		if s.GoalAreaKeeperOnly {
 			f.disabledRow("Max defenders / attackers: keeper-only", col.x, col.row(), col.w)
 		} else {
-			if d, i := f.rowStepper("Max defenders", capLabel(s.GoalAreaMax), col.x, col.row(), col.w); d || i {
+			if d, i := f.rowStepper("Max defenders", capLabel(s.GoalAreaMax), col.x, col.row(), col.w, float64(s.GoalAreaMax), 0, 11); d || i {
 				s.GoalAreaMax = clampInt(s.GoalAreaMax+dir(i), 0, 11)
 			}
-			if d, i := f.rowStepper("Max attackers", capLabel(s.GoalAreaMaxOpp), col.x, col.row(), col.w); d || i {
+			if d, i := f.rowStepper("Max attackers", capLabel(s.GoalAreaMaxOpp), col.x, col.row(), col.w, float64(s.GoalAreaMaxOpp), 0, 11); d || i {
 				s.GoalAreaMaxOpp = clampInt(s.GoalAreaMaxOpp+dir(i), 0, 11)
 			}
 		}
@@ -504,7 +508,7 @@ func (a *App) setupRules(f frame, col *colLayout) {
 		s.WinByGoals = !s.WinByGoals
 	}
 	if s.WinByGoals {
-		if d, i := f.rowStepper("Goals to win", strconv.Itoa(s.WinScore), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Goals to win", strconv.Itoa(s.WinScore), col.x, col.row(), col.w, float64(s.WinScore), 1, 20); d || i {
 			s.WinScore = clampInt(s.WinScore+dir(i), 1, 20)
 		}
 	}
@@ -512,7 +516,7 @@ func (a *App) setupRules(f frame, col *colLayout) {
 		s.WinByTime = !s.WinByTime
 	}
 	if s.WinByTime {
-		if d, i := f.rowStepper("Minutes", strconv.Itoa(int(s.Minutes)), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Minutes", strconv.Itoa(int(s.Minutes)), col.x, col.row(), col.w, s.Minutes, 1, 30); d || i {
 			s.Minutes = clampF(s.Minutes+float64(dir(i)), 1, 30)
 		}
 	}
@@ -535,12 +539,12 @@ func (a *App) setupRules(f frame, col *colLayout) {
 				s.GoldenGoalCapped = !s.GoldenGoalCapped
 			}
 			if s.GoldenGoalCapped {
-				if d, i := f.rowStepper("Minutes", strconv.Itoa(int(s.ExtraMinutes)), col.x, col.row(), col.w); d || i {
+				if d, i := f.rowStepper("Minutes", strconv.Itoa(int(s.ExtraMinutes)), col.x, col.row(), col.w, s.ExtraMinutes, 1, 30); d || i {
 					s.ExtraMinutes = clampF(s.ExtraMinutes+float64(dir(i)), 1, 30)
 				}
 			}
 		} else {
-			if d, i := f.rowStepper("Extra minutes", strconv.Itoa(int(s.ExtraMinutes)), col.x, col.row(), col.w); d || i {
+			if d, i := f.rowStepper("Extra minutes", strconv.Itoa(int(s.ExtraMinutes)), col.x, col.row(), col.w, s.ExtraMinutes, 1, 30); d || i {
 				s.ExtraMinutes = clampF(s.ExtraMinutes+float64(dir(i)), 1, 30)
 			}
 		}
@@ -554,7 +558,7 @@ func (a *App) setupRules(f frame, col *colLayout) {
 		if s.ExtraTime {
 			hint = "(after extra time)"
 		}
-		if d, i := f.rowStepper("Penalty kicks "+hint, penBestLabel(s.PenaltyBestOf), col.x, col.row(), col.w); d || i {
+		if d, i := f.rowStepper("Penalty kicks "+hint, penBestLabel(s.PenaltyBestOf), col.x, col.row(), col.w, float64(s.PenaltyBestOf), 1, 11); d || i {
 			s.PenaltyBestOf = clampInt(s.PenaltyBestOf+dir(i), 1, 11)
 		}
 	}
@@ -636,17 +640,17 @@ func (a *App) screenSettings(f frame) {
 	col := newCol(paneX, top, paneW-12)
 
 	cf.sectionHeader("CAMERA", col.x, col.header(1), col.w)
-	if d, i := cf.rowStepper("Mode", p.CameraMode, col.x, col.row(), col.w); d || i {
+	if d, i := cf.rowStepper("Mode", p.CameraMode, col.x, col.row(), col.w, 0, 0, 0); d || i {
 		p.CameraMode = cycle(cameraPresets, p.CameraMode, dir(i))
 		a.applyPrefs()
 	}
-	if d, i := cf.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 2, 64)+"x", col.x, col.row(), col.w); d || i {
+	if d, i := cf.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 2, 64)+"x", col.x, col.row(), col.w, p.Zoom, 1, 4); d || i {
 		p.Zoom = clampF(p.Zoom+float64(dir(i))*0.25, 1, 4)
 		a.applyPrefs()
 	}
 	col.gapRow(0.3)
 	cf.sectionHeader("AUDIO", col.x, col.header(1), col.w)
-	if d, i := cf.rowStepper("Volume", strconv.Itoa(int(p.Volume*100+0.5))+"%", col.x, col.row(), col.w); d || i {
+	if d, i := cf.rowStepper("Volume", strconv.Itoa(int(p.Volume*100+0.5))+"%", col.x, col.row(), col.w, p.Volume, 0, 1); d || i {
 		p.Volume = clampF(p.Volume+float64(dir(i))*0.1, 0, 1)
 		a.applyPrefs()
 	}
@@ -908,33 +912,6 @@ func capLabel(n int) string {
 		return "off"
 	}
 	return strconv.Itoa(n)
-}
-
-// dimLabel shows an optional dimension override (0 reads as "auto" = inherit the preset).
-func dimLabel(v float64) string {
-	if v <= 0 {
-		return "auto"
-	}
-	return strconv.Itoa(int(v))
-}
-
-// stepDim steps an optional dimension override. Stepping up from "auto" (0) starts at
-// base; stepping down past min snaps back to "auto" (inherit the preset).
-func stepDim(v float64, d int, step, base, hi float64) float64 {
-	if v <= 0 {
-		if d > 0 {
-			return base
-		}
-		return 0
-	}
-	v += float64(d) * step
-	if v < base {
-		return 0
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 // penBestLabel shows the shootout length (0 reads as the default of 5).

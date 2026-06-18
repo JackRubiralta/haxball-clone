@@ -463,8 +463,7 @@ the ball to gain), which keeps it from feeling like a magnetic, take-it-by-stand
 ### World physics (`config.Tuning`) + collision restitution
 
 - **BallRadius** `7.5`, **BallFriction** `-0.3` (light drag → the ball rolls far),
-  **BallMass** `1.5` — the ball:player mass ratio (`1.5 : 20`) drives the contact: it damps the
-  bounce off a player and sets how hard a heavy hit shoves the player back (see Contact).
+  **BallMass** `1.5` — the ball:player mass ratio (`1.5 : 20`) drives the contact: 
 - **BallWallRestitution** `0.90` — ball stays lively off walls/frame.
 - **PlayerWallRestitution** `0.50` — players damped harder off walls.
 - **ObstacleRestitution** `0.5` — bounce off cones. **NetRestitution** `0.2` — net catches

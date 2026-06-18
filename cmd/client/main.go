@@ -12,13 +12,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 
 	"phootball/internal/audio"
+	"phootball/internal/cliutil"
 	"phootball/internal/config"
 	"phootball/internal/geom"
 	"phootball/internal/input"
@@ -38,6 +37,7 @@ type Game struct {
 	field         *sim.Field      // cached; rebuilt only when the geometry changes
 	geo           config.Geometry // geometry the cached field was built from
 	lastSoundTick uint64          // last tick whose sounds were played (dedupe)
+	viewport      render.Viewport // last frame's transform, for cursor->world aim
 }
 
 func (g *Game) Update() error {
@@ -46,6 +46,7 @@ func (g *Game) Update() error {
 		return ebiten.Termination
 	default:
 	}
+	g.human.SetViewport(g.viewport)
 	if err := g.client.Send(g.human.Intent(nil)); err != nil {
 		return err
 	}
@@ -70,7 +71,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.geo = snap.Geometry
 	}
 
-	render.Field(screen, g.field, snap.LeftColor, snap.RightColor)
+	g.viewport = render.Field(screen, g.field, snap.LeftColor, snap.RightColor)
 	var ballPos geom.Vec
 	for _, e := range snap.Entities {
 		if e.Kind == netcode.KindBall {
@@ -110,21 +111,9 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := cliutil.SignalContext()
 	defer stop()
-	os.Exit(code(run(ctx, os.Args[0], os.Args[1:], os.Stderr)))
-}
-
-func code(err error) int {
-	switch {
-	case err == nil || errors.Is(err, config.ErrHelp):
-		return 0
-	case errors.Is(err, config.ErrUsage):
-		return 2
-	default:
-		fmt.Fprintln(os.Stderr, "phootball-client:", err)
-		return 1
-	}
+	os.Exit(cliutil.Code(run(ctx, os.Args[0], os.Args[1:], os.Stderr), "phootball-client", os.Stderr))
 }
 
 func run(ctx context.Context, name string, args []string, stderr io.Writer) error {

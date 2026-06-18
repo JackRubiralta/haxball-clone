@@ -49,7 +49,7 @@ func TestBoostDrainOnlyDrainsContactedPlayer(t *testing.T) {
 		m.advanceTeamPossession(dt)
 	}
 
-	full := a2.Stats.TouchQuality.OwnTeamMax * m.teamPossessionStrength(SideLeft)
+	full := a2.Tuning.TouchQuality.OwnTeamMax * m.teamPossessionStrength(SideLeft)
 	if !(a1.touchCoef < full*0.25) {
 		t.Errorf("the contacted boosted player should have its boost drained: a1=%.3f (full=%.3f)", a1.touchCoef, full)
 	}

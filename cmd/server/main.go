@@ -6,13 +6,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"syscall"
 
+	"phootball/internal/cliutil"
 	"phootball/internal/config"
 	"phootball/internal/control"
 	"phootball/internal/logging"
@@ -21,22 +19,9 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := cliutil.SignalContext()
 	defer stop()
-	os.Exit(code(run(ctx, os.Args[0], os.Args[1:], os.Stderr)))
-}
-
-// code maps a run error to a process exit code: 0 success/help, 2 usage, 1 otherwise.
-func code(err error) int {
-	switch {
-	case err == nil || errors.Is(err, config.ErrHelp):
-		return 0
-	case errors.Is(err, config.ErrUsage):
-		return 2
-	default:
-		fmt.Fprintln(os.Stderr, "phootball-server:", err)
-		return 1
-	}
+	os.Exit(cliutil.Code(run(ctx, os.Args[0], os.Args[1:], os.Stderr), "phootball-server", os.Stderr))
 }
 
 func run(ctx context.Context, name string, args []string, stderr io.Writer) error {
@@ -47,6 +32,9 @@ func run(ctx context.Context, name string, args []string, stderr io.Writer) erro
 	if opts.Version {
 		fmt.Fprintln(stderr, config.Version)
 		return nil
+	}
+	if err := cliutil.CheckDifficulty(opts.Difficulty); err != nil {
+		return err
 	}
 
 	logger, err := logging.New(stderr, opts.Logging.Level, opts.Logging.Format)

@@ -38,7 +38,7 @@ func assignRoles(p perception, tune aiTuning) teamPlan {
 
 // electPresser returns the PlayerID of the best and second-best chaser among players,
 // by quantised intercept cost with a PlayerID tie-break.
-func electPresser(p perception, players []sim.PlayerView, tune aiTuning) (best, second int) {
+func electPresser(p perception, players []sim.ObservedView, tune aiTuning) (best, second int) {
 	best, second = -1, -1
 	bestCost, secondCost := math.Inf(1), math.Inf(1)
 	hasOutfield := false
@@ -66,9 +66,11 @@ func electPresser(p perception, players []sim.PlayerView, tune aiTuning) (best, 
 // interceptCost is the quantised seconds a player needs to reach the ball; the quantum
 // gives the election a built-in hysteresis so the presser does not flicker between two
 // near-equal players from tick to tick.
-func interceptCost(p perception, q sim.PlayerView, tune aiTuning) float64 {
+func interceptCost(p perception, q sim.ObservedView, tune aiTuning) float64 {
 	reach := q.Radius() + p.ballRadius
-	t := interceptTime(q.Position(), q.Stats().MaxSpeed, q.Stats().TurnRate, q.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, tune)
+	// q is an observed player (self appears here too, only as an ObservedView): its hidden
+	// speed/turn-rate are not readable, so assume nominal; use its visible facing as heading.
+	t := interceptTime(q.Position(), tune.assumedOppSpeed, tune.assumedOppTurn, q.Facing(), reach, p.ball, p.ballVel, p.friction, p.dt, tune)
 	if tune.interceptQuantum > 0 {
 		t = math.Round(t/tune.interceptQuantum) * tune.interceptQuantum
 	}

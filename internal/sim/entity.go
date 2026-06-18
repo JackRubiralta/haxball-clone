@@ -28,7 +28,7 @@ type Player struct {
 	Number       int // jersey number shown on the player
 	Team         *Team
 	Role         Role
-	Stats        PlayerStats
+	Tuning       PlayerTuning
 	Facing       geom.Vec
 	HomePosition geom.Vec
 	WantsKick    bool
@@ -107,7 +107,7 @@ func (p *Player) PushFlashPos() geom.Vec { return p.pushFlashPos }
 // PushRange returns the surface-gap reach of the middle-click push -- the BASE PullRange, NOT the
 // trap-extended pullRadius (the push fires on any ball whose surface gap is below this; see push).
 // Exposed so the renderer can size and gate the push-pulse animation to the push's actual reach.
-func (p *Player) PushRange() float64 { return p.Stats.PullRange }
+func (p *Player) PushRange() float64 { return p.Tuning.PullRange }
 
 // Possession returns the player's current 0..1 possession build-up (ball touching anywhere).
 func (p *Player) Possession() float64 { return p.possession }
@@ -129,7 +129,7 @@ func (p *Player) TouchCoefficient() float64 { return p.touchCoef }
 // the possession contest deliberately uses the BASE PullRange instead (see Match.inPullRange),
 // so a trap extends the ball pull but NOT who builds/contests possession.
 func (p *Player) pullRadius() float64 {
-	return p.Stats.PullRange + p.Stats.TrapRangeBonus*p.trapAura
+	return p.Tuning.PullRange + p.Tuning.TrapRangeBonus*p.trapAura
 }
 
 // possessionRadius is the surface gap within which the player contests POSSESSION (the reach
@@ -138,10 +138,10 @@ func (p *Player) pullRadius() float64 {
 // player's PossessionRange, falling back to the base PullRange when PossessionRange is unset
 // (<= 0), so possession reach equals the attraction base by default yet can be tuned on its own.
 func (p *Player) possessionRadius() float64 {
-	if p.Stats.PossessionRange > 0 {
-		return p.Stats.PossessionRange
+	if p.Tuning.PossessionRange > 0 {
+		return p.Tuning.PossessionRange
 	}
-	return p.Stats.PullRange
+	return p.Tuning.PullRange
 }
 
 // NormShootCharge maps held seconds to a 0..1 charge fraction.
@@ -157,14 +157,14 @@ func NormShootCharge(seconds float64) float64 {
 }
 
 // NewPlayer creates a player from a stats preset.
-func NewPlayer(id int, position geom.Vec, stats PlayerStats, team *Team) *Player {
+func NewPlayer(id int, position geom.Vec, stats PlayerTuning, team *Team) *Player {
 	body := physics.NewCircleBody(position, stats.Radius, stats.Friction, stats.Mass)
 	body.MaxSpeed = stats.MaxSpeed
 	return &Player{
 		Body:         body,
 		PlayerID:     id,
 		Team:         team,
-		Stats:        stats,
+		Tuning:       stats,
 		Facing:       geom.NewVec(1, 0),
 		HomePosition: position,
 	}
@@ -191,12 +191,12 @@ func (p *Player) Move(direction geom.Vec, throttle, deltaTime float64) {
 	// Rate-limit how fast the movement heading can swing, so a player cannot redirect
 	// instantly -- a hard reverse curves around instead of snapping. A fresh heading (or
 	// no turn limit) snaps straight to the input.
-	if p.Stats.TurnRate <= 0 || geom.Norm(p.moveHeading) == 0 {
+	if p.Tuning.TurnRate <= 0 || geom.Norm(p.moveHeading) == 0 {
 		p.moveHeading = desired
 	} else {
-		p.moveHeading = rotateToward(p.moveHeading, desired, p.Stats.TurnRate*deltaTime)
+		p.moveHeading = rotateToward(p.moveHeading, desired, p.Tuning.TurnRate*deltaTime)
 	}
-	p.Acceleration = p.moveHeading.Scale(p.Stats.Acceleration * throttle)
+	p.Acceleration = p.moveHeading.Scale(p.Tuning.Acceleration * throttle)
 }
 
 // rotateToward rotates the unit vector from toward the unit vector to by at most maxRad
@@ -239,11 +239,11 @@ func (p *Player) faceTowardLimited(point geom.Vec, deltaTime float64) {
 		return
 	}
 	desired := direction.Scale(1 / length)
-	if p.Stats.TurnRate <= 0 || p.Facing == (geom.Vec{}) {
+	if p.Tuning.TurnRate <= 0 || p.Facing == (geom.Vec{}) {
 		p.Facing = desired
 		return
 	}
-	p.Facing = rotateToward(p.Facing, desired, p.Stats.TurnRate*deltaTime)
+	p.Facing = rotateToward(p.Facing, desired, p.Tuning.TurnRate*deltaTime)
 }
 
 // Obstacle is a fixed, immovable shape (such as a cone) that the ball and players

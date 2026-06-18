@@ -313,7 +313,7 @@ func (m *Match) stepPenaltyPlay(inputs map[int]Intent, dt float64) {
 	if keeper != nil {
 		keeper.Body.Update(dt)
 	}
-	if spd := m.Field.ConfineBall(m.Ball); spd > ballHitMinSpeed {
+	if spd := m.Field.ConfineBall(m.Ball, m.Tuning.BallWallRestitution); spd > ballHitMinSpeed {
 		m.emit(SoundBallHit, spd, m.Ball.Position)
 	}
 	if keeper != nil {
@@ -326,22 +326,23 @@ func (m *Match) stepPenaltyPlay(inputs map[int]Intent, dt float64) {
 	}
 	for _, g := range m.Field.Goals() {
 		for _, post := range g.Posts {
-			physics.Collide(m.Ball.Body, post, ballWallRestitution)
+			physics.Collide(m.Ball.Body, post, m.Tuning.BallWallRestitution)
 		}
 		for _, seg := range g.Net {
-			physics.Collide(m.Ball.Body, seg, netRestitution)
+			physics.Collide(m.Ball.Body, seg, m.Tuning.NetRestitution)
 		}
 	}
 	if keeper != nil {
 		if keeper.WantsKick { // the keeper may boot a rebound clear
 			if shoot(keeper, m.Ball) {
 				m.recordTouch(keeper, TouchKick)
+				m.rec.onKick(m, keeper)
 				m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
 			}
 			keeper.WantsKick = false
 			keeper.shootCharge = 0
 		}
-		m.Field.ConfinePlayer(keeper)
+		m.Field.ConfinePlayer(keeper, m.Tuning.PlayerWallRestitution)
 	}
 }
 
@@ -407,6 +408,7 @@ func (m *Match) recordKick(scored bool) {
 	if scored {
 		s.goals[i]++
 	}
+	m.rec.onPenaltyKick(m, m.PlayerByID(s.takerID), scored)
 	s.kicks = append(s.kicks, PenKick{
 		Side:    s.taker,
 		TakerID: s.takerID,

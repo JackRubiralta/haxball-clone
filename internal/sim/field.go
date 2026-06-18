@@ -221,7 +221,7 @@ func (f *Field) CheckGoal(ball *Ball) Side {
 // the goal mouth so the ball can enter the goal; the top and bottom always reflect. It
 // returns the speed of the strongest wall impact this call (0 if the ball did not hit a
 // wall), so the caller can play a ball-hit sound scaled by the impact.
-func (f *Field) ConfineBall(ball *Ball) float64 {
+func (f *Field) ConfineBall(ball *Ball, wallRestitution float64) float64 {
 	r := ball.Radius()
 	top, bot := f.goalMouthRange()
 	inMouth := ball.Position.Y > top && ball.Position.Y < bot
@@ -233,20 +233,20 @@ func (f *Field) ConfineBall(ball *Ball) float64 {
 	}
 
 	// Reflect off each wall, but only the velocity component pointing INTO it, and keep
-	// just ballWallRestitution of it (the wall absorbs the rest) so the ball comes off a
+	// just wallRestitution of it (the wall absorbs the rest) so the ball comes off a
 	// touch slower each time instead of bouncing forever.
 	if !inMouth {
 		if ball.Position.X-r < f.Min.X {
 			ball.Position.X = f.Min.X + r
 			if ball.Velocity.X < 0 {
 				hit(-ball.Velocity.X)
-				ball.Velocity.X = -ballWallRestitution * ball.Velocity.X
+				ball.Velocity.X = -wallRestitution * ball.Velocity.X
 			}
 		} else if ball.Position.X+r > f.Max.X {
 			ball.Position.X = f.Max.X - r
 			if ball.Velocity.X > 0 {
 				hit(ball.Velocity.X)
-				ball.Velocity.X = -ballWallRestitution * ball.Velocity.X
+				ball.Velocity.X = -wallRestitution * ball.Velocity.X
 			}
 		}
 	}
@@ -254,13 +254,13 @@ func (f *Field) ConfineBall(ball *Ball) float64 {
 		ball.Position.Y = f.Min.Y + r
 		if ball.Velocity.Y < 0 {
 			hit(-ball.Velocity.Y)
-			ball.Velocity.Y = -ballWallRestitution * ball.Velocity.Y
+			ball.Velocity.Y = -wallRestitution * ball.Velocity.Y
 		}
 	} else if ball.Position.Y+r > f.Max.Y {
 		ball.Position.Y = f.Max.Y - r
 		if ball.Velocity.Y > 0 {
 			hit(ball.Velocity.Y)
-			ball.Velocity.Y = -ballWallRestitution * ball.Velocity.Y
+			ball.Velocity.Y = -wallRestitution * ball.Velocity.Y
 		}
 	}
 	return impact
@@ -274,7 +274,7 @@ func (f *Field) ConfineBall(ball *Ball) float64 {
 // stays open so the player can come and go. A player BOUNCES off these surfaces, keeping
 // playerWallRestitution of the speed it carried into them (the rest is absorbed) instead
 // of dead-stopping, so hitting a wall costs real momentum.
-func (f *Field) ConfinePlayer(p *Player) {
+func (f *Field) ConfinePlayer(p *Player, wallRestitution float64) {
 	r := p.Radius()
 	top, bot := f.goalMouthRange()
 
@@ -282,31 +282,31 @@ func (f *Field) ConfinePlayer(p *Player) {
 	if p.Top() < f.Min.Y {
 		p.Position.Y = f.Min.Y + r
 		if p.Velocity.Y < 0 {
-			p.Velocity.Y = -playerWallRestitution * p.Velocity.Y
+			p.Velocity.Y = -wallRestitution * p.Velocity.Y
 		}
 	} else if p.Bottom() > f.Max.Y {
 		p.Position.Y = f.Max.Y - r
 		if p.Velocity.Y > 0 {
-			p.Velocity.Y = -playerWallRestitution * p.Velocity.Y
+			p.Velocity.Y = -wallRestitution * p.Velocity.Y
 		}
 	}
 
 	switch {
 	case p.Position.X < f.Min.X: // inside the left goal
-		f.confineToNet(p, f.Min.X-f.GoalWidth, true, top, bot, r)
+		f.confineToNet(p, f.Min.X-f.GoalWidth, true, top, bot, r, wallRestitution)
 	case p.Position.X > f.Max.X: // inside the right goal
-		f.confineToNet(p, f.Max.X+f.GoalWidth, false, top, bot, r)
+		f.confineToNet(p, f.Max.X+f.GoalWidth, false, top, bot, r, wallRestitution)
 	default: // on the pitch: side walls block except across the open goal mouth
 		if p.Position.Y <= top || p.Position.Y >= bot {
 			if p.Left() < f.Min.X {
 				p.Position.X = f.Min.X + r
 				if p.Velocity.X < 0 {
-					p.Velocity.X = -playerWallRestitution * p.Velocity.X
+					p.Velocity.X = -wallRestitution * p.Velocity.X
 				}
 			} else if p.Right() > f.Max.X {
 				p.Position.X = f.Max.X - r
 				if p.Velocity.X > 0 {
-					p.Velocity.X = -playerWallRestitution * p.Velocity.X
+					p.Velocity.X = -wallRestitution * p.Velocity.X
 				}
 			}
 		}
@@ -318,31 +318,31 @@ func (f *Field) ConfinePlayer(p *Player) {
 // toward the pitch, is left open. leftGoal selects which side the back wall sits on.
 // Because it clamps the player's EDGE (never its centre), the player rests flush on the
 // net surface and never penetrates -- so it can never overlap the net frame.
-func (f *Field) confineToNet(p *Player, backX float64, leftGoal bool, top, bot, r float64) {
+func (f *Field) confineToNet(p *Player, backX float64, leftGoal bool, top, bot, r, wallRestitution float64) {
 	if leftGoal {
 		if p.Left() < backX {
 			p.Position.X = backX + r
 			if p.Velocity.X < 0 {
-				p.Velocity.X = -playerWallRestitution * p.Velocity.X
+				p.Velocity.X = -wallRestitution * p.Velocity.X
 			}
 		}
 	} else {
 		if p.Right() > backX {
 			p.Position.X = backX - r
 			if p.Velocity.X > 0 {
-				p.Velocity.X = -playerWallRestitution * p.Velocity.X
+				p.Velocity.X = -wallRestitution * p.Velocity.X
 			}
 		}
 	}
 	if p.Top() < top {
 		p.Position.Y = top + r
 		if p.Velocity.Y < 0 {
-			p.Velocity.Y = -playerWallRestitution * p.Velocity.Y
+			p.Velocity.Y = -wallRestitution * p.Velocity.Y
 		}
 	} else if p.Bottom() > bot {
 		p.Position.Y = bot - r
 		if p.Velocity.Y > 0 {
-			p.Velocity.Y = -playerWallRestitution * p.Velocity.Y
+			p.Velocity.Y = -wallRestitution * p.Velocity.Y
 		}
 	}
 }

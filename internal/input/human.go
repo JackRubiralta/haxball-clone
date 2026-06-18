@@ -13,11 +13,19 @@ import (
 	"phootball/internal/sim"
 )
 
-// Human reads the keyboard and mouse and produces an Intent.
-type Human struct{}
+// Human reads the keyboard and mouse and produces an Intent. It holds the most recent
+// frame's Viewport (set by the App via SetViewport) so it can map the cursor into world
+// space without reading any render-package global.
+type Human struct {
+	vp render.Viewport
+}
 
 // NewHuman creates a keyboard-and-mouse controller.
 func NewHuman() *Human { return &Human{} }
+
+// SetViewport tells the controller which frame transform to invert the cursor with. The
+// App calls it each frame before gathering intents, passing the viewport it last drew.
+func (h *Human) SetViewport(vp render.Viewport) { h.vp = vp }
 
 // Intent reads WASD into a movement direction, the cursor into an aim point, and the three
 // mouse buttons into the ball abilities: held left = a charging shot (fired on release), held
@@ -78,7 +86,7 @@ func (h *Human) Intent(_ sim.View) sim.Intent {
 	return sim.Intent{
 		Move:          move,
 		Throttle:      throttle,
-		Aim:           render.ScreenToWorld(cursorX, cursorY),
+		Aim:           h.vp.ScreenToWorld(cursorX, cursorY),
 		AimFromCursor: true, // turn toward the cursor at TurnRate -- no instant snap of the disk
 		ShootHeld:     shootHeld,
 		Trap:          trapHeld,

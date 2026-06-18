@@ -30,7 +30,7 @@ func (a *AI) keeper(p perception, plan teamPlan) sim.Intent {
 	if a.keeperShouldSweep(p, plan) {
 		in := sim.Intent{}
 		reach := p.me.Radius() + p.ballRadius
-		ip := interceptPoint(p.me.Position(), p.me.Stats().MaxSpeed, p.me.Stats().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+		ip := interceptPoint(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 		mv, th := a.steer(p, ip, false)
 		in.Move, in.Throttle, in.Aim = mv, th, a.aimToward(p, p.ball)
 		if a.wantTrapReceive(p) {
@@ -126,9 +126,10 @@ func (a *AI) keeperShouldSweep(p perception, plan teamPlan) bool {
 		return false
 	}
 	reach := p.me.Radius() + p.ballRadius
-	mine := interceptTime(p.me.Position(), p.me.Stats().MaxSpeed, p.me.Stats().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+	mine := interceptTime(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 	for _, o := range p.opponents {
-		ot := interceptTime(o.Position(), o.Stats().MaxSpeed, o.Stats().TurnRate, o.Heading(), o.Radius()+p.ballRadius, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+		// Opponent speed/turn are hidden -> assume nominal; heading is hidden -> use facing.
+		ot := interceptTime(o.Position(), a.tune.assumedOppSpeed, a.tune.assumedOppTurn, o.Facing(), o.Radius()+p.ballRadius, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 		// Require the keeper to be a CLEAR favourite (beat opponents by a margin) before
 		// committing -- a marginal sweep that loses the race is a gift goal.
 		if ot <= mine+a.tune.keeperSweepMargin {
@@ -172,8 +173,8 @@ func (a *AI) keeperDistribute(p perception) sim.Intent {
 // keeper) with a clear, uncontested lane the receiver wins ahead of any opponent. Forwardness
 // is NOT required -- a square ball to an open full-back to start play beats a blind clearance.
 // Returns the target and receiver, or (zero, nil) if no safe outlet exists.
-func (a *AI) keeperOutlet(p perception) (geom.Vec, sim.PlayerView) {
-	var bestRecv sim.PlayerView
+func (a *AI) keeperOutlet(p perception) (geom.Vec, sim.ObservedView) {
+	var bestRecv sim.ObservedView
 	var bestTarget geom.Vec
 	best := -1.0
 	for _, mate := range p.teammates {
@@ -189,10 +190,10 @@ func (a *AI) keeperOutlet(p perception) (geom.Vec, sim.PlayerView) {
 			continue // receiver is marked
 		}
 		// The receiver must win the ball at the target ahead of every opponent.
-		recvT := timeToPoint(mate, target, p.ballRadius)
+		recvT := timeToPoint(mate, target, p.ballRadius, a.tune.assumedOppSpeed)
 		contested := false
 		for _, o := range p.opponents {
-			if timeToPoint(o, target, p.ballRadius) < recvT+a.tune.passContestMargin {
+			if timeToPoint(o, target, p.ballRadius, a.tune.assumedOppSpeed) < recvT+a.tune.passContestMargin {
 				contested = true
 				break
 			}

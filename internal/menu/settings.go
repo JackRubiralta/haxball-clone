@@ -121,8 +121,92 @@ func (s *Settings) ApplyPreset(name string) {
 	s.PenaltyDepth = g.PenaltyDepth
 	s.GoalAreaWidth = g.GoalAreaWidth
 	s.GoalAreaDepth = g.GoalAreaDepth
+	s.CenterCircleRadius = g.CenterCircleRadius
 	s.Field = "custom"
 	s.ClampDependents()
+}
+
+// effectivePitch returns the pitch length and width that will actually be used: the override when
+// set, else the current preset's value. Lets the lobby derive bounds (e.g. the centre-circle max)
+// without building the full geometry.
+func (s *Settings) effectivePitch() (width, height float64) {
+	g, ok := config.PresetByName(s.Field)
+	if !ok {
+		g, _ = config.PresetByName("standard")
+	}
+	width, height = g.PlayWidth, g.PlayHeight
+	if s.PlayWidth > 0 {
+		width = s.PlayWidth
+	}
+	if s.PlayHeight > 0 {
+		height = s.PlayHeight
+	}
+	return width, height
+}
+
+// effectiveGoalDepth returns the goal-pocket depth in effect: the override, or the current
+// preset's value when inheriting (0).
+func (s *Settings) effectiveGoalDepth() float64 {
+	if s.GoalDepth > 0 {
+		return s.GoalDepth
+	}
+	g, ok := config.PresetByName(s.Field)
+	if !ok {
+		g, _ = config.PresetByName("standard")
+	}
+	return g.GoalPocketDepth
+}
+
+// circleMin / circleMax are the centre-circle radius bounds for this pitch (the menu greys the
+// stepper arrows at them). Max keeps the diameter at half the pitch length and within its width.
+func (s *Settings) circleMin() float64 { return config.MinCenterCircleRadius }
+func (s *Settings) circleMax() float64 { return config.MaxCenterCircleRadius(s.effectivePitch()) }
+
+// effectiveCircle is the centre-circle radius actually in effect: the override, or the current
+// preset's value when inheriting (0), clamped to what the pitch allows.
+func (s *Settings) effectiveCircle() float64 {
+	r := s.CenterCircleRadius
+	if r <= 0 {
+		g, ok := config.PresetByName(s.Field)
+		if !ok {
+			g, _ = config.PresetByName("standard")
+		}
+		r = g.CenterCircleRadius
+	}
+	if max := s.circleMax(); r > max {
+		r = max
+	} else if r < s.circleMin() && s.circleMin() <= max {
+		r = s.circleMin()
+	}
+	return r
+}
+
+// stepCircle nudges the centre-circle radius by one step (10 px of radius = 20 of diameter) within
+// [min, max], turning an inherited "auto" into an explicit value on first use.
+func (s *Settings) stepCircle(d int) {
+	s.CenterCircleRadius = clampF(s.effectiveCircle()+float64(d)*10, s.circleMin(), s.circleMax())
+	s.ClampDependents()
+}
+
+// SelectedPreset returns the name of the quick-fill preset whose geometry the current explicit
+// dimensions EXACTLY match (so the lobby can highlight that button), or "" when the dimensions
+// are custom. It is derived, not stored: editing any value away from a preset deselects it, and
+// editing back to a preset's values re-selects it.
+func (s *Settings) SelectedPreset() string {
+	for _, name := range fieldPresets {
+		g, ok := config.PresetByName(name)
+		if !ok {
+			continue
+		}
+		if s.PlayWidth == g.PlayWidth && s.PlayHeight == g.PlayHeight &&
+			s.GoalWidth == g.GoalMouthWidth && s.GoalDepth == g.GoalPocketDepth &&
+			s.PenaltyWidth == g.PenaltyWidth && s.PenaltyDepth == g.PenaltyDepth &&
+			s.GoalAreaWidth == g.GoalAreaWidth && s.GoalAreaDepth == g.GoalAreaDepth &&
+			s.CenterCircleRadius == g.CenterCircleRadius {
+			return name
+		}
+	}
+	return ""
 }
 
 // ClampDependents enforces the relational constraints live after every edit so a
@@ -169,6 +253,17 @@ func (s *Settings) ClampDependents() {
 	// Pitch proportions only when both dimensions are overridden (0 = inherit preset).
 	if s.PlayWidth > 0 && s.PlayHeight > 0 && s.PlayWidth < s.PlayHeight {
 		s.PlayWidth = s.PlayHeight
+	}
+	// Centre circle: keep an explicit override within [min, max-for-this-pitch] (0 = inherit).
+	if s.CenterCircleRadius > 0 {
+		w, h := s.effectivePitch()
+		maxR := config.MaxCenterCircleRadius(w, h)
+		if s.CenterCircleRadius > maxR {
+			s.CenterCircleRadius = maxR
+		}
+		if s.CenterCircleRadius < config.MinCenterCircleRadius && config.MinCenterCircleRadius <= maxR {
+			s.CenterCircleRadius = config.MinCenterCircleRadius
+		}
 	}
 
 	// Win/draw fields: keep the validator's envelope. A shootout needs a positive best-of

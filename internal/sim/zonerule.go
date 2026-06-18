@@ -159,7 +159,7 @@ func (m *Match) offsidePush(p *Player, carrier *Player, possessing Side, r confi
 		}
 		vel := p.Velocity
 		if vel.X > 0 {
-			vel.X = -playerWallRestitution * vel.X
+			vel.X = -m.Tuning.PlayerWallRestitution * vel.X
 		}
 		return pendingPush{pos: geom.NewVec(lineX-margin, p.Position.Y), vel: vel}, true
 	}
@@ -169,7 +169,7 @@ func (m *Match) offsidePush(p *Player, carrier *Player, possessing Side, r confi
 	}
 	vel := p.Velocity
 	if vel.X < 0 {
-		vel.X = -playerWallRestitution * vel.X
+		vel.X = -m.Tuning.PlayerWallRestitution * vel.X
 	}
 	return pendingPush{pos: geom.NewVec(lineX+margin, p.Position.Y), vel: vel}, true
 }
@@ -372,7 +372,7 @@ func (m *Match) ballCarrier() *Player {
 		if p.possession < 0.5 {
 			continue
 		}
-		if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange {
+		if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Tuning.TouchRange {
 			return p
 		}
 	}

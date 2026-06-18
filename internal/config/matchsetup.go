@@ -16,6 +16,7 @@ type MatchSetup struct {
 	// Geometry overrides (0 = inherit the preset).
 	PlayWidth, PlayHeight float64
 	GoalWidth, GoalDepth  float64
+	CenterCircleRadius    float64 // centre-circle radius override (0 = inherit the preset)
 
 	// Boxes: existence + size overrides + per-box caps (0 = no cap). Each box caps the
 	// defending team and the opponent (attackers) separately.
@@ -143,6 +144,7 @@ func (s MatchSetup) Geometry() (Geometry, error) {
 	override(&g.PlayHeight, s.PlayHeight)
 	override(&g.GoalMouthWidth, s.GoalWidth)
 	override(&g.GoalPocketDepth, s.GoalDepth)
+	override(&g.CenterCircleRadius, s.CenterCircleRadius)
 	override(&g.PenaltyWidth, s.PenaltyWidth)
 	override(&g.PenaltyDepth, s.PenaltyDepth)
 	override(&g.GoalAreaWidth, s.GoalAreaWidth)
@@ -228,8 +230,16 @@ func (s MatchSetup) Ruleset() (Ruleset, error) {
 	}
 	r.Enforcement = s.Enforcement
 	r.EvictGrace = s.EvictGrace
+	if r.Enforcement == EnforceWarnEvict && r.EvictGrace <= 0 {
+		r.EvictGrace = DefaultEvictGrace // centralised default for the warn-evict grace
+	}
 	return r, nil
 }
+
+// DefaultEvictGrace is the warn-evict tolerance (seconds) applied when a warn-evict ruleset
+// does not specify one -- the single source for the value that used to be a bare literal in
+// the flag parser.
+const DefaultEvictGrace = 0.5
 
 // Build validates the setup and assembles a complete Config.
 func (s MatchSetup) Build() (Config, error) {

@@ -75,6 +75,12 @@ type Snapshot struct {
 
 	// Sound events emitted this tick, played once by the client.
 	Sounds []sim.SoundEvent
+
+	// Live match statistics for the in-match stats HUD, and the play-by-play events emitted
+	// THIS TICK only (a delta, not the whole log). Both are empty unless the server enabled
+	// recording. The HUD renders identical numbers locally and over the network from Stats.
+	Stats  sim.StatsSnapshot
+	Events []sim.Event
 }
 
 // ClientMsg is what a client sends the server each tick.
@@ -115,6 +121,10 @@ func SnapshotOf(m *sim.Match) Snapshot {
 	if m.InShootout() {
 		s.PenLeftGoals, s.PenRightGoals = m.ShootoutScore()
 		s.PenLeftTaken, s.PenRightTaken = m.ShootoutTaken()
+	}
+	if rec := m.Recorder(); rec != nil {
+		s.Stats = rec.StatsSnapshot()
+		s.Events = rec.DrainNewEvents() // this tick's delta only -- never resend the whole log
 	}
 	s.Entities = append(s.Entities, EntityState{
 		Kind:     KindBall,

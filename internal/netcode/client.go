@@ -15,7 +15,13 @@ type Client struct {
 	conn net.Conn
 	enc  *gob.Encoder
 
-	mu      sync.Mutex
+	// sendMu serializes the write path. Send (enc.Encode) and Close (conn.Close) both
+	// touch the shared encoder/connection, and Send may be called concurrently; without
+	// this they race. It is separate from mu so a slow send never blocks a snapshot read.
+	sendMu sync.Mutex
+	closed bool
+
+	mu      sync.Mutex // guards latest/hasSnap only
 	latest  Snapshot
 	hasSnap bool
 }
@@ -45,8 +51,15 @@ func (c *Client) readLoop() {
 	}
 }
 
-// Send transmits the local player's intent for this tick.
+// Send transmits the local player's intent for this tick. It is safe to call from
+// multiple goroutines and after Close (which returns net.ErrClosed rather than writing
+// to a closed connection).
 func (c *Client) Send(in sim.Intent) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
 	return c.enc.Encode(ClientMsg{Intent: in})
 }
 
@@ -57,5 +70,14 @@ func (c *Client) Snapshot() (Snapshot, bool) {
 	return c.latest, c.hasSnap
 }
 
-// Close ends the connection.
-func (c *Client) Close() error { return c.conn.Close() }
+// Close ends the connection. It is idempotent and serialized against Send so the two can
+// never touch the connection concurrently.
+func (c *Client) Close() error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	return c.conn.Close()
+}

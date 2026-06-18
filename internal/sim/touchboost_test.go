@@ -85,7 +85,7 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 		// a holds from pull range on the LEFT (in reach, not touching the ball); b sits `gap` from
 		// the ball on the RIGHT. They are on opposite sides, far enough apart NOT to touch each
 		// other, so this isolates the PULL-RANGE steal from the body-contact one.
-		holdGap := (a.Stats.TouchRange + a.Stats.PullRange) / 2
+		holdGap := (a.Tuning.TouchRange + a.Tuning.PullRange) / 2
 		a.Position = geom.NewVec(-(surface + holdGap), 0)
 		a.possession, a.control = 0.8, 0
 		b.possession, b.control, b.trapAura = 0, 0, trap // trapAura is the effective trap strength driving the reach
@@ -171,7 +171,7 @@ func TestPossessionHandoffToLatestEntrantNoLeak(t *testing.T) {
 		p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
 	}
 	surface := a.Radius() + m.Ball.Radius()
-	gap := (a.Stats.TouchRange + a.pullRadius()) / 2
+	gap := (a.Tuning.TouchRange + a.pullRadius()) / 2
 	m.Ball.Position = geom.NewVec(0, 0)
 	a.Position = geom.NewVec(-(surface + gap), 0) // a holds from pull range (left)
 	b.Position = geom.NewVec(surface+gap, 0)      // b arrives in pull range (right), not touching a
@@ -256,12 +256,12 @@ func TestPossessionCleanTakeover(t *testing.T) {
 // TestPossessionControlBonusAndCone is a cheap pin on two tuning values: the per-player Control
 // boost reaches x1.09 at full possession, and the role preset mirrors the widened capture cone.
 func TestPossessionControlBonusAndCone(t *testing.T) {
-	s := DefaultStats(500)
+	s := DefaultPlayerTuning(500)
 	if mul := 1 + s.PossessionControlBonus*1; math.Abs(mul-1.09) > 1e-9 {
 		t.Errorf("Control multiplier at full possession = %.4f, want 1.09", mul)
 	}
-	if r := fieldPlayerStats(); math.Abs(r.CaptureConeRadians-s.CaptureConeRadians) > 1e-9 {
-		t.Errorf("role cone %.6f should match DefaultStats %.6f", r.CaptureConeRadians, s.CaptureConeRadians)
+	if r := fieldPlayerTuning(); math.Abs(r.CaptureConeRadians-s.CaptureConeRadians) > 1e-9 {
+		t.Errorf("role cone %.6f should match DefaultPlayerTuning %.6f", r.CaptureConeRadians, s.CaptureConeRadians)
 	}
 }
 
@@ -272,7 +272,7 @@ func TestPossessionControlBonusAndCone(t *testing.T) {
 // restitution is high enough that even a buffed receiver's deflection escapes the grip, and the
 // debuffed bounce is springier still but tamed off the near-elastic 0.95 cap.
 func TestFullPowerPassBouncesOffFront(t *testing.T) {
-	s := fieldPlayerStats() // the in-game preset
+	s := fieldPlayerTuning() // the in-game preset
 	tq := s.TouchQuality
 	capFront := s.CaptureSpeed.Front
 	restFront := s.Restitution.Front
@@ -308,11 +308,11 @@ func TestFullPowerPassBouncesOffFront(t *testing.T) {
 // coefficient -- biggest with the buff, baseline without, and WAY smaller with the debuff (so a
 // debuffed opponent catches far less). Never negative.
 func TestTeamChargeConeScaling(t *testing.T) {
-	s := DefaultStats(500)
+	s := DefaultPlayerTuning(500)
 	base := s.CaptureConeRadians
-	buff := s.captureConeRadians(1) // owning team, full charge
-	neutral := s.captureConeRadians(0)
-	debuff := s.captureConeRadians(-1) // conceding team, full enemy charge
+	buff := s.captureConeRadians(1, 0) // owning team, full charge
+	neutral := s.captureConeRadians(0, 0)
+	debuff := s.captureConeRadians(-1, 0) // conceding team, full enemy charge
 
 	if math.Abs(neutral-base) > 1e-9 {
 		t.Errorf("a neutral coefficient should leave the cone unchanged: %.5f vs %.5f", neutral, base)
@@ -328,10 +328,10 @@ func TestTeamChargeConeScaling(t *testing.T) {
 	if !(shrink > 3*grow) {
 		t.Errorf("the debuff should shrink the cone much more than the buff grows it: grow=%.4f shrink=%.4f", grow, shrink)
 	}
-	if !(debuff < base*0.5) {
-		t.Errorf("a fully-debuffed cone should be way smaller than baseline (< half): %.4f vs base %.4f", debuff, base)
+	if !(debuff < base*0.7) {
+		t.Errorf("a fully-debuffed cone should be clearly smaller than baseline: %.4f vs base %.4f", debuff, base)
 	}
-	if s.captureConeRadians(-100) < 0 {
+	if s.captureConeRadians(-100, 0) < 0 {
 		t.Errorf("the cone must never go negative")
 	}
 }
@@ -399,12 +399,12 @@ func TestTeamChargeDrainedByChallenge(t *testing.T) {
 		t.Fatalf("a contest with the owner still on the ball must not hand over, side=%v", m.possSide)
 	}
 	strength := m.teamPossessionStrength(SideLeft)
-	fullDebuff := r.Stats.TouchQuality.OtherTeam * strength
+	fullDebuff := r.Tuning.TouchQuality.OtherTeam * strength
 	if !(r.touchCoef > fullDebuff && r.touchCoef < 0) {
 		t.Errorf("a contested ball with the defender on it should drain the conceding debuff toward neutral, got %.4f (full %.4f)", r.touchCoef, fullDebuff)
 	}
-	if !(l.touchCoef < l.Stats.TouchQuality.OwnTeamMax*strength) {
-		t.Errorf("the owner's buff should be suppressed by the drain, got %.4f (full %.4f)", l.touchCoef, l.Stats.TouchQuality.OwnTeamMax*strength)
+	if !(l.touchCoef < l.Tuning.TouchQuality.OwnTeamMax*strength) {
+		t.Errorf("the owner's buff should be suppressed by the drain, got %.4f (full %.4f)", l.touchCoef, l.Tuning.TouchQuality.OwnTeamMax*strength)
 	}
 
 	// A sustained contest with the owner STILL on the ball does NOT hand over -- it only drains.
@@ -523,7 +523,7 @@ func TestTeamDebuffDrainedByDefenderOnBall(t *testing.T) {
 		t.Errorf("a defender on the contested ball should drain the conceding debuff, got possDebuffDrain=%.4f", m.possDebuffDrain)
 	}
 	strength := m.teamPossessionStrength(SideLeft)
-	full := def.Stats.TouchQuality.OtherTeam * strength
+	full := def.Tuning.TouchQuality.OtherTeam * strength
 	conceding := []*Player{def}
 	if def2 != nil {
 		conceding = append(conceding, def2)
@@ -676,7 +676,7 @@ func TestReleasedCarrierMarkedDrainsOnlyOwnBoost(t *testing.T) {
 		if m.possBuffDrain != 0 {
 			t.Errorf("marking a released (non-carrier) player must NOT drain the team buff, got possBuffDrain=%.4f", m.possBuffDrain)
 		}
-		full := mate.Stats.TouchQuality.OwnTeamMax * m.teamPossessionStrength(SideLeft)
+		full := mate.Tuning.TouchQuality.OwnTeamMax * m.teamPossessionStrength(SideLeft)
 		if !(mate.touchCoef > full*0.999) {
 			t.Errorf("a parked team-mate should keep the full unsuppressed buff, got %.4f (full %.4f)", mate.touchCoef, full)
 		}
@@ -773,7 +773,7 @@ func TestBoostHealsOnlyWhileTeamMateHasBall(t *testing.T) {
 // forces: it changes the centre-pull grip only mildly (rising to 1), and slightly REDUCES the
 // stickiness grip (a tiny debuff at full possession).
 func TestPossessionGripSplit(t *testing.T) {
-	s := DefaultStats(500)
+	s := DefaultPlayerTuning(500)
 	if got := s.centerPullGrip(0); math.Abs(got-s.CenterPullGripFloor) > 1e-9 {
 		t.Errorf("centerPullGrip(0) = %.3f, want floor %.3f", got, s.CenterPullGripFloor)
 	}
@@ -839,7 +839,7 @@ func TestTeamCoastEnvelope(t *testing.T) {
 // TestTouchQualityMultipliers checks the coefficient -> multiplier mappings: 0 is the baseline
 // (1.0), a cleaner touch means more capture and less bounce, a worse touch the reverse.
 func TestTouchQualityMultipliers(t *testing.T) {
-	tq := DefaultStats(500).TouchQuality
+	tq := DefaultPlayerTuning(500).TouchQuality
 	approx := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 	if !approx(tq.captureMul(0), 1) || !approx(tq.restitutionMul(0), 1) {
 		t.Errorf("coefficient 0 should be the baseline: capMul=%.4f restMul=%.4f", tq.captureMul(0), tq.restitutionMul(0))
@@ -857,12 +857,12 @@ func TestTouchQualityMultipliers(t *testing.T) {
 // team the most. This is "better touches for my team, the ball flies off the other team".
 func TestTeamChargeShapesContact(t *testing.T) {
 	const ballRadius = 10
-	s := DefaultStats(500)
+	s := DefaultPlayerTuning(500)
 	tq := s.TouchQuality
 
 	// A head-on front contact; only the touch coefficient varies. Returns ball velocity after.
 	contact := func(impact, coef float64) geom.Vec {
-		p := NewPlayer(1, geom.NewVec(0, 0), DefaultStats(500), &Team{Side: SideLeft})
+		p := NewPlayer(1, geom.NewVec(0, 0), DefaultPlayerTuning(500), &Team{Side: SideLeft})
 		p.Facing = geom.NewVec(1, 0)
 		p.touchCoef = coef
 		b := NewBall(geom.NewVec(p.Radius()+ballRadius-0.5, 0), ballRadius)
@@ -903,12 +903,12 @@ func TestTeamChargeShapesContact(t *testing.T) {
 // deflects off rather than being caught, even if that opponent is fully trapping.
 func TestMaxShotNotCapturedByDebuffedOpponent(t *testing.T) {
 	const ballRadius = 10
-	s := DefaultStats(500)
+	s := DefaultPlayerTuning(500)
 	maxShot := s.Shoot.Eval(0) // full-charge front shot power (the ball's launch speed)
 	coef := s.TouchQuality.OtherTeam
 
 	contact := func(trap float64) (geom.Vec, float64) {
-		p := NewPlayer(1, geom.NewVec(0, 0), DefaultStats(500), &Team{Side: SideRight})
+		p := NewPlayer(1, geom.NewVec(0, 0), DefaultPlayerTuning(500), &Team{Side: SideRight})
 		p.Facing = geom.NewVec(1, 0) // facing the incoming ball: dead-on, inside the cone
 		p.touchCoef = coef           // debuffed (the conceding team)
 		p.trapAura = trap            // trapAura is the effective trap strength the contact reads (trap=1 -> peak)

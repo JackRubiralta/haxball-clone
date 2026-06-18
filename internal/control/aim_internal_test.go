@@ -101,7 +101,7 @@ func newPerception(m *sim.Match, me *sim.Player) *perception {
 
 // viewMe returns the read-only PlayerView for a concrete player, for tests that set up
 // the match with concrete types but feed perceive through the game-provided View.
-func viewMe(m *sim.Match, me *sim.Player) sim.PlayerView {
+func viewMe(m *sim.Match, me *sim.Player) sim.SelfView {
 	v, _ := m.View().Me(me.PlayerID)
 	return v
 }

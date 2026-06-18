@@ -12,7 +12,7 @@ import (
 // (a wide shot is only partly nudged), and a shot at/behind +-90deg does not fire at all
 // (the left-click shot is front-180 only). All angles are in radians.
 func TestShootAimAssist(t *testing.T) {
-	stats := DefaultStats(500)
+	stats := DefaultPlayerTuning(500)
 	touchDist := stats.Radius + 10 // ball just touching (ball radius 10), inside TouchRange
 	const tol = 0.02               // ~1deg tolerance
 
@@ -29,22 +29,18 @@ func TestShootAimAssist(t *testing.T) {
 		return math.Acos(clamp1(geom.Dot(geom.Unit(b.Velocity), p.Facing)))
 	}
 
-	// Inside the front cone (0.244 rad ~14deg): assist is 100%, so the shot fires essentially
-	// straight along the facing direction (~0 off facing).
-	if got := shotAngleOff(0.244); got > tol {
-		t.Errorf("in-cone shot not snapped to facing: launched at %.3f rad (want ~0)", got)
+	// Assist is now UNIFORM (0.97) across the whole front hemisphere -- no angular degradation --
+	// so a ball anywhere in front fires within a couple of degrees of the facing. (The launched
+	// offset isn't exactly zero because the assist is 97%, not 100%, leaving a 3% residual.)
+	for _, off := range []float64{0.244, 0.6, 1.0, 1.4} { // ~14, 34, 57, 80 deg
+		if got := shotAngleOff(off); got > 0.05 { // ~3deg: strongly assisted at every front angle
+			t.Errorf("aim assist should fire ~along the facing across the hemisphere: launched %.3f rad off at ball-offset %.3f rad", got, off)
+		}
 	}
-
-	// The assist spans the whole front hemisphere but DEGRADES toward the +-90deg edges: the
-	// residual (launched-off / radial-off; 0 = fully snapped to facing, 1 = pure radial) grows
-	// with the angle, and a wide shot is still only PARTIALLY assisted.
-	resNarrow := shotAngleOff(0.6) / 0.6 // ~34deg
-	resWide := shotAngleOff(1.4) / 1.4   // ~80deg
-	if !(resWide > resNarrow) {
-		t.Errorf("aim assist should get worse toward the edge: residual %.3f at ~80deg should exceed %.3f at ~34deg", resWide, resNarrow)
-	}
-	if !(resWide < 0.95) {
-		t.Errorf("a ~80deg shot should still be partially assisted, residual %.3f", resWide)
+	// And it does NOT get worse toward the edge: a wide shot is assisted at least as well as a
+	// narrow one (the opposite of the old cone-falloff behaviour).
+	if shotAngleOff(1.4) > shotAngleOff(0.6)+tol {
+		t.Errorf("aim assist must not degrade toward the +-90deg edge (uniform across the hemisphere)")
 	}
 
 	// A shot at the hemisphere edge (pi/2 ~90deg) does not fire -- the shot is front-180 only.

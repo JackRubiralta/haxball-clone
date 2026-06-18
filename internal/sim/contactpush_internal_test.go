@@ -15,7 +15,7 @@ func TestHardHitPushesPlayer(t *testing.T) {
 	// hit fires a ball straight at a stationary player (facing +x) at the given impact speed and
 	// returns the player's velocity after the contact.
 	hit := func(impact float64) geom.Vec {
-		p := NewPlayer(1, geom.NewVec(0, 0), DefaultStats(500), &Team{Side: SideLeft})
+		p := NewPlayer(1, geom.NewVec(0, 0), DefaultPlayerTuning(500), &Team{Side: SideLeft})
 		p.Facing = geom.NewVec(1, 0)
 		b := NewBall(geom.NewVec(p.Radius()+ballR-0.5, 0), ballR) // overlapping in front
 		b.Velocity = geom.NewVec(-impact, 0)                      // straight at the player (-x travel)
@@ -37,7 +37,7 @@ func TestHardHitPushesPlayer(t *testing.T) {
 	}
 
 	// A ball moving AWAY from the player (e.g. just shot) does not shove it.
-	p := NewPlayer(1, geom.NewVec(0, 0), DefaultStats(500), &Team{Side: SideLeft})
+	p := NewPlayer(1, geom.NewVec(0, 0), DefaultPlayerTuning(500), &Team{Side: SideLeft})
 	p.Facing = geom.NewVec(1, 0)
 	b := NewBall(geom.NewVec(p.Radius()+ballR-0.5, 0), ballR)
 	b.Velocity = geom.NewVec(600, 0) // moving +x, away from the player

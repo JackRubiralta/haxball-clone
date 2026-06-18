@@ -8,7 +8,7 @@ import "math"
 
 // AngleCurve maps an angle within [startAngle, endAngle] to a value within
 // [startValue, endValue] using some shape. Every curve shares this signature, so a
-// PlayerStats can pick which one drives each angle-dependent quantity (restitution,
+// PlayerTuning can pick which one drives each angle-dependent quantity (restitution,
 // the front pull, shot power, ...). startValue is returned at startAngle and endValue
 // at endAngle; the named curves differ only in how they move between the two.
 type AngleCurve func(startValue, endValue, startAngle, endAngle, angle float64) float64

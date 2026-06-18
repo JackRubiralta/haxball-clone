@@ -1,6 +1,8 @@
 module phootball
 
-go 1.21
+go 1.23
+
+toolchain go1.23.0
 
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.7.3

@@ -27,7 +27,7 @@ func TestPassPowerSoft(t *testing.T) {
 		}
 		// Softer than the old distance-blind power (dc = clamp(dist/fullRange,.15,.8)).
 		oldDC := clampFloat(dist/ai.tune.fullRange, 0.15, 0.8)
-		oldPower := me.Stats.Shoot.Eval(0) * (me.Stats.MinShootFactor + (1-me.Stats.MinShootFactor)*oldDC)
+		oldPower := me.Tuning.Shoot.Eval(0) * (me.Tuning.MinShootFactor + (1-me.Tuning.MinShootFactor)*oldDC)
 		if v0 >= oldPower {
 			t.Errorf("dist %.0f: calibrated pass speed %.0f not softer than old %.0f", dist, v0, oldPower)
 		}
@@ -38,7 +38,7 @@ func TestPassPowerSoft(t *testing.T) {
 // to a teammate who can't get to the target in time (a "pass to nothing"), but DOES play it
 // when the same teammate can reach it.
 func TestPassNotToNothing(t *testing.T) {
-	mk := func(mateY float64) (*AI, perception, sim.PlayerView) {
+	mk := func(mateY float64) (*AI, perception, sim.ObservedView) {
 		field := sim.NewStandardField()
 		m := sim.BuildMatchFromConfig(field, 4, config.Default())
 		me := m.Players[1]
@@ -70,9 +70,12 @@ func TestPassNotToNothing(t *testing.T) {
 	}
 }
 
-// TestPassLeadsByFlightTime checks a fast-moving receiver is led by the ball's flight time,
-// so the pass meets the runner instead of arriving where it stood.
-func TestPassLeadsByFlightTime(t *testing.T) {
+// TestLeadPointHonoursHiddenVelocity checks the AI<=human boundary in the pass target: a
+// team-mate's velocity is HIDDEN state (not rendered), so the controller cannot lead a pass
+// off it. With the default no-lead policy (leadGain 0) the pass aims at where the mate IS,
+// regardless of how fast it is actually moving -- which is also what measured best (a human
+// passes to a positioned receiver, and most receivers are settled, not sprinting).
+func TestLeadPointHonoursHiddenVelocity(t *testing.T) {
 	field := sim.NewStandardField()
 	m := sim.BuildMatchFromConfig(field, 3, config.Default())
 	me := m.Players[1]
@@ -80,17 +83,15 @@ func TestPassLeadsByFlightTime(t *testing.T) {
 	m.Ball.Position = me.Position
 	mate := m.Players[2]
 	mate.Position = geom.NewVec(520, 240)
-	mate.Velocity = geom.NewVec(0, 100) // running across at speed
+	mate.Velocity = geom.NewVec(0, 100) // fast hidden velocity -- the AI must NOT read it
 	ai := NewAISkill(me.PlayerID, SkillHard)
 	p := perceive(m.View(), viewMe(m, me), 1.0/60)
 
 	lead := ai.leadPoint(p, viewMe(m, mate))
-	flight := ai.passFlightTime(p, mate.Position)
-	wantY := mate.Position.Y + 100*flight
-	if absFloat(lead.Y-wantY) > 1 {
-		t.Errorf("lead Y %.1f != flight-time lead %.1f (flight %.2fs)", lead.Y, wantY, flight)
+	if absFloat(lead.X-mate.Position.X) > 0.01 || absFloat(lead.Y-mate.Position.Y) > 0.01 {
+		t.Errorf("lead %v should aim at the mate's current position %v (velocity is hidden)", lead, mate.Position)
 	}
-	if flight <= 0 {
+	if flight := ai.passFlightTime(p, mate.Position); flight <= 0 {
 		t.Errorf("flight time should be positive, got %.2f", flight)
 	}
 }

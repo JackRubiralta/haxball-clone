@@ -20,10 +20,10 @@ func (s CurveSpec) Eval(angle float64) float64 {
 	return s.Curve(s.Front, s.Back, 0, math.Pi, angle)
 }
 
-// PlayerStats is the full per-player tuning. A role preset is simply a PlayerStats
+// PlayerTuning is the full per-player tuning. A role preset is simply a PlayerTuning
 // value, so different players configure distinct bounce, stickiness, shot power,
 // speed, and size (a defensive keeper versus an attacking striker).
-type PlayerStats struct {
+type PlayerTuning struct {
 	// Body / motion. MaxSpeed is a SOFT cap: the player's own acceleration cannot push
 	// past it, but a knock can exceed it and friction (not a hard clamp) bleeds the
 	// excess off, so the player is never snapped down.
@@ -45,7 +45,7 @@ type PlayerStats struct {
 	// from PullRange so possession reach can be tuned independently of the attraction base, and --
 	// crucially -- it is NEVER trap-extended: a trap may pull the ball in from further, but it must
 	// not widen who owns possession (see possessionRadius). A value <= 0 means "use PullRange", so
-	// it defaults to the attraction base and any PlayerStats that omits it behaves as before.
+	// it defaults to the attraction base and any PlayerTuning that omits it behaves as before.
 	PossessionRange float64
 
 	// Angle-dependent quantities (each is a curve plus its front/back endpoints).
@@ -66,6 +66,28 @@ type PlayerStats struct {
 	// CaptureSpeed.Back floor, so side/back hits bounce off.
 	CaptureConeRadians float64
 	CaptureConeSoft    float64 // radians
+
+	// Control cone (radians): roll-to-front control is at FULL strength within ControlConeRadians
+	// of the facing direction, then follows the Control curve from that edge out to the back (so
+	// the graph is flat-max inside the cone, then a smooth decay -- continuous at the edge).
+	// UNLIKE the capture cone it is NOT scaled by the team possession buff/debuff; instead the
+	// player's OWN possession widens it (ControlConePossessionBonus at full possession).
+	ControlConeRadians         float64
+	ControlConePossessionBonus float64 // radians added at full player possession
+
+	// Trap cone bonuses: a held trap widens the CAPTURE cone (CaptureConeTrapBonus) and the
+	// CONTROL cone (ControlConeTrapBonus) by these amounts at full trap, each per unit of trap
+	// strength, so a held trap catches and steers the ball over a wider arc.
+	CaptureConeTrapBonus float64
+	ControlConeTrapBonus float64
+
+	// Centre-pull cone (radians): the inward centre-pull is at FULL strength within
+	// CenterPullConeRadians of the facing, then follows the CenterPull curve from that edge.
+	// Like the control cone it is NOT team-buff/debuff scaled; the player's own possession
+	// (CenterPullConePossessionBonus) and a held trap (CenterPullConeTrapBonus) widen it.
+	CenterPullConeRadians         float64
+	CenterPullConePossessionBonus float64
+	CenterPullConeTrapBonus       float64
 
 	// Ball seating: per-second rate a touching ball is drawn flush to the surface.
 	SeatStrength float64
@@ -118,17 +140,14 @@ type PlayerStats struct {
 	ShootSpeedFactor float64
 	ShootAccelFactor float64
 
-	// Aim assist: a shot is fired radially (player centre -> ball), but when the ball sits in
-	// the front hemisphere the direction is nudged toward where the player is FACING, so the
-	// shot goes where the player aims even if the ball isn't perfectly centred. ShootAimAssist
-	// is the max blend weight (0 = pure radial, the raw physics; 1 = fire fully along the
-	// facing direction). The assist holds at full strength within ShootAimAssistConeRadians,
-	// then degrades across the rest of the front hemisphere to zero at +-90deg (much worse near
-	// the edges -- see aimAssistWeight/frontShotFalloff). ShootAimAssistSoftRadians is no longer
-	// used (the falloff now spans the whole hemisphere). A shot can't reach behind +-90deg.
-	ShootAimAssist            float64
-	ShootAimAssistConeRadians float64
-	ShootAimAssistSoftRadians float64 // deprecated: superseded by the hemisphere falloff
+	// Aim assist: a shot is fired radially (player centre -> ball), but when the ball sits in the
+	// front hemisphere the launch direction is blended toward where the player is FACING so the
+	// shot goes where the player aims even when the ball isn't centred. ShootAimAssist is the
+	// blend weight (0 = pure radial / raw physics; 1 = fire exactly along the facing). It applies
+	// UNIFORMLY across the whole front hemisphere -- there is no angular falloff -- and a shot
+	// can't reach behind +-90deg. So at e.g. 0.97 the launch lands 97% of the way from the ball's
+	// radial toward the facing, for any ball in front.
+	ShootAimAssist float64
 
 	// Trap ("good touch"): a 0..1 trap charge (built while the trap button is held)
 	// scales these -- a stronger, longer-reach centre-pull (to trap/steal a loose
@@ -233,14 +252,14 @@ func clampUnit(v float64) float64 {
 // centerPullGrip is the centre-pull's grip at the given possession: it rises from
 // CenterPullGripFloor (possession 0) to 1 (full possession). A high floor means possession
 // changes the centre-pull only a little.
-func (s PlayerStats) centerPullGrip(possession float64) float64 {
+func (s PlayerTuning) centerPullGrip(possession float64) float64 {
 	return s.CenterPullGripFloor + (1-s.CenterPullGripFloor)*possession
 }
 
 // stickinessGrip is the stickiness grip at the given possession: 1 at a fresh touch, trimmed
 // slightly DOWN with possession by StickinessPossessionDebuff (a settled carrier is a hair
 // less sticky).
-func (s PlayerStats) stickinessGrip(possession float64) float64 {
+func (s PlayerTuning) stickinessGrip(possession float64) float64 {
 	return 1 - s.StickinessPossessionDebuff*possession
 }
 
@@ -250,15 +269,30 @@ func (s PlayerStats) stickinessGrip(possession float64) float64 {
 // ConeDebuffRadians per unit) so a debuffed opponent's cone gets way smaller and it catches
 // far less off the dead-on line. Never negative. (Dead-on, angle 0, is always inside the cone,
 // so shots/captures straight on are unchanged -- only off-axis catching shrinks.)
-func (s PlayerStats) captureConeRadians(coef float64) float64 {
+func (s PlayerTuning) captureConeRadians(coef, trapAura float64) float64 {
 	per := s.TouchQuality.ConeBonusRadians
 	if coef < 0 {
 		per = s.TouchQuality.ConeDebuffRadians
 	}
-	if r := s.CaptureConeRadians + per*coef; r > 0 {
+	if r := s.CaptureConeRadians + per*coef + s.CaptureConeTrapBonus*trapAura; r > 0 {
 		return r
 	}
 	return 0
+}
+
+// controlConeRadians is the half-angle within which roll-to-front control is at full strength.
+// It is NOT affected by the team possession buff/debuff: the player's OWN possession widens it
+// (ControlConePossessionBonus at full) and a held trap widens it a little (ControlConeTrapBonus),
+// so a settled or trapping carrier steers the ball over a wider arc. Inputs are clamped to [0,1].
+func (s PlayerTuning) controlConeRadians(possession, trapAura float64) float64 {
+	return s.ControlConeRadians + s.ControlConePossessionBonus*clampUnit(possession) + s.ControlConeTrapBonus*clampUnit(trapAura)
+}
+
+// centerPullConeRadians is the half-angle within which the centre-pull is at full strength. Like
+// the control cone it is NOT team-buff/debuff scaled; the player's own possession and a held trap
+// widen it. Inputs are clamped to [0,1].
+func (s PlayerTuning) centerPullConeRadians(possession, trapAura float64) float64 {
+	return s.CenterPullConeRadians + s.CenterPullConePossessionBonus*clampUnit(possession) + s.CenterPullConeTrapBonus*clampUnit(trapAura)
 }
 
 // shotFalloffExp shapes how a shot's power and aim assist fall off across the front 180deg
@@ -277,28 +311,23 @@ func frontShotFalloff(angle float64) float64 {
 	return 1 - math.Pow(x, shotFalloffExp)
 }
 
-// aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle` radians
-// off the facing direction: full (ShootAimAssist) within the front cone, then degrading across
-// the rest of the front hemisphere to zero at +-90deg (much worse toward the edge), and zero
-// behind. Returns 0 when the assist is disabled (ShootAimAssist <= 0).
-func (s PlayerStats) aimAssistWeight(angle float64) float64 {
+// aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle` radians off
+// the facing direction: the full ShootAimAssist anywhere in the front hemisphere (UNIFORM -- no
+// angular degradation), and 0 at or behind +-90deg (the shot is front-180 only) or when the
+// assist is disabled (ShootAimAssist <= 0).
+func (s PlayerTuning) aimAssistWeight(angle float64) float64 {
 	if s.ShootAimAssist <= 0 || angle >= math.Pi/2 {
 		return 0
 	}
-	cone := s.ShootAimAssistConeRadians
-	if angle <= cone {
-		return s.ShootAimAssist
-	}
-	x := (angle - cone) / (math.Pi/2 - cone) // 0 at the cone edge -> 1 at +-90deg
-	return s.ShootAimAssist * (1 - math.Pow(x, shotFalloffExp))
+	return s.ShootAimAssist
 }
 
-// ShootDirection returns the actual launch direction of a shot: the radial direction
-// (player centre -> ball, the raw kick direction) blended toward `facing` by the aim
-// assist when the ball sits within the front cone. Both inputs must be unit vectors. This
-// is the single source of truth for the shot direction, used by the sim to fire and by the
-// AI to predict the launch so its aim matches the physics.
-func (s PlayerStats) ShootDirection(radial, facing geom.Vec) geom.Vec {
+// ShootDirection returns the actual launch direction of a shot: the radial direction (player
+// centre -> ball, the raw kick direction) blended toward `facing` by the aim assist
+// (ShootAimAssist), uniformly for any ball in the front hemisphere. Both inputs must be unit
+// vectors. This is the single source of truth for the shot direction, used by the sim to fire and
+// by the AI to predict the launch so its aim matches the physics.
+func (s PlayerTuning) ShootDirection(radial, facing geom.Vec) geom.Vec {
 	w := s.aimAssistWeight(ballAngle(radial, facing))
 	if w <= 0 {
 		return radial
@@ -310,9 +339,9 @@ func (s PlayerStats) ShootDirection(radial, facing geom.Vec) geom.Vec {
 	return radial
 }
 
-// DefaultStats returns the baseline player tuning.
-func DefaultStats(shootForce float64) PlayerStats {
-	return PlayerStats{
+// DefaultPlayerTuning returns the baseline player tuning.
+func DefaultPlayerTuning(shootForce float64) PlayerTuning {
+	return PlayerTuning{
 		Radius:          18,
 		Mass:            20,
 		Friction:        -1.5,
@@ -323,16 +352,25 @@ func DefaultStats(shootForce float64) PlayerStats {
 		PullRange:       5,                                            // base centre-pull reach (the dribble attraction; a held trap extends this)
 		PossessionRange: 5,                                            // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionRadius)
 		Restitution:     CurveSpec{InverseQuadraticCurve, 0.23, 0.24}, // front 0.23: controlled front touch (still >0.20 so a hard pass deflects, not sticks); back 0.24: springier behind. Multipliers unchanged -> buffed ~0.19, debuffed ~0.43
-		CaptureSpeed:    CurveSpec{LinearCurve, 230, 30},              // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; capture improved via restitution+control instead
-		CenterPull:      CurveSpec{InverseQuadraticCurve, 800, 0},     // power reduced (950 -> 800)
+		CaptureSpeed:    CurveSpec{LinearCurve, 235, 30},              // baseline front 235 (nudged up a touch from 230); the team buff is multiplicative (CaptureBest), so the buffed endpoint scales with it and stays above baseline
+		CenterPull:      CurveSpec{InverseQuadraticCurve, 770, 0},     // baseline pull trimmed a touch (800 -> 770)
 		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
-		Control:         CurveSpec{LinearCurve, 1850, 340},            // roll-to-front speed raised further (1700->1850) to help capture
+		Control:         CurveSpec{LinearCurve, 1820, 340},            // baseline roll-to-front trimmed a touch (1850 -> 1820); TrapControlBonus is bumped to keep the FULL-TRAP control unchanged
 		Shoot:           CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping:  11,
 		OrbitStick:      8,
 
-		CaptureConeRadians: 0.3839724354387525, // ~22deg (widened: bigger cone)
-		CaptureConeSoft:    0.5235987755982988, // ~30deg (wider falloff)
+		CaptureConeRadians: 0.5235987755982988, // 30deg reliable-capture cone for a good touch
+		CaptureConeSoft:    0.9599310885968813, // 55deg falloff band past the reliable cone
+
+		ControlConeRadians:         0.3839724354387525,  // 22deg: full roll-to-front control within this cone (44deg total)
+		ControlConePossessionBonus: 0.08726646259971647, // +5deg at full player possession (-> 27deg)
+		CaptureConeTrapBonus:       0.05235987755982988, // +3deg to the capture cone at full trap
+		ControlConeTrapBonus:       0.03490658503988659, // +2deg to the control cone at full trap
+
+		CenterPullConeRadians:         0.08726646259971647,  // 5deg/side: full centre-pull cone (10deg total baseline)
+		CenterPullConePossessionBonus: 0.017453292519943295, // +1deg/side at full player possession
+		CenterPullConeTrapBonus:       0.03490658503988659,  // +2deg/side at full trap (-> 8deg/side, 16deg total at max)
 
 		SeatStrength: 14,
 
@@ -352,14 +390,12 @@ func DefaultStats(shootForce float64) PlayerStats {
 		ShootSpeedFactor: 0.35,
 		ShootAccelFactor: 0.4,
 
-		ShootAimAssist:            1.0,                // full snap to the facing direction inside the cone
-		ShootAimAssistConeRadians: 0.2617993877991494, // ~15deg: full assist within the front cone either way
-		ShootAimAssistSoftRadians: 0,                  // no soft band (side/back = pure radial)
+		ShootAimAssist: 0.97, // blend 97% from the ball's radial toward the facing, uniformly across the front hemisphere
 
 		TrapPullBonus:         1.0,
 		TrapRangeBonus:        6,
-		TrapControlBonus:      1.25,
-		TrapStickinessBonus:   0.5, // a held trap stiffens the sticky hold (up to +50% at full trap)
+		TrapControlBonus:      1.2870879, // bumped from 1.25 so full-trap control front = 1820*(1+1.2870879) = 4162.5 (= the old 1850*2.25): the trap's control is unchanged after the baseline drop
+		TrapStickinessBonus:   0.5,       // a held trap stiffens the sticky hold (up to +50% at full trap)
 		TrapAccelFactor:       0.55,
 		TrapSpeedFactor:       0.5,
 		TrapCaptureBonus:      60, // small capture bump; the trap now relies on deadening the bounce

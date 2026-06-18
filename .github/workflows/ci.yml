@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          check-latest: true
+
+      # Ebiten's GUI client/game need the system GL / X11 / ALSA dev headers to build on Linux.
+      - name: Install Ebiten build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test (race)
+        run: go test -race ./...
+
+      # The authoritative server must never link Ebiten -- it runs headless.
+      - name: Headless server guard
+        run: |
+          if go list -deps ./cmd/server | grep -q ebiten; then
+            echo "::error::cmd/server links ebiten -- the server must stay headless"
+            exit 1
+          fi
+          echo "ok: cmd/server is headless"
+
+      # The feel-freeze characterization: the simulation trace must be byte-identical.
+      - name: Golden replay
+        run: go test ./internal/sim -run TestGoldenReplay

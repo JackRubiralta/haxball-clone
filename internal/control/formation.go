@@ -21,7 +21,7 @@ func idealPosition(p perception, tune aiTuning) geom.Vec {
 	out := outfielders(p.view.Squad(p.me))
 	idx := indexOf(out, p.me.ID())
 	if idx < 0 {
-		idx, out = 0, []sim.PlayerView{p.me} // keeper acting as a field player (tiny teams)
+		idx, out = 0, []sim.ObservedView{p.me} // keeper acting as a field player (tiny teams)
 	}
 	slots := formationSlots(len(out), tune)
 	s := slots[idx]
@@ -160,10 +160,15 @@ func ballInOwnHalf(p perception) bool {
 	return (p.ball.X-p.view.Field().CenterSpot().X)*p.attackX < 0
 }
 
-// outfielders returns the non-keeper players from a roster, sorted by PlayerID (a stable
-// order every teammate agrees on).
-func outfielders(players []sim.PlayerView) []sim.PlayerView {
-	out := make([]sim.PlayerView, 0, len(players))
+// outfielders returns the non-keeper players from a roster, sorted by PlayerID.
+//
+// ID->slot convention: sim.buildFormation assigns PlayerIDs in a stable formation order (the
+// keeper first, then outfielders back-to-front), so sorting the non-keepers by ID gives every
+// teammate the SAME slot ordering to assign roles/zones against (see assignRoles, zones.go).
+// The order must be derivable from observable identity alone (ID/Role) -- never from hidden
+// state -- so all teammates compute identical assignments without communicating.
+func outfielders(players []sim.ObservedView) []sim.ObservedView {
+	out := make([]sim.ObservedView, 0, len(players))
 	for _, q := range players {
 		if q.Role() != sim.RoleGoalkeeper {
 			out = append(out, q)
@@ -173,7 +178,7 @@ func outfielders(players []sim.PlayerView) []sim.PlayerView {
 	return out
 }
 
-func indexOf(list []sim.PlayerView, id int) int {
+func indexOf(list []sim.ObservedView, id int) int {
 	for i, q := range list {
 		if q.ID() == id {
 			return i

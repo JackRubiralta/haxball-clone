@@ -23,7 +23,7 @@ import (
 // pull radius the push reaches. (It nearly always is when we control the ball, but the
 // fallthrough to a charged clear still needs the guard.)
 func (a *AI) canPush(p perception) bool {
-	return p.gapToBall < p.me.Stats().PullRange
+	return p.gapToBall < p.me.Tuning().PullRange
 }
 
 // pushDir is the exact direction a push would send the ball: the pure radial from the player

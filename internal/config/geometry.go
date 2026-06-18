@@ -2,9 +2,21 @@ package config
 
 import (
 	"fmt"
+	"math"
 
 	"phootball/internal/geom"
 )
+
+// MinCenterCircleRadius is the smallest the centre circle may be: large enough for a player to
+// stand inside, off the ball, with room to spare. The maximum is derived per pitch in Normalize
+// (a diameter of half the pitch length, also kept within the pitch width).
+const MinCenterCircleRadius = 50.0
+
+// MaxCenterCircleRadius returns the largest centre-circle radius that fits a pitch: a diameter of
+// half the pitch length (the user-facing cap), also constrained to fit within the pitch width.
+func MaxCenterCircleRadius(playWidth, playHeight float64) float64 {
+	return math.Min(playWidth/4, playHeight/2)
+}
 
 // Rect is an axis-aligned rectangle in world coordinates.
 type Rect struct {
@@ -143,6 +155,17 @@ func (g Geometry) Normalize() Geometry {
 	}
 	if min := g.PlayHeight + 80; g.ScreenHeight < min {
 		g.ScreenHeight = min
+	}
+	// Centre circle: clamp to fit. Cap the radius so the DIAMETER is at most half the pitch
+	// length (the user-facing max) and the circle still fits the pitch width; never below the
+	// one-player minimum, unless the pitch is too small to hold even that (then the fit wins).
+	if maxR := MaxCenterCircleRadius(g.PlayWidth, g.PlayHeight); maxR > 0 {
+		if g.CenterCircleRadius > maxR {
+			g.CenterCircleRadius = maxR
+		}
+		if g.CenterCircleRadius < MinCenterCircleRadius && MinCenterCircleRadius <= maxR {
+			g.CenterCircleRadius = MinCenterCircleRadius
+		}
 	}
 	// A box flagged on but given no size cannot exist.
 	if g.HasPenaltyArea && (g.PenaltyWidth <= 0 || g.PenaltyDepth <= 0) {

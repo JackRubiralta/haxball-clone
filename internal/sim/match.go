@@ -10,23 +10,16 @@ import (
 	"phootball/internal/physics"
 )
 
-// obstacleRestitution is how bouncy fixed cone obstacles are.
-const obstacleRestitution = 0.5
-
-// netRestitution is how much the goal net gives; low so it catches the ball rather
-// than springing it back out.
-const netRestitution = 0.2
-
-// Wall bounce restitution: the speed a body keeps when it bounces off a solid boundary
-// (the pitch walls and the goal frame/posts). Separate values for the ball and players
-// by design: the ball stays lively (keeps 90% -> absorbs ~10%) while a player is damped
-// hard (keeps 50% -> absorbs ~50%), so running into a wall costs a player real
-// momentum. Players now bounce off these surfaces rather than dead-stopping.
-const (
-	ballWallRestitution   = 0.90
-	playerWallRestitution = 0.50
-)
-
+// The collision restitutions (how bouncy obstacles, the net, and the pitch/goal walls
+// are) now live in config.Tuning and are read off m.Tuning at every collision site, so
+// the simulation has a single source of truth and the values can be tuned per match.
+// config.DefaultTuning() reproduces the original constants exactly:
+//
+//	ObstacleRestitution   0.50  // fixed cone obstacles
+//	NetRestitution        0.20  // the goal net gives, so it catches rather than springs
+//	BallWallRestitution   0.90  // the ball stays lively (absorbs ~10% per wall touch)
+//	PlayerWallRestitution 0.50  // a player is damped hard, so hitting a wall costs momentum
+//
 // Match is the complete simulation state and the unit of authoritative play. Step
 // advances it by one fixed tick and is deterministic and headless (no Ebiten, no
 // input, no wall-clock), so the server and the local client run identical physics.
@@ -91,7 +84,23 @@ type Match struct {
 	// source that orders those entries.
 	possBuilder *Player
 	pullSeq     uint64
+
+	// rec is the opt-in match recorder (nil = recording off). Every hook is nil-safe, so a
+	// match with rec == nil simulates byte-identically to one with no recorder at all. It is
+	// deliberately NOT reachable through View, so a controller can never read match stats.
+	rec *Recorder
 }
+
+// EnableRecording turns on the write-only stats/play-by-play recorder for this match. It is
+// off by default; call this once after building the match (before stepping).
+func (m *Match) EnableRecording() { m.rec = NewRecorder(m) }
+
+// Recorder returns the match recorder, or nil if recording was never enabled.
+func (m *Match) Recorder() *Recorder { return m.rec }
+
+// Stats returns a deep, stable-ordered copy of the recorded statistics, or a zero MatchStats
+// if recording is off. It never leaks the recorder's internal maps or pointers.
+func (m *Match) Stats() MatchStats { return m.rec.Snapshot() }
 
 // Celebrating reports whether a goal was just scored and the kickoff countdown is
 // running. Play is not paused during it.
@@ -103,6 +112,15 @@ func (m *Match) applyConfig(cfg config.Config) {
 	m.Tuning = cfg.Tuning
 	m.Seed = cfg.Seed
 	m.rng = newRNG(cfg.Seed)
+	// Make the physics tuning authoritative over the ball body: the ball is built with
+	// placeholder defaults, then stamped here so a custom Tuning (radius/friction/mass)
+	// actually reaches the simulation. DefaultTuning() is byte-equal to those placeholders,
+	// so the default match is unchanged.
+	if m.Ball != nil {
+		m.Ball.Friction = cfg.Tuning.BallFriction
+		m.Ball.InvMass = 1 / cfg.Tuning.BallMass
+		m.Ball.SetRadius(cfg.Tuning.BallRadius)
+	}
 }
 
 // Step advances the match by one fixed timestep, applying each player's intent.
@@ -157,6 +175,10 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 	// coefficient for this tick, so the collision resolver can read it as a per-player value.
 	m.advanceTeamPossession(deltaTime)
 
+	// 2.7 Sample per-tick possession, distance covered, and time-in-thirds for the recorder
+	// (no-op when recording is off; reads positions only, never mutates them).
+	m.rec.sample(m, deltaTime)
+
 	// 3. Resolve collisions and the ball-player dribble interaction.
 	m.resolveInteractions(deltaTime)
 
@@ -171,6 +193,7 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 			p.pushFlashPos = p.Position
 			if push(p, m.Ball) {
 				m.recordTouch(p, TouchKick)
+				m.rec.onKick(m, p)
 				m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
 			}
 			p.wantsPush = false
@@ -178,6 +201,7 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 		if p.WantsKick {
 			if shoot(p, m.Ball) {
 				m.recordTouch(p, TouchKick)
+				m.rec.onKick(m, p)
 				m.emit(SoundKick, geom.Norm(m.Ball.Velocity), m.Ball.Position)
 			}
 			p.WantsKick = false
@@ -222,12 +246,13 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	}
 
 	// Shoot charge: accumulate while held (capped); fire on the release edge. A cancel
-	// (right-click while charging) drops the charge and latches "canceled", so the eventual
-	// shoot-release does NOT fire and holding shoot after the cancel does nothing until it
-	// is released and pressed afresh. Cancel is an explicit Intent signal, NOT inferred from
-	// the trap button, so the AI's trap-while-charging recover move never self-cancels (the
-	// AI leaves CancelCharge false); the same right-click still engages a trap below, so a
-	// human who aborts a mistaken shot settles the ball in the same motion.
+	// (CancelCharge) drops the charge and latches "canceled", so the eventual shoot-release
+	// does NOT fire and holding shoot after the cancel does nothing until it is released and
+	// pressed afresh. Cancel is an explicit Intent signal, NOT inferred from the trap button,
+	// so the AI's deliberate trap-WHILE-charging recover move (CancelCharge false) keeps its
+	// shot, while a genuine takeover (a trap/push overriding the charge, or an aborted overtime
+	// charge) sets CancelCharge true on purpose -- exactly the human right-click-cancel, which
+	// also engages a trap in the same motion.
 	if in.ShootHeld {
 		if in.CancelCharge && p.shootCharge > 0 {
 			p.shootCharge = 0
@@ -282,16 +307,16 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	// Trapping and charging a shot both slow the player; charging slows it more. The trap term
 	// uses the humped trapAura (so the slowdown swells then eases as the trap is over-held, like
 	// the rest of its effect). Set unconditionally from the base so nothing drifts.
-	p.Body.SetRadius(p.Stats.Radius + p.Stats.TrapRadiusBonus*p.trapAura)
+	p.Body.SetRadius(p.Tuning.Radius + p.Tuning.TrapRadiusBonus*p.trapAura)
 	shootCharge := NormShootCharge(p.shootCharge)
-	speedMul := (1 - p.trapAura*(1-p.Stats.TrapSpeedFactor)) * (1 - shootCharge*(1-p.Stats.ShootSpeedFactor))
-	accelMul := (1 - p.trapAura*(1-p.Stats.TrapAccelFactor)) * (1 - shootCharge*(1-p.Stats.ShootAccelFactor))
+	speedMul := (1 - p.trapAura*(1-p.Tuning.TrapSpeedFactor)) * (1 - shootCharge*(1-p.Tuning.ShootSpeedFactor))
+	accelMul := (1 - p.trapAura*(1-p.Tuning.TrapAccelFactor)) * (1 - shootCharge*(1-p.Tuning.ShootAccelFactor))
 	// Possession penalty: a ball at the player's feet costs a little speed and accel.
-	if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange {
-		speedMul *= p.Stats.PossessionSpeedFactor
-		accelMul *= p.Stats.PossessionAccelFactor
+	if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Tuning.TouchRange {
+		speedMul *= p.Tuning.PossessionSpeedFactor
+		accelMul *= p.Tuning.PossessionAccelFactor
 	}
-	p.Body.MaxSpeed = p.Stats.MaxSpeed * speedMul
+	p.Body.MaxSpeed = p.Tuning.MaxSpeed * speedMul
 	p.Move(in.Move, in.Throttle*accelMul, deltaTime)
 }
 
@@ -386,7 +411,7 @@ func (m *Match) resetTeamPossession() {
 // touching reports whether the player is currently in contact with the ball (the same touch
 // test as the possession slowdown and possession build-up).
 func (m *Match) touching(p *Player) bool {
-	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange
+	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Tuning.TouchRange
 }
 
 // inPullRange reports whether the ball is within the player's POSSESSION radius -- close enough
@@ -570,12 +595,12 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 		case m.possSide == SideNone:
 			p.touchCoef = 0
 		case boosted:
-			p.touchCoef = p.Stats.TouchQuality.OwnTeamMax * strength
+			p.touchCoef = p.Tuning.TouchQuality.OwnTeamMax * strength
 		default:
 			// Conceding team: the raw debuff, lifted team-wide by possDebuffDrain (relief while this
 			// team has the ball -- scaled toward neutral 0, never into a buff). The buff-drains above
 			// never touch this branch, and this relief never touches the owner's buff.
-			p.touchCoef = p.Stats.TouchQuality.OtherTeam * strength * (1 - m.possDebuffDrain)
+			p.touchCoef = p.Tuning.TouchQuality.OtherTeam * strength * (1 - m.possDebuffDrain)
 		}
 
 		// Per-player boost drain (Rule 1, off-ball case): while a boosted player does NOT have the ball
@@ -708,7 +733,7 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 // walls, ball-player dribble, ball off obstacles, player-player, then players off
 // obstacles and walls.
 func (m *Match) resolveInteractions(deltaTime float64) {
-	if spd := m.Field.ConfineBall(m.Ball); spd > ballHitMinSpeed {
+	if spd := m.Field.ConfineBall(m.Ball, m.Tuning.BallWallRestitution); spd > ballHitMinSpeed {
 		m.emit(SoundBallHit, spd, m.Ball.Position)
 	}
 
@@ -721,14 +746,14 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 		}
 	}
 	for _, o := range m.Field.Obstacles {
-		physics.Collide(m.Ball.Body, o.Body, obstacleRestitution)
+		physics.Collide(m.Ball.Body, o.Body, m.Tuning.ObstacleRestitution)
 	}
 	for _, g := range m.Field.Goals() {
 		for _, post := range g.Posts {
-			physics.Collide(m.Ball.Body, post, ballWallRestitution)
+			physics.Collide(m.Ball.Body, post, m.Tuning.BallWallRestitution)
 		}
 		for _, seg := range g.Net {
-			physics.Collide(m.Ball.Body, seg, netRestitution)
+			physics.Collide(m.Ball.Body, seg, m.Tuning.NetRestitution)
 		}
 	}
 
@@ -738,7 +763,7 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 	// until ConfinePlayer clamps it below) would otherwise leave the ball penetrating the wall.
 	// This pushes it back inside each tick so it cannot be wedged into the corner. No sound here --
 	// a genuine high-speed wall impact is caught by the confine at the top of the next tick.
-	m.Field.ConfineBall(m.Ball)
+	m.Field.ConfineBall(m.Ball, m.Tuning.BallWallRestitution)
 
 	// Player-vs-player physics. The team-charge drain from an opponent contesting the ball is no
 	// longer detected here -- it is handled in advanceTeamPossession (Rules 1 & 4: a marked
@@ -750,17 +775,17 @@ func (m *Match) resolveInteractions(deltaTime float64) {
 	}
 	for _, p := range m.Players {
 		for _, o := range m.Field.Obstacles {
-			physics.Collide(p.Body, o.Body, playerWallRestitution)
+			physics.Collide(p.Body, o.Body, m.Tuning.PlayerWallRestitution)
 		}
 		for _, g := range m.Field.Goals() {
 			for _, post := range g.Posts {
-				physics.Collide(p.Body, post, playerWallRestitution)
+				physics.Collide(p.Body, post, m.Tuning.PlayerWallRestitution)
 			}
 			for _, seg := range g.Net {
-				physics.Collide(p.Body, seg, playerWallRestitution)
+				physics.Collide(p.Body, seg, m.Tuning.PlayerWallRestitution)
 			}
 		}
-		m.Field.ConfinePlayer(p)
+		m.Field.ConfinePlayer(p, m.Tuning.PlayerWallRestitution)
 
 		// A ball confined against a wall or corner can't be shoved aside, so once the player is
 		// also clamped against that boundary their centres can't reach radius-sum apart and the
@@ -815,23 +840,34 @@ func (m *Match) resetKickoff(staged bool) {
 		p.shootCanceled = false
 		p.trapHeldPrev = false
 		p.evictDwell = 0
-		p.Body.SetRadius(p.Stats.Radius)
-		p.Body.MaxSpeed = p.Stats.MaxSpeed
+		p.Body.SetRadius(p.Tuning.Radius)
+		p.Body.MaxSpeed = p.Tuning.MaxSpeed
 		// Face the attacking goal (FaceTowards normalises and is a no-op for a coincident point).
 		p.FaceTowards(m.AttackingGoal(p.Team).Center)
 	}
 
+	// Emit a kickoff marker and reset the recorder's pass-derivation latches (so nothing is
+	// attributed across a kickoff) and its prevPos baseline (so the teleport home is not
+	// counted as distance). Done after positions are reset and the touch history is cleared.
+	m.rec.onKickoff(m)
+
 	m.kickoffArmed = staged
-	if !staged {
-		return
+
+	// Centre-circle setup. A staged kickoff places the kickoff side's taker INSIDE the circle, a
+	// bit off the ball; everyone else is pushed OUT so the kickoff begins with the circle
+	// otherwise clear. (The match start is not staged -- it goes through clearCenterCircle in
+	// BuildMatchSized -- so it has no taker: the ball simply sits alone in the circle.)
+	var taker *Player
+	if staged {
+		taker = m.kickoffTaker(m.KickoffSide())
+		if taker == nil {
+			m.kickoffArmed = false // the conceding side has no one to take it
+		}
 	}
-	// Place the conceding team's taker on the centre dot facing the opponent goal.
-	taker := m.kickoffTaker(m.KickoffSide())
-	if taker == nil {
-		m.kickoffArmed = false
-		return
+	m.clearCenterCircle(taker)
+	if taker != nil {
+		m.placeKickoffTaker(taker, m.Ball.Position, m.AttackingGoal(taker.Team).Center)
 	}
-	m.placeTakerBehindBall(taker, m.Ball.Position, m.AttackingGoal(taker.Team).Center)
 }
 
 // kickoffTaker picks the side's kickoff taker: the lone outfielder closest behind the
@@ -849,18 +885,64 @@ func (m *Match) kickoffTaker(side Side) *Player {
 	return nil
 }
 
-// placeTakerBehindBall stands a player just behind the ball on the line from the ball to
-// goalCenter, facing the goal, motionless. Mirrors the setupKick positioning in
-// penalties.go: the taker is a tiny gap off the ball so it can strike without a run-up.
-func (m *Match) placeTakerBehindBall(p *Player, ballPos, goalCenter geom.Vec) {
+// kickoffTakerStandoff is how far behind the ball (beyond the ball+player radii) the conceding
+// side's taker stands at a kickoff -- "a bit off the ball", clamped so the taker stays inside the
+// circle when it is small.
+const kickoffTakerStandoff = 16.0
+
+// clearCenterCircle pushes every player except exempt to just OUTSIDE the centre circle, radially
+// out from the centre spot (so each stays on its own side of the pitch), clearing the circle for a
+// kickoff. It moves only the kickoff Position -- HomePosition and the formations are untouched, so
+// normal play and the AI's positioning are unchanged; the armed-kickoff standoff then holds the
+// defenders out until the ball is in play.
+func (m *Match) clearCenterCircle(exempt *Player) {
+	r := m.Field.CenterCircleRadius()
+	if r <= 0 {
+		return
+	}
+	center := m.Field.CenterSpot
+	for _, p := range m.Players {
+		if p == exempt {
+			continue
+		}
+		off := p.Position.Sub(center)
+		minD := r + p.Radius() + 4 // clear the painted line with a small margin
+		if geom.Norm(off) >= minD {
+			continue
+		}
+		dir := off
+		if geom.Norm(dir) < 1e-6 {
+			dir = center.Sub(m.AttackingGoal(p.Team).Center) // on the spot: push toward our own half
+			if geom.Norm(dir) < 1e-6 {
+				dir = geom.NewVec(-1, 0)
+			}
+		}
+		p.Position = center.Add(geom.Unit(dir).Scale(minD))
+		p.Velocity = geom.NewVec(0, 0)
+		p.Acceleration = geom.NewVec(0, 0)
+		p.moveHeading = geom.Vec{}
+	}
+}
+
+// placeKickoffTaker stands the conceding side's taker INSIDE the centre circle, a bit behind the
+// ball on the line toward the opponent goal, facing it, motionless -- close enough to strike
+// without a run-up, far enough to read as "a bit off the ball". The standoff is clamped so the
+// whole taker stays inside the circle even when it is small. HomePosition is left as the taker's
+// formation spot, so after the kickoff it resumes its normal role.
+func (m *Match) placeKickoffTaker(p *Player, ballPos, goalCenter geom.Vec) {
 	dir := goalCenter.Sub(ballPos)
 	if dir == (geom.Vec{}) {
 		dir = geom.NewVec(1, 0)
 	}
 	unit := geom.Unit(dir)
-	gap := m.Ball.Radius() + p.Radius() + 1
-	p.Position = ballPos.Sub(unit.Scale(gap)) // a tiny gap behind the ball, toward our own half
-	p.HomePosition = p.Position
+	gap := m.Ball.Radius() + p.Radius() + kickoffTakerStandoff
+	if maxGap := m.Field.CenterCircleRadius() - p.Radius() - 4; maxGap > 0 && gap > maxGap {
+		gap = maxGap
+	}
+	if floor := m.Ball.Radius() + p.Radius() + 1; gap < floor {
+		gap = floor // never overlap the ball
+	}
+	p.Position = ballPos.Sub(unit.Scale(gap)) // a bit behind the ball, toward our own half
 	p.Velocity = geom.NewVec(0, 0)
 	p.Acceleration = geom.NewVec(0, 0)
 	p.moveHeading = geom.Vec{}
@@ -945,6 +1027,7 @@ func BuildMatchSized(field *Field, homeSize, awaySize int) *Match {
 	right.Players = buildFormation(field, right, awaySize, &id)
 	m.Players = append(m.Players, left.Players...)
 	m.Players = append(m.Players, right.Players...)
+	m.clearCenterCircle(nil) // match start: the ball sits alone in the centre circle, players outside
 	m.applyConfig(config.Default())
 	return m
 }
@@ -978,7 +1061,7 @@ func BuildSolo(field *Field) *Match {
 	}
 
 	start := geom.NewVec(field.Min.X+field.Width()*0.25, field.CenterSpot.Y)
-	p := NewPlayer(0, start, DefaultStats(500), left)
+	p := NewPlayer(0, start, DefaultPlayerTuning(500), left)
 	p.Role = RoleMidfielder
 	p.Number = 10
 	left.Players = []*Player{p}
@@ -1001,10 +1084,10 @@ func BuildDuo(field *Field) *Match {
 	}
 
 	c := field.CenterSpot
-	p0 := NewPlayer(0, geom.NewVec(c.X-120, c.Y), DefaultStats(500), left)
+	p0 := NewPlayer(0, geom.NewVec(c.X-120, c.Y), DefaultPlayerTuning(500), left)
 	p0.Role = RoleMidfielder
 	p0.Number = 1
-	p1 := NewPlayer(1, geom.NewVec(c.X+120, c.Y), DefaultStats(500), right)
+	p1 := NewPlayer(1, geom.NewVec(c.X+120, c.Y), DefaultPlayerTuning(500), right)
 	p1.Role = RoleMidfielder
 	p1.Number = 2
 	p1.Facing = geom.NewVec(-1, 0)
@@ -1078,7 +1161,7 @@ func buildFormation(f *Field, team *Team, n int, id *int) []*Player {
 
 	number := 1
 	add := func(role Role, pos geom.Vec) {
-		p := NewPlayer(*id, pos, StatsForRole(role), team)
+		p := NewPlayer(*id, pos, TuningForRole(role), team)
 		p.Role = role
 		p.Number = number
 		p.Facing = face

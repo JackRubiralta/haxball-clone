@@ -41,6 +41,7 @@ type ScoreEvent struct {
 // collapses into one history entry (its timestamp refreshed, and upgraded to a kick),
 // so the history holds distinct touchers for assist/deflection look-ups.
 func (m *Match) recordTouch(p *Player, kind TouchKind) {
+	isNew := false
 	if n := len(m.touchHistory); n > 0 && m.touchHistory[n-1].Player == p.PlayerID {
 		m.touchHistory[n-1].Time = m.Clock
 		if kind == TouchKick {
@@ -51,9 +52,11 @@ func (m *Match) recordTouch(p *Player, kind TouchKind) {
 		if len(m.touchHistory) > touchHistoryCap {
 			m.touchHistory = m.touchHistory[len(m.touchHistory)-touchHistoryCap:]
 		}
+		isNew = true
 	}
 	last := m.touchHistory[len(m.touchHistory)-1]
 	m.LastTouch = &last
+	m.rec.onTouch(m, p, kind, isNew)
 }
 
 // resolveGoal credits a goal from the touch history, detecting own goals and deflected
@@ -87,6 +90,7 @@ func (m *Match) resolveGoal(goalEntered Side) ScoreEvent {
 	m.addScore(goalEntered)
 	m.Goals = append(m.Goals, ev)
 	m.LastGoal = &m.Goals[len(m.Goals)-1]
+	m.rec.onGoal(m, ev)
 	return ev
 }
 

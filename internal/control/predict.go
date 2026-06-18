@@ -54,10 +54,12 @@ func ballSpeedAt(v0 geom.Vec, t, friction, dt float64) float64 {
 // It is TURN-RATE AWARE: a mover cannot redirect instantly (the sim rotates its movement
 // heading toward the input at turnRate rad/s -- see sim.Player.Move), so a mover pointed
 // away from the ball loses real time turning before it makes useful ground. heading is the
-// mover's current committed direction (sim.PlayerView.Heading()); the time to rotate it to
-// face the target is psi/turnRate, weighted by turnPenaltyGain and subtracted from the
-// usable closing time. A zero heading or zero turn rate means "no committed direction"
-// (e.g. stationary at a kickoff) and applies no penalty, so kickoff election is unchanged.
+// mover's current committed direction: for SELF this is its true steering heading
+// (SelfView.Heading()), but for any OTHER player that is hidden, so the caller passes the
+// player's VISIBLE facing instead. The time to rotate it to face the target is psi/turnRate,
+// weighted by turnPenaltyGain and subtracted from the usable closing time. A zero heading or
+// zero turn rate means "no committed direction" (e.g. stationary at a kickoff) and applies no
+// penalty, so kickoff election is unchanged.
 func interceptTime(from geom.Vec, maxSpeed, turnRate float64, heading geom.Vec, reachSlack float64, ballPos, ballVel geom.Vec, friction, dt float64, tune aiTuning) float64 {
 	penalize := tune.turnPenaltyGain > 0 && turnRate > 0 && geom.Norm(heading) > 1e-9
 	for t := 0.0; t <= tune.interceptHorizon; t += tune.interceptStep {
@@ -91,7 +93,7 @@ func interceptPoint(from geom.Vec, maxSpeed, turnRate float64, heading geom.Vec,
 // lane point is the real decelerating travel time, not distance/launch-speed (which would
 // wave through long balls that actually get cut out late). Returns the safety margin in
 // seconds (positive = safe); a pass that stops short of a lane point is treated as beaten.
-func laneSafe(from, to geom.Vec, passSpeed, ballRadius, friction float64, opponents []sim.PlayerView, tune aiTuning) float64 {
+func laneSafe(from, to geom.Vec, passSpeed, ballRadius, friction float64, opponents []sim.ObservedView, tune aiTuning) float64 {
 	laneLen := geom.Dist(from, to)
 	if laneLen < 1e-6 {
 		return -1
@@ -105,7 +107,8 @@ func laneSafe(from, to geom.Vec, passSpeed, ballRadius, friction float64, oppone
 		along := clampFloat(geom.Dot(rel, dir), 0, laneLen)
 		lanePt := from.Add(dir.Scale(along))
 		ballT := ballTravelTime(along, passSpeed, friction)
-		oppT := (geom.Dist(o.Position(), lanePt) - o.Radius() - ballRadius) / o.Stats().MaxSpeed
+		// An opponent's top speed is hidden (not rendered) -> assume the nominal value.
+		oppT := (geom.Dist(o.Position(), lanePt) - o.Radius() - ballRadius) / tune.assumedOppSpeed
 		margin := oppT - ballT // how much sooner the ball arrives than the opponent
 		if margin < worst {
 			worst = margin

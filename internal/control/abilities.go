@@ -58,12 +58,12 @@ func (a *AI) launchAligned(p perception, target geom.Vec, charge, tolRad float64
 		return false
 	}
 	dir := d.Scale(1 / dist)
-	factor := p.me.Stats().MinShootFactor + (1-p.me.Stats().MinShootFactor)*charge
-	power := p.me.Stats().Shoot.Eval(0) * factor // front power (we aim the ball at the front)
+	factor := p.me.Tuning().MinShootFactor + (1-p.me.Tuning().MinShootFactor)*charge
+	power := p.me.Tuning().Shoot.Eval(0) * factor // front power (we aim the ball at the front)
 	// Predict the TRUE launch direction: the radial nudged toward our facing by the aim
 	// assist (same rule the sim fires with), so the lineup check matches the real shot and
 	// the assist's forgiveness is exploited rather than fought.
-	launchDir := p.me.Stats().ShootDirection(dir, p.me.Facing())
+	launchDir := p.me.Tuning().ShootDirection(dir, p.me.Facing())
 	launch := p.ballVel.Add(launchDir.Scale(power))
 	return geom.AngleBetween(launch, target.Sub(p.ball)) < tolRad
 }
@@ -78,7 +78,7 @@ func (a *AI) desiredCharge(distToGoal float64) float64 {
 func (a *AI) ballOffArc(p perception) bool {
 	toBall := geom.Unit(p.ball.Sub(p.me.Position()))
 	return toBall != (geom.Vec{}) &&
-		geom.AngleBetween(p.me.Facing(), toBall) > p.me.Stats().PossessionArcRadians
+		geom.AngleBetween(p.me.Facing(), toBall) > p.me.Tuning().PossessionArcRadians
 }
 
 // updateRecovering applies HYSTERESIS to the "scoop the ball back to the front" state: the
@@ -93,7 +93,7 @@ func (a *AI) updateRecovering(p perception) bool {
 		return false
 	}
 	ang := geom.AngleBetween(p.me.Facing(), toBall)
-	arc := p.me.Stats().PossessionArcRadians
+	arc := p.me.Tuning().PossessionArcRadians
 	if ang > arc {
 		a.recovering = true
 	} else if ang < arc*0.5 {
@@ -128,7 +128,7 @@ func (a *AI) aimKeepingBall(p perception, want geom.Vec) geom.Vec {
 	// facing back and forth. (When recovering we are turning TOWARD the ball, so no cap.)
 	if !recovering && toBall != (geom.Vec{}) {
 		ballAng := geom.AngleBetween(p.me.Facing(), toBall)
-		arc := p.me.Stats().PossessionArcRadians
+		arc := p.me.Tuning().PossessionArcRadians
 		turn *= clampFloat(1-ballAng/arc, 0.3, 1)
 	}
 	newFace := rotateToward(p.me.Facing(), desiredFace, turn)
@@ -165,7 +165,7 @@ func (a *AI) shootAt(p perception, in sim.Intent, target geom.Vec, desired, base
 	// then winding up the kick once it is back under control -- trap first, charge second.
 	if a.recovering { // set by aimKeepingBall above (hysteretic)
 		mv, th := a.steer(p, a.shotTarget, false)
-		in.Move, in.Throttle, in.Trap = mv, th*0.6, true
+		in.Move, in.Throttle, in.Trap = mv, th*a.tune.recoverThrottle, true
 		switch {
 		case !a.recoverTrap && sim.NormShootCharge(p.myCharge) > 0:
 			// Just entered recovery with a charge already wound up: abandon it WITHOUT firing.
@@ -252,12 +252,12 @@ func (a *AI) abortCharge(p perception, in sim.Intent) sim.Intent {
 func (a *AI) wantTrapReceive(p perception) bool {
 	approach := p.ball.Sub(p.me.Position())
 	closing := -geom.Dot(p.ballVel, geom.Unit(approach)) // speed of the ball toward me
-	captureFront := p.me.Stats().CaptureSpeed.Front
+	captureFront := p.me.Tuning().CaptureSpeed.Front
 	return closing > captureFront*a.tune.trapReceiveFactor && p.gapToBall < a.tune.trapReceiveRange
 }
 
 // wantTrapSteal reports whether the player is close enough to an enemy-held ball that a
 // trap (stronger, longer centre-pull) could wrest it away.
 func (a *AI) wantTrapSteal(p perception) bool {
-	return p.carrierEnemy && p.gapToBall < p.me.Stats().PullRange+a.tune.stealRange
+	return p.carrierEnemy && p.gapToBall < p.me.Tuning().PullRange+a.tune.stealRange
 }

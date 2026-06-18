@@ -26,11 +26,11 @@ func TestPossessionInPullRange(t *testing.T) {
 		p := firstOn(m, SideLeft)
 		parkAll(m)
 		p.Position = geom.NewVec(0, 0)
-		mid := (p.Stats.TouchRange + p.pullRadius()) / 2 // gap strictly between touch and pull
+		mid := (p.Tuning.TouchRange + p.pullRadius()) / 2 // gap strictly between touch and pull
 		p.possession = 0
 		m.Ball.Position = geom.NewVec(p.Radius()+m.Ball.Radius()+mid, 0)
 		if m.touching(p) {
-			t.Fatalf("setup: ball should NOT be touching (gap %.2f, TouchRange %.2f)", mid, p.Stats.TouchRange)
+			t.Fatalf("setup: ball should NOT be touching (gap %.2f, TouchRange %.2f)", mid, p.Tuning.TouchRange)
 		}
 		if !m.inPullRange(p) {
 			t.Fatalf("setup: ball should be within the pull radius (gap %.2f, pullRadius %.2f)", mid, p.pullRadius())
@@ -53,7 +53,7 @@ func TestPossessionInPullRange(t *testing.T) {
 		p := firstOn(m, SideLeft)
 		parkAll(m)
 		p.Position = geom.NewVec(0, 0)
-		justBeyondBase := p.Stats.PullRange + 1 // gap just past the base pull radius
+		justBeyondBase := p.Tuning.PullRange + 1 // gap just past the base pull radius
 		m.Ball.Position = geom.NewVec(p.Radius()+m.Ball.Radius()+justBeyondBase, 0)
 		p.trapAura = 0
 		if m.inPullRange(p) {
@@ -61,7 +61,7 @@ func TestPossessionInPullRange(t *testing.T) {
 		}
 		p.trapAura = 1 // trap at peak strength -- must NOT change the possession reach
 		if m.inPullRange(p) {
-			t.Errorf("a charged trap must NOT extend the possession pull radius (gap %.2f, base PullRange %.2f) -- the trap extends only the ball attraction", justBeyondBase, p.Stats.PullRange)
+			t.Errorf("a charged trap must NOT extend the possession pull radius (gap %.2f, base PullRange %.2f) -- the trap extends only the ball attraction", justBeyondBase, p.Tuning.PullRange)
 		}
 	}
 
@@ -72,7 +72,7 @@ func TestPossessionInPullRange(t *testing.T) {
 		m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 		h, c := firstOn(m, SideLeft), firstOn(m, SideRight)
 		parkAll(m)
-		gap := (h.Stats.TouchRange + h.pullRadius()) / 2
+		gap := (h.Tuning.TouchRange + h.pullRadius()) / 2
 		surface := h.Radius() + m.Ball.Radius()
 		h.Position = geom.NewVec(0, 0)
 		m.Ball.Position = geom.NewVec(surface+gap, 0)
@@ -105,17 +105,17 @@ func TestPossessionRangeDecoupledFromPull(t *testing.T) {
 	p.Position = geom.NewVec(0, 0)
 
 	// Default: PossessionRange seeds equal to PullRange, so reach is identical to before.
-	if p.Stats.PossessionRange != p.Stats.PullRange {
-		t.Fatalf("default PossessionRange (%.2f) should equal PullRange (%.2f)", p.Stats.PossessionRange, p.Stats.PullRange)
+	if p.Tuning.PossessionRange != p.Tuning.PullRange {
+		t.Fatalf("default PossessionRange (%.2f) should equal PullRange (%.2f)", p.Tuning.PossessionRange, p.Tuning.PullRange)
 	}
-	if got := p.possessionRadius(); got != p.Stats.PullRange {
-		t.Errorf("possessionRadius should default to PullRange: got %.2f want %.2f", got, p.Stats.PullRange)
+	if got := p.possessionRadius(); got != p.Tuning.PullRange {
+		t.Errorf("possessionRadius should default to PullRange: got %.2f want %.2f", got, p.Tuning.PullRange)
 	}
 
 	// A full trap must NOT extend the possession reach, but MUST still extend the attraction reach.
 	p.trapAura = 1
-	if got := p.possessionRadius(); got != p.Stats.PossessionRange {
-		t.Errorf("a full trap must not change possessionRadius: got %.2f want %.2f", got, p.Stats.PossessionRange)
+	if got := p.possessionRadius(); got != p.Tuning.PossessionRange {
+		t.Errorf("a full trap must not change possessionRadius: got %.2f want %.2f", got, p.Tuning.PossessionRange)
 	}
 	if !(p.pullRadius() > p.possessionRadius()) {
 		t.Errorf("a full trap should extend the ATTRACTION pullRadius (%.2f) beyond the possession reach (%.2f)", p.pullRadius(), p.possessionRadius())
@@ -124,21 +124,21 @@ func TestPossessionRangeDecoupledFromPull(t *testing.T) {
 
 	// Decoupling: shrink PossessionRange below PullRange. A ball between the two is OUT of
 	// possession reach (inPullRange false) yet still inside the attraction base (pullRadius).
-	p.Stats.PossessionRange = 2
+	p.Tuning.PossessionRange = 2
 	surface := p.Radius() + m.Ball.Radius()
-	gap := (p.Stats.PossessionRange + p.Stats.PullRange) / 2 // 3.5: inside Pull(5), outside Possession(2)
+	gap := (p.Tuning.PossessionRange + p.Tuning.PullRange) / 2 // 3.5: inside Pull(5), outside Possession(2)
 	m.Ball.Position = geom.NewVec(surface+gap, 0)
 	if m.inPullRange(p) {
-		t.Errorf("ball at gap %.2f should be OUTSIDE the shrunk possession reach %.2f", gap, p.Stats.PossessionRange)
+		t.Errorf("ball at gap %.2f should be OUTSIDE the shrunk possession reach %.2f", gap, p.Tuning.PossessionRange)
 	}
 	if !(gap < p.pullRadius()) {
 		t.Errorf("ball at gap %.2f should still be inside the attraction pull radius %.2f (decoupled)", gap, p.pullRadius())
 	}
 
 	// Fallback: PossessionRange <= 0 means "use PullRange".
-	p.Stats.PossessionRange = 0
-	if got := p.possessionRadius(); got != p.Stats.PullRange {
-		t.Errorf("PossessionRange<=0 should fall back to PullRange: got %.2f want %.2f", got, p.Stats.PullRange)
+	p.Tuning.PossessionRange = 0
+	if got := p.possessionRadius(); got != p.Tuning.PullRange {
+		t.Errorf("PossessionRange<=0 should fall back to PullRange: got %.2f want %.2f", got, p.Tuning.PullRange)
 	}
 }
 
@@ -153,7 +153,7 @@ func TestPossessionBuildsForLatestEntrantOnly(t *testing.T) {
 		q.Position = geom.NewVec(-1e5, float64(q.PlayerID)*60) // park everyone far
 	}
 	surface := a.Radius() + m.Ball.Radius()
-	gap := (a.Stats.TouchRange + a.pullRadius()) / 2 // strictly between touch and pull
+	gap := (a.Tuning.TouchRange + a.pullRadius()) / 2 // strictly between touch and pull
 
 	tick := func() {
 		m.advancePossessionBuilder()

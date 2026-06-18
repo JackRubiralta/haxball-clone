@@ -27,18 +27,22 @@ type frame struct {
 	clipY, clipH float64
 }
 
-func updateFrame() frame {
+// updateFrame builds the input-only frame for the update pass. It maps the cursor with the
+// UI viewport captured by the last draw pass (a.uiViewport), so there is no render global.
+func (a *App) updateFrame() frame {
 	cx, cy := ebiten.CursorPosition()
 	return frame{
-		cursor:  render.ScreenToWorld(cx, cy),
+		cursor:  a.uiViewport.ScreenToWorld(cx, cy),
 		clicked: inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft),
 	}
 }
 
-func drawFrame(screen *ebiten.Image) frame {
+// drawFrame begins a UI surface and records its viewport for the next update pass.
+func (a *App) drawFrame(screen *ebiten.Image) frame {
 	cx, cy := ebiten.CursorPosition()
 	ui := render.BeginUI(screen)
-	return frame{ui: ui, screen: screen, cursor: render.ScreenToWorld(cx, cy), draw: true}
+	a.uiViewport = ui.Viewport()
+	return frame{ui: ui, screen: screen, cursor: a.uiViewport.ScreenToWorld(cx, cy), draw: true}
 }
 
 func (f frame) hit(x, y, w, h float64) bool {
@@ -87,13 +91,16 @@ func (f frame) sectionHeader(label string, x, y, w float64) {
 	}
 }
 
-// rowStepper draws a labelled, compact "< value >" cluster in [x, x+w] and returns the
-// dec/inc click. The cluster is RIGHT-ALIGNED in the control band (so it lines up with
-// toggles/segments in the same column) and tightly grouped: the > button hugs the band's
-// right edge, the value is centred just left of it, and the < button hugs the value -- each
-// with a small fixed gap. The value width is measured (scale-independently, so both passes
-// agree) to size the cluster, and everything is vertically centred on the buttons' midline.
-func (f frame) rowStepper(label, value string, x, y, w float64) (dec, inc bool) {
+// rowStepper draws a labelled, compact "< value >" cluster in [x, x+w] and returns the dec/inc
+// click. cur/lo/hi bound the value: the < arrow greys out (and stops responding) once cur is at
+// lo, the > arrow once cur is at hi, so a reached limit is visible. Pass lo >= hi for an
+// unbounded / cycling stepper (both arrows always live). The cluster is RIGHT-ALIGNED in the
+// control band (so it lines up with toggles/segments in the same column) and tightly grouped:
+// the > button hugs the band's right edge, the value is centred just left of it, and the <
+// button hugs the value -- each with a small fixed gap. The value width is measured
+// (scale-independently, so both passes agree) to size the cluster, and everything is vertically
+// centred on the buttons' midline.
+func (f frame) rowStepper(label, value string, x, y, w, cur, lo, hi float64) (dec, inc bool) {
 	bh := theme.RowH - 10
 	const gap = 8.0
 	midY := y + bh/2 // centre on the buttons, which start at y and are bh tall
@@ -101,13 +108,58 @@ func (f frame) rowStepper(label, value string, x, y, w float64) (dec, inc bool) 
 	incX := x + w - theme.StepBtnW
 	valCX := incX - gap - valW/2
 	decX := valCX - valW/2 - gap - theme.StepBtnW
+	unbounded := lo >= hi
+	canDec := unbounded || cur > lo
+	canInc := unbounded || cur < hi
 	if f.draw {
 		f.ui.TextS(label, x, y+theme.RowH/2, theme.Body, theme.Text)
 		f.ui.TextCenteredS(value, valCX, midY, theme.Body, theme.Text)
 	}
-	dec = f.button("<", decX, y, theme.StepBtnW, bh)
-	inc = f.button(">", incX, y, theme.StepBtnW, bh)
+	dec = f.arrowButton("<", canDec, decX, y, theme.StepBtnW, bh)
+	inc = f.arrowButton(">", canInc, incX, y, theme.StepBtnW, bh)
 	return dec, inc
+}
+
+// arrowButton draws a stepper arrow. When !enabled (the value is at its min/max) it is greyed
+// out -- a dim fill, dim border, dim glyph -- and ignores clicks, so a reached bound reads as
+// "can't go further".
+func (f frame) arrowButton(label string, enabled bool, x, y, w, h float64) bool {
+	hot := enabled && f.hit(x, y, w, h)
+	if f.draw {
+		bg, edge, clr := theme.BtnBG, theme.BtnEdge, theme.Text
+		switch {
+		case !enabled:
+			bg, edge, clr = theme.Panel, theme.Edge, theme.TextDim
+		case hot:
+			bg = theme.BtnHover
+		}
+		f.ui.FillRect(x, y, w, h, bg)
+		f.ui.StrokeRect(x, y, w, h, 2, edge)
+		f.ui.TextCenteredS(label, x+w/2, y+h/2, theme.Body, clr)
+		return false
+	}
+	return hot && f.clicked
+}
+
+// selectButton draws a button that can show a selected (highlighted) state -- accent border and
+// text on a hover-coloured fill, like a chosen tab. Returns a click in the update pass. Used for
+// the quick-fill preset buttons so the active preset reads as selected.
+func (f frame) selectButton(label string, selected bool, x, y, w, h float64) bool {
+	hot := f.hit(x, y, w, h)
+	if f.draw {
+		bg, edge, clr := theme.BtnBG, theme.BtnEdge, theme.Text
+		switch {
+		case selected:
+			bg, edge, clr = theme.BtnHover, theme.Accent, theme.Accent
+		case hot:
+			bg = theme.BtnHover
+		}
+		f.ui.FillRect(x, y, w, h, bg)
+		f.ui.StrokeRect(x, y, w, h, 2, edge)
+		f.ui.TextCenteredS(label, x+w/2, y+h/2, theme.Body, clr)
+		return false
+	}
+	return hot && f.clicked
 }
 
 // rowToggle draws a labelled ON/OFF button in [x, x+w] and returns whether it was clicked.

@@ -12,7 +12,7 @@ import (
 // equal in every direction; the shot fires only in the front 180deg and its power degrades
 // (much faster) toward the +-90deg edges.
 func TestPushAndFrontHemisphereShot(t *testing.T) {
-	s := fieldPlayerStats()
+	s := fieldPlayerTuning()
 	const ballR = 10.0
 	d0 := s.Radius + ballR // distance at zero gap
 	pushPower := s.Shoot.Eval(0) * pushPowerFactor
