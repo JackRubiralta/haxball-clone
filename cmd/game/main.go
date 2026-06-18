@@ -102,7 +102,7 @@ func buildApp(ctx context.Context, opts config.GameOptions) *menu.App {
 		s := menu.DefaultSettings()
 		s.TeamSize = opts.TeamSize
 		s.Seed = opts.Config.Seed
-		s.Difficulty = opts.Difficulty
+		s.SeedCLI(opts.TeamSize, opts.Difficulty)
 		return menu.NewApp(ctx, s)
 	}
 }

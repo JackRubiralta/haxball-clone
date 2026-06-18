@@ -125,9 +125,23 @@ func (p *Player) TouchCoefficient() float64 { return p.touchCoef }
 // pullRadius is the surface gap within which the player can act on the ball with its
 // centre-pull: the base PullRange extended by the trap's effective strength (`trapAura`, which
 // swells then weakens as the trap is over-held), so a trap reaches further at its peak and the
-// reach shrinks back as it fades. Shared by the dribble attraction and the possession-steal contest.
+// reach shrinks back as it fades. Used ONLY by the dribble attraction (handleBallToPlayerInteraction);
+// the possession contest deliberately uses the BASE PullRange instead (see Match.inPullRange),
+// so a trap extends the ball pull but NOT who builds/contests possession.
 func (p *Player) pullRadius() float64 {
 	return p.Stats.PullRange + p.Stats.TrapRangeBonus*p.trapAura
+}
+
+// possessionRadius is the surface gap within which the player contests POSSESSION (the reach
+// behind Match.inPullRange / playerReach). Unlike pullRadius it is NEVER trap-extended -- a held
+// trap pulls the ball in from further but must not widen who owns/steals possession. It is the
+// player's PossessionRange, falling back to the base PullRange when PossessionRange is unset
+// (<= 0), so possession reach equals the attraction base by default yet can be tuned on its own.
+func (p *Player) possessionRadius() float64 {
+	if p.Stats.PossessionRange > 0 {
+		return p.Stats.PossessionRange
+	}
+	return p.Stats.PullRange
 }
 
 // NormShootCharge maps held seconds to a 0..1 charge fraction.

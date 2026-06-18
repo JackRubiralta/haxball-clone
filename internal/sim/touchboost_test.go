@@ -114,14 +114,16 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 		t.Errorf("a challenger beyond the pull radius should not steal (holder keeps it): a=%.3f b=%.3f", a.possession, b.possession)
 	}
 
-	// 3. The trap EXTENDS the reach: the same gap 8 is now within the trap-extended pull radius.
+	// 3. A trap does NOT extend the possession reach: the same gap 8 stays beyond the pull radius
+	// even at full trap (the trap extends only the ball attraction, not possession), so there is
+	// still no steal -- the holder keeps it.
 	setup(8, 1)
-	if !m.inPullRange(b) {
-		t.Fatalf("test setup: a full trap should bring gap 8 into the extended pull radius")
+	if m.inPullRange(b) {
+		t.Fatalf("test setup: a full trap must NOT bring gap 8 into the possession pull radius (trap doesn't extend possession reach)")
 	}
 	possessionTick(m, dt)
-	if !(b.possession > 0 && a.possession < 0.8) {
-		t.Errorf("a trapping challenger should steal from the extended pull radius (gap 8): a=%.3f b=%.3f", a.possession, b.possession)
+	if !(b.possession == 0 && a.possession >= 0.8) {
+		t.Errorf("a trapping challenger beyond the BASE pull radius must not steal (trap doesn't extend possession reach): a=%.3f b=%.3f", a.possession, b.possession)
 	}
 }
 
@@ -1162,7 +1164,7 @@ func TestTeamChargeResets(t *testing.T) {
 	if m.possSide == SideNone {
 		t.Fatalf("precondition: a charge should have built")
 	}
-	m.resetKickoff()
+	m.resetKickoff(false)
 	if m.possSide != SideNone || m.possProgress != 0 {
 		t.Errorf("resetKickoff should drop the charge, side=%v progress=%.3f", m.possSide, m.possProgress)
 	}

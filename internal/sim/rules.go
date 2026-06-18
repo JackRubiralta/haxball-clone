@@ -28,7 +28,8 @@ func (m *Match) advanceRules(deltaTime float64) {
 	// Time-based progression for the current phase.
 	switch m.State.Phase {
 	case PhasePlaying:
-		if m.Rules.Win == config.WinTimed && m.Rules.RegulationSeconds > 0 && m.Clock >= m.Rules.RegulationSeconds {
+		timed := m.Rules.Win == config.WinTimed || m.Rules.Win == config.WinFirstAndTimed
+		if timed && m.Rules.RegulationSeconds > 0 && m.Clock >= m.Rules.RegulationSeconds {
 			m.endRegulation()
 		}
 	case PhaseExtraTime:
@@ -55,18 +56,20 @@ func (m *Match) afterCelebration() {
 		m.finish(m.leader())
 		return
 	}
-	if m.Rules.Win == config.WinFirstToScore && m.Rules.ScoreTarget > 0 {
+	if (m.Rules.Win == config.WinFirstToScore || m.Rules.Win == config.WinFirstAndTimed) && m.Rules.ScoreTarget > 0 {
 		if m.Teams[0].Score >= m.Rules.ScoreTarget || m.Teams[1].Score >= m.Rules.ScoreTarget {
 			m.finish(m.leader())
 			return
 		}
 	}
-	m.resetKickoff()
+	// Post-goal (and post-period within a stage): stage the conceding side's taker on the dot.
+	m.resetKickoff(true)
 }
 
 // endRegulation is reached when timed regulation expires: the leader wins, or a level
 // score starts the draw-resolution chain.
 func (m *Match) endRegulation() {
+	m.emit(SoundWhistle, 1, m.Field.CenterSpot) // full-time/end-of-regulation whistle (audio only)
 	if w := m.leader(); w != SideNone {
 		m.finish(w)
 		return
@@ -77,6 +80,7 @@ func (m *Match) endRegulation() {
 
 // beginStage starts the continuation at the current chain index.
 func (m *Match) beginStage() {
+	m.emit(SoundWhistle, 1, m.Field.CenterSpot) // kick-off whistle for the new stage (audio only)
 	if m.State.ChainIndex >= len(m.Rules.OnDraw) {
 		m.finish(SideNone) // a level match with no (more) deciders is a draw
 		return
@@ -85,11 +89,11 @@ func (m *Match) beginStage() {
 	case config.ContinueExtraTime:
 		m.State.Phase = PhaseExtraTime
 		m.State.PhaseStart = m.Clock
-		m.resetKickoff()
+		m.resetKickoff(true) // a new period: stage the kickoff
 	case config.ContinueGoldenGoal:
 		m.State.Phase = PhaseGoldenGoal
 		m.State.PhaseStart = m.Clock
-		m.resetKickoff()
+		m.resetKickoff(true) // a new period: stage the kickoff
 	case config.ContinuePenalties:
 		m.beginShootout() // the playable shootout; falls back to a draw until it is built
 	}
@@ -121,6 +125,9 @@ func (m *Match) leader() Side {
 
 // finish ends the match with the given winner (SideNone is a draw).
 func (m *Match) finish(winner Side) {
+	if m.State.Phase != PhaseFinished {
+		m.emit(SoundWhistle, 1, m.Field.CenterSpot) // final whistle (audio only)
+	}
 	m.State.Phase = PhaseFinished
 	m.State.Winner = winner
 }
@@ -149,7 +156,8 @@ func (m *Match) PhaseLabel() string { return m.State.Phase.String() }
 func (m *Match) ClockSeconds() float64 {
 	switch m.State.Phase {
 	case PhasePlaying:
-		if m.Rules.Win == config.WinTimed && m.Rules.RegulationSeconds > 0 {
+		timed := m.Rules.Win == config.WinTimed || m.Rules.Win == config.WinFirstAndTimed
+		if timed && m.Rules.RegulationSeconds > 0 {
 			return clampPos(m.Rules.RegulationSeconds - m.Clock)
 		}
 		return m.Clock

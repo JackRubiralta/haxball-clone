@@ -37,9 +37,14 @@ type App struct {
 	prevState   AppState
 	settings    Settings // match options (edited on the pre-match setup screen)
 	prefs       AppPrefs // global camera/audio prefs (edited on the settings screen)
-	pendingKind matchKind
 	match       *sim.Match
 	controllers map[int]control.Controller
+
+	// Match-setup IA: the selected tab and one scroll pane per tab (offset survives
+	// across frames; the wheel is read in the update pass only).
+	setupTab       int
+	setupScroll    [4]scrollState
+	settingsScroll scrollState
 
 	camera *render.Camera
 	audio  *audio.Manager
@@ -195,16 +200,10 @@ func (a *App) startMatch(practice, human bool) {
 	a.state = StatePlaying
 }
 
-// startPending launches the match for the mode chosen on the main menu.
-func (a *App) startPending() {
-	switch a.pendingKind {
-	case kindPractice:
-		a.startMatch(true, true)
-	case kindWatchAI:
-		a.startMatch(false, false)
-	default:
-		a.startMatch(false, true)
-	}
+// startSetup launches the match configured on the Match Setup screen. The mode is derived
+// from the per-team control: a human plays whenever either team is set to Human.
+func (a *App) startSetup() {
+	a.startMatch(false, a.settings.Teams[teamHome].Human || a.settings.Teams[teamAway].Human)
 }
 
 // humanFocusID returns the PlayerID of the local human controller (for the player-follow
@@ -220,228 +219,586 @@ func (a *App) humanFocusID() int {
 
 func (a *App) screenMenu(f frame) {
 	if f.draw {
-		f.ui.Fill(menuBG)
-		f.ui.Title("PHOOTBALL", render.UIWidth/2, 150, 56, accent)
+		f.ui.Fill(theme.BG)
+		f.ui.Title("PHOOTBALL", render.UIWidth/2, 150, theme.Title, theme.Accent)
 	}
-	const bx, bw = 360.0, 280.0
-	y := 250.0
-	enter := func(label string, kind matchKind) {
-		if f.button(label, bx, y, bw, 46) {
-			a.pendingKind = kind
-			a.state = StateMatchSetup
-		}
-		y += 62
+	bw, bh := 280.0, theme.BtnH
+	bx := render.UIWidth/2 - bw/2
+	y := 260.0
+	if f.button("Play Match", bx, y, bw, bh) {
+		a.state = StateMatchSetup
 	}
-	enter("Match vs AI", kindVsAI)
-	enter("Practice", kindPractice)
-	enter("Watch AI", kindWatchAI)
-	if f.button("Settings", bx, y, bw, 46) {
+	y += bh + 18
+	if f.button("Settings", bx, y, bw, bh) {
 		a.prevState = StateMenu
 		a.state = StateSettings
 	}
-	y += 62
-	if f.button("Quit", bx, y, bw, 46) {
+	y += bh + 18
+	if f.button("Quit", bx, y, bw, bh) {
 		a.quit = true
 	}
 }
 
-func (a *App) screenMatchSetup(f frame) {
-	x0, y0, w := f.backdrop("MATCH SETUP")
-	colW := (w - 24) / 2
-	lx, rx := x0, x0+colW+24
-	s := &a.settings
-	const rh = 34
+// setupTabs are the Match Setup detail panes, in tab-rail order.
+var setupTabs = []string{"Teams & Control", "Pitch & Goals", "Boxes", "Match Rules"}
 
-	// Left column: teams & pitch.
-	ly := y0
-	f.sectionHeader("TEAMS & PITCH", lx, ly, colW)
-	ly += 26
-	if d, i := f.rowStepper("Players /side", strconv.Itoa(s.TeamSize), lx, ly, colW); d || i {
-		s.TeamSize = clampInt(s.TeamSize+dir(i), 1, 7)
+func (a *App) screenMatchSetup(f frame) {
+	// Page chrome: backdrop + title, a left tab rail, a scrollable detail pane, and a
+	// pinned action bar (Back left, Start right) with a validation banner.
+	const px, py, pw, ph = 60.0, 56.0, 880.0, 568.0
+	const railW = 196.0
+	const barH = 56.0
+	pad := theme.PanelPad
+	if f.draw {
+		f.ui.Fill(theme.BG)
+		f.ui.Panel(px, py, pw, ph, theme.Panel, theme.Edge)
+		f.ui.Title("MATCH SETUP", render.UIWidth/2, py+30, theme.H1, theme.Accent)
 	}
-	ly += rh
-	if d, i := f.rowStepper("Field", s.Field, lx, ly, colW); d || i {
+	contentTop := py + 72
+	railX := px + pad
+	railY := contentTop
+	a.setupTab = f.tabRail(setupTabs, a.setupTab, railX, railY, railW, theme.BtnH)
+
+	// Detail pane to the right of the rail.
+	paneX := railX + railW + pad
+	paneY := contentTop
+	paneW := px + pw - pad - paneX
+	barY := py + ph - pad - barH
+	paneH := barY - paneY - 12
+
+	// Read the wheel for the active tab in the update pass only.
+	if !f.draw {
+		if _, wy := ebiten.Wheel(); wy != 0 {
+			a.setupScroll[a.setupTab].Scroll(wy)
+		}
+	}
+	sc := &a.setupScroll[a.setupTab]
+	top := f.beginScroll(sc, paneX, paneY, paneW, paneH)
+	col := newCol(paneX, top, paneW-12) // -12 leaves room for the scrollbar
+	switch a.setupTab {
+	case 0:
+		a.setupTeams(f, &col)
+	case 1:
+		a.setupPitch(f, &col)
+	case 2:
+		a.setupBoxes(f, &col)
+	case 3:
+		a.setupRules(f, &col)
+	}
+	f.endScroll(sc, paneX, paneY, paneW, paneH, col.cursorY())
+
+	// Action bar: Back (left), validation banner (centre), Start (right, gated).
+	const abw = 180.0
+	if f.button("Back", railX, barY, abw, barH) {
+		a.state = StateMenu
+	}
+	err := a.settings.Validate()
+	if f.draw && err != nil {
+		f.ui.TextCenteredS(err.Error(), render.UIWidth/2, barY+barH/2, theme.Small, theme.Bad)
+	}
+	startX := px + pw - pad - abw
+	if err == nil {
+		if f.button("Start", startX, barY, abw, barH) {
+			a.startSetup()
+		}
+	} else if f.draw {
+		// Disabled Start: drawn dim, not clickable.
+		f.ui.FillRect(startX, barY, abw, barH, theme.BtnBG)
+		f.ui.StrokeRect(startX, barY, abw, barH, 2, theme.Edge)
+		f.ui.TextCenteredS("Start", startX+abw/2, barY+barH/2, theme.Body, theme.TextDim)
+	}
+}
+
+// setupTeams draws the two mirrored Blue/Red team columns: Human/AI control, the human's
+// slot (human team only), the AI difficulty (AI team only), and the roster size.
+func (a *App) setupTeams(f frame, col *colLayout) {
+	s := &a.settings
+	half := (col.w - theme.PanelPad) / 2
+	topY := col.cursorY()
+	names := [2]string{"BLUE (home)", "RED (away)"}
+	xs := [2]float64{col.x, col.x + half + theme.PanelPad}
+	maxY := topY
+	for ti := range s.Teams {
+		c := newCol(xs[ti], topY, half)
+		f.sectionHeader(names[ti], c.x, c.header(1), c.w)
+		tc := &s.Teams[ti]
+		ctlSel := 0
+		if !tc.Human {
+			ctlSel = 1
+		}
+		if sel := f.segmented("Control", controlPresets, ctlSel, c.x, c.row(), c.w); sel != ctlSel {
+			tc.Human = sel == 0
+			s.ClampDependents()
+		}
+		if d, i := f.rowStepper("Size", strconv.Itoa(tc.Size), c.x, c.row(), c.w); d || i {
+			tc.Size = clampInt(tc.Size+dir(i), 1, 7)
+			s.ClampDependents()
+		}
+		if tc.Human {
+			if d, i := f.rowStepper("Human slot", strconv.Itoa(tc.HumanSlot), c.x, c.row(), c.w); d || i {
+				tc.HumanSlot = clampInt(tc.HumanSlot+dir(i), 1, tc.Size)
+				s.ClampDependents()
+			}
+		} else {
+			diff := indexOf(difficultyPresets, tc.Difficulty)
+			if sel := f.segmented("AI", difficultyPresets, diff, c.x, c.row(), c.w); sel != diff {
+				tc.Difficulty = difficultyPresets[sel]
+			}
+		}
+		if c.cursorY() > maxY {
+			maxY = c.cursorY()
+		}
+	}
+	col.y = maxY
+	if f.draw && s.Teams[teamHome].Human && s.Teams[teamAway].Human {
+		f.ui.TextS("Note: one local keyboard drives Blue; Red's human reverts to AI.",
+			col.x, col.row()+theme.RowH/2, theme.Small, theme.TextDim)
+	} else if f.draw && !s.Teams[teamHome].Human && !s.Teams[teamAway].Human {
+		f.ui.TextS("Both AI: this is a watch match.", col.x, col.row()+theme.RowH/2, theme.Small, theme.TextDim)
+	}
+}
+
+// setupPitch draws the field preset and the pitch/goal dimensions.
+func (a *App) setupPitch(f frame, col *colLayout) {
+	s := &a.settings
+	f.sectionHeader("PITCH & GOALS", col.x, col.header(1), col.w)
+	if d, i := f.rowStepper("Field preset", s.Field, col.x, col.row(), col.w); d || i {
 		s.Field = cycle(fieldPresets, s.Field, dir(i))
 		s.seedSizesFromField()
+		s.ClampDependents()
 	}
-	ly += rh
-	if d, i := f.rowStepper("Goal width", strconv.Itoa(int(s.GoalWidth)), lx, ly, colW); d || i {
+	if d, i := f.rowStepper("Pitch length", dimLabel(s.PlayWidth), col.x, col.row(), col.w); d || i {
+		s.PlayWidth = stepDim(s.PlayWidth, dir(i), 40, 400, 2400)
+		s.ClampDependents()
+	}
+	if d, i := f.rowStepper("Pitch width", dimLabel(s.PlayHeight), col.x, col.row(), col.w); d || i {
+		s.PlayHeight = stepDim(s.PlayHeight, dir(i), 40, 240, 1600)
+		s.ClampDependents()
+	}
+	if d, i := f.rowStepper("Goal width", strconv.Itoa(int(s.GoalWidth)), col.x, col.row(), col.w); d || i {
 		s.GoalWidth = clampF(s.GoalWidth+float64(dir(i))*10, 40, 240)
+		s.ClampDependents()
 	}
-	ly += rh
-	if f.rowToggle("Penalty box", s.PenaltyArea, lx, ly, colW) {
+	if d, i := f.rowStepper("Goal depth", dimLabel(s.GoalDepth), col.x, col.row(), col.w); d || i {
+		s.GoalDepth = stepDim(s.GoalDepth, dir(i), 5, 10, 80)
+		s.ClampDependents()
+	}
+	if f.draw {
+		f.ui.TextS("Pitch length/depth \"auto\" = inherit the field preset.",
+			col.x, col.row()+theme.RowH/2, theme.Small, theme.TextDim)
+	}
+}
+
+// setupBoxes draws the penalty area and goal area: enable, dimensions, caps, keeper-only.
+// Sub-rows grey out when a box is disabled, and numeric caps grey when keeper-only is set.
+func (a *App) setupBoxes(f frame, col *colLayout) {
+	s := &a.settings
+	f.sectionHeader("PENALTY AREA", col.x, col.header(1), col.w)
+	if f.rowToggle("Enabled", s.PenaltyArea, col.x, col.row(), col.w) {
 		s.PenaltyArea = !s.PenaltyArea
+		s.ClampDependents()
 	}
-	ly += rh
-	if d, i := f.rowStepper("  Pen. width", strconv.Itoa(int(s.PenaltyWidth)), lx, ly, colW); d || i {
-		s.PenaltyWidth = clampF(s.PenaltyWidth+float64(dir(i))*20, 40, 600)
+	if s.PenaltyArea {
+		if d, i := f.rowStepper("Width", strconv.Itoa(int(s.PenaltyWidth)), col.x, col.row(), col.w); d || i {
+			s.PenaltyWidth = clampF(s.PenaltyWidth+float64(dir(i))*20, 40, 800)
+			s.ClampDependents()
+		}
+		if d, i := f.rowStepper("Depth", strconv.Itoa(int(s.PenaltyDepth)), col.x, col.row(), col.w); d || i {
+			s.PenaltyDepth = clampF(s.PenaltyDepth+float64(dir(i))*10, 20, 600)
+			s.ClampDependents()
+		}
+		if d, i := f.rowStepper("Max defenders", capLabel(s.PenaltyBoxMax), col.x, col.row(), col.w); d || i {
+			s.PenaltyBoxMax = clampInt(s.PenaltyBoxMax+dir(i), 0, 11)
+		}
+		if d, i := f.rowStepper("Max attackers", capLabel(s.PenaltyBoxMaxOpp), col.x, col.row(), col.w); d || i {
+			s.PenaltyBoxMaxOpp = clampInt(s.PenaltyBoxMaxOpp+dir(i), 0, 11)
+		}
+	} else {
+		f.disabledRow("(penalty area disabled)", col.x, col.row(), col.w)
 	}
-	ly += rh
-	if d, i := f.rowStepper("  Pen. max/team", capLabel(s.PenaltyBoxMax), lx, ly, colW); d || i {
-		s.PenaltyBoxMax = clampInt(s.PenaltyBoxMax+dir(i), 0, 11)
-	}
-	ly += rh
-	if f.rowToggle("Goal area", s.GoalArea, lx, ly, colW) {
+
+	col.gapRow(0.4)
+	f.sectionHeader("GOAL AREA", col.x, col.header(1), col.w)
+	if f.rowToggle("Enabled", s.GoalArea, col.x, col.row(), col.w) {
 		s.GoalArea = !s.GoalArea
+		s.ClampDependents()
 	}
-	ly += rh
-	if d, i := f.rowStepper("  Area width", strconv.Itoa(int(s.GoalAreaWidth)), lx, ly, colW); d || i {
-		s.GoalAreaWidth = clampF(s.GoalAreaWidth+float64(dir(i))*20, 40, 500)
+	if s.GoalArea {
+		if d, i := f.rowStepper("Width", strconv.Itoa(int(s.GoalAreaWidth)), col.x, col.row(), col.w); d || i {
+			s.GoalAreaWidth = clampF(s.GoalAreaWidth+float64(dir(i))*20, 40, 700)
+			s.ClampDependents()
+		}
+		if d, i := f.rowStepper("Depth", strconv.Itoa(int(s.GoalAreaDepth)), col.x, col.row(), col.w); d || i {
+			s.GoalAreaDepth = clampF(s.GoalAreaDepth+float64(dir(i))*10, 20, 500)
+			s.ClampDependents()
+		}
+		if f.rowToggle("Keeper-only", s.GoalAreaKeeperOnly, col.x, col.row(), col.w) {
+			s.GoalAreaKeeperOnly = !s.GoalAreaKeeperOnly
+		}
+		if s.GoalAreaKeeperOnly {
+			f.disabledRow("Max defenders / attackers: keeper-only", col.x, col.row(), col.w)
+		} else {
+			if d, i := f.rowStepper("Max defenders", capLabel(s.GoalAreaMax), col.x, col.row(), col.w); d || i {
+				s.GoalAreaMax = clampInt(s.GoalAreaMax+dir(i), 0, 11)
+			}
+			if d, i := f.rowStepper("Max attackers", capLabel(s.GoalAreaMaxOpp), col.x, col.row(), col.w); d || i {
+				s.GoalAreaMaxOpp = clampInt(s.GoalAreaMaxOpp+dir(i), 0, 11)
+			}
+		}
+	} else {
+		f.disabledRow("(goal area disabled)", col.x, col.row(), col.w)
 	}
-	ly += rh
-	if d, i := f.rowStepper("  Area max/team", capLabel(s.GoalAreaMax), lx, ly, colW); d || i {
-		s.GoalAreaMax = clampInt(s.GoalAreaMax+dir(i), 0, 11)
-	}
-	ly += rh
-	if f.rowToggle("  Area keeper-only", s.GoalAreaKeeperOnly, lx, ly, colW) {
-		s.GoalAreaKeeperOnly = !s.GoalAreaKeeperOnly
-	}
+}
 
-	// Right column: rules & match.
-	ry := y0
-	f.sectionHeader("RULES", rx, ry, colW)
-	ry += 26
-	if f.rowToggle("Offside", s.Offside, rx, ry, colW) {
-		s.Offside = !s.Offside
+// setupRules draws the orthogonal win/draw conditions: a "win by goals" target and/or a
+// "time limit", a derived summary, then the on-a-draw resolution (extra time -- with a
+// golden-goal sudden-death modifier -- and a penalty shootout).
+func (a *App) setupRules(f frame, col *colLayout) {
+	s := &a.settings
+	f.sectionHeader("WIN CONDITION", col.x, col.header(1), col.w)
+	if f.rowToggle("Win by goals", s.WinByGoals, col.x, col.row(), col.w) {
+		s.WinByGoals = !s.WinByGoals
 	}
-	ry += rh
-	if d, i := f.rowStepper("  Line", strconv.FormatFloat(s.OffsideFrac, 'f', 2, 64), rx, ry, colW); d || i {
-		s.OffsideFrac = cycleFrac(s.OffsideFrac, dir(i))
+	if s.WinByGoals {
+		if d, i := f.rowStepper("Goals to win", strconv.Itoa(s.WinScore), col.x, col.row(), col.w); d || i {
+			s.WinScore = clampInt(s.WinScore+dir(i), 1, 20)
+		}
 	}
-	ry += rh + 10
-	f.sectionHeader("MATCH", rx, ry, colW)
-	ry += 26
-	if d, i := f.rowStepper("Mode", s.Mode, rx, ry, colW); d || i {
-		s.Mode = cycle(modePresets, s.Mode, dir(i))
+	if f.rowToggle("Time limit", s.WinByTime, col.x, col.row(), col.w) {
+		s.WinByTime = !s.WinByTime
 	}
-	ry += rh
-	if d, i := f.rowStepper("Minutes", strconv.Itoa(int(s.Minutes)), rx, ry, colW); d || i {
-		s.Minutes = clampF(s.Minutes+float64(dir(i)), 1, 30)
+	if s.WinByTime {
+		if d, i := f.rowStepper("Minutes", strconv.Itoa(int(s.Minutes)), col.x, col.row(), col.w); d || i {
+			s.Minutes = clampF(s.Minutes+float64(dir(i)), 1, 30)
+		}
 	}
-	ry += rh
-	if d, i := f.rowStepper("Win score", strconv.Itoa(s.WinScore), rx, ry, colW); d || i {
-		s.WinScore = clampInt(s.WinScore+dir(i), 1, 20)
-	}
-	ry += rh
-	if f.rowToggle("Draw: extra time", s.ExtraTime, rx, ry, colW) {
+	f.disabledRow(winSummary(s), col.x, col.row(), col.w)
+
+	col.gapRow(0.3)
+	f.sectionHeader("— ON A DRAW —", col.x, col.header(1), col.w)
+	if f.rowToggle("Extra time", s.ExtraTime, col.x, col.row(), col.w) {
 		s.ExtraTime = !s.ExtraTime
+		s.ClampDependents()
 	}
-	ry += rh
-	if f.rowToggle("Draw: golden goal", s.GoldenGoal, rx, ry, colW) {
-		s.GoldenGoal = !s.GoldenGoal
+	if s.ExtraTime {
+		if f.rowToggle("Golden goal (next goal wins)", s.GoldenGoal, col.x, col.row(), col.w) {
+			s.GoldenGoal = !s.GoldenGoal
+		}
+		if !s.GoldenGoal {
+			if d, i := f.rowStepper("Extra minutes", strconv.Itoa(int(s.ExtraMinutes)), col.x, col.row(), col.w); d || i {
+				s.ExtraMinutes = clampF(s.ExtraMinutes+float64(dir(i)), 1, 30)
+			}
+		}
 	}
-	ry += rh
-	if f.rowToggle("Draw: penalties", s.Penalties, rx, ry, colW) {
+	if f.rowToggle("Penalty shootout", s.Penalties, col.x, col.row(), col.w) {
 		s.Penalties = !s.Penalties
+		s.ClampDependents()
 	}
-	ry += rh
-	if d, i := f.rowStepper("AI difficulty", s.Difficulty, rx, ry, colW); d || i {
-		s.Difficulty = cycle(difficultyPresets, s.Difficulty, dir(i))
+	if s.Penalties {
+		hint := "(direct)"
+		if s.ExtraTime {
+			hint = "(after extra time)"
+		}
+		if d, i := f.rowStepper("Penalty kicks "+hint, penBestLabel(s.PenaltyBestOf), col.x, col.row(), col.w); d || i {
+			s.PenaltyBestOf = clampInt(s.PenaltyBestOf+dir(i), 1, 11)
+		}
 	}
+	if !s.ExtraTime && !s.Penalties {
+		f.disabledRow("A draw stands.", col.x, col.row(), col.w)
+	}
+}
 
-	// Start / Back pinned at the bottom.
-	if f.button("Start", x0, y0+440, 200, 40) {
-		a.startPending()
-	}
-	if f.button("Back", x0+w-200, y0+440, 200, 40) {
-		a.state = StateMenu
+// winSummary describes the configured win condition in a single line for the Match Rules
+// tab, mirroring MatchSetup.Ruleset's mapping.
+func winSummary(s *Settings) string {
+	switch {
+	case s.WinByGoals && s.WinByTime:
+		return "First to " + strconv.Itoa(s.WinScore) + " goals, or lead after " + strconv.Itoa(int(s.Minutes)) + " min."
+	case s.WinByGoals:
+		return "First to " + strconv.Itoa(s.WinScore) + " goals (no clock)."
+	case s.WinByTime:
+		return "Whoever leads after " + strconv.Itoa(int(s.Minutes)) + " min wins."
+	default:
+		return "Friendly: the match never ends."
 	}
 }
 
 func (a *App) screenSettings(f frame) {
-	x0, y0, w := f.backdrop("SETTINGS")
+	const px, py, pw, ph = 120.0, 56.0, 760.0, 568.0
+	const barH = 56.0
+	pad := theme.PanelPad
+	if f.draw {
+		f.ui.Fill(theme.BG)
+		f.ui.Panel(px, py, pw, ph, theme.Panel, theme.Edge)
+		f.ui.Title("SETTINGS", render.UIWidth/2, py+30, theme.H1, theme.Accent)
+	}
 	p := &a.prefs
-	y := y0 + 10
-	const rh = 40
+	paneX := px + pad
+	paneY := py + 72
+	paneW := pw - 2*pad
+	barY := py + ph - pad - barH
+	paneH := barY - paneY - 12
 
-	f.sectionHeader("CAMERA", x0, y, w)
-	y += 30
-	if d, i := f.rowStepper("Mode", p.CameraMode, x0, y, w); d || i {
+	// The mouse wheel tunes zoom only when hovering the camera rows is awkward in a scroll
+	// pane, so route the wheel to the scroll pane and keep zoom on its stepper.
+	if !f.draw {
+		if _, wy := ebiten.Wheel(); wy != 0 {
+			a.settingsScroll.Scroll(wy)
+		}
+	}
+	top := f.beginScroll(&a.settingsScroll, paneX, paneY, paneW, paneH)
+	col := newCol(paneX, top, paneW-12)
+
+	f.sectionHeader("CAMERA", col.x, col.header(1), col.w)
+	if d, i := f.rowStepper("Mode", p.CameraMode, col.x, col.row(), col.w); d || i {
 		p.CameraMode = cycle(cameraPresets, p.CameraMode, dir(i))
 		a.applyPrefs()
 	}
-	y += rh
-	if d, i := f.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 1, 64), x0, y, w); d || i {
+	if d, i := f.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 1, 64), col.x, col.row(), col.w); d || i {
 		p.Zoom = clampF(p.Zoom+float64(dir(i))*0.5, 1, 4)
 		a.applyPrefs()
 	}
-	// The mouse wheel adjusts zoom HERE only (not during play): scrolling tunes the saved zoom.
-	if !f.draw {
-		if _, wy := ebiten.Wheel(); wy != 0 {
-			p.Zoom = clampF(p.Zoom+wy*0.5, 1, 4)
-			a.applyPrefs()
-		}
-	}
-	y += rh + 14
-	f.sectionHeader("AUDIO", x0, y, w)
-	y += 30
-	if d, i := f.rowStepper("Volume", strconv.Itoa(int(p.Volume*100+0.5))+"%", x0, y, w); d || i {
+	col.gapRow(0.3)
+	f.sectionHeader("AUDIO", col.x, col.header(1), col.w)
+	if d, i := f.rowStepper("Volume", strconv.Itoa(int(p.Volume*100+0.5))+"%", col.x, col.row(), col.w); d || i {
 		p.Volume = clampF(p.Volume+float64(dir(i))*0.1, 0, 1)
 		a.applyPrefs()
 	}
-	y += rh
-	if f.rowToggle("Mute", p.Muted, x0, y, w) {
+	if f.rowToggle("Mute", p.Muted, col.x, col.row(), col.w) {
 		p.Muted = !p.Muted
 		a.applyPrefs()
 	}
-	y += rh + 14
-	f.sectionHeader("CONTROLS", x0, y, w)
-	y += 26
-	if f.draw {
-		for _, line := range []string{
-			"WASD  move", "Mouse  aim", "Hold left-click  charge shot (release to fire)",
-			"Right-click  trap", "Middle-click  poke", "C  camera mode    (zoom: Settings)", "Esc / P  pause",
-		} {
-			f.ui.Text(line, x0, y+9)
-			y += 26
+	col.gapRow(0.3)
+	f.sectionHeader("CONTROLS", col.x, col.header(1), col.w)
+	for _, line := range []string{
+		"WASD  move", "Mouse  aim", "Hold left-click  charge shot (release to fire)",
+		"Right-click  trap", "Middle-click  poke", "C  camera mode", "Esc / P  pause",
+	} {
+		y := col.row()
+		if f.draw {
+			f.ui.TextS(line, col.x, y+theme.RowH/2, theme.Body, theme.Text)
 		}
 	}
+	f.endScroll(&a.settingsScroll, paneX, paneY, paneW, paneH, col.cursorY())
 
-	if f.button("Back", render.UIWidth/2-100, y0+470, 200, 40) {
+	if f.button("Back", render.UIWidth/2-90, barY, 180, barH) {
 		a.state = a.prevState
 	}
 }
 
 func (a *App) screenPaused(f frame) {
 	if f.draw {
-		f.ui.FillRect(0, 0, render.UIWidth, render.UIHeight, overlayBG)
-		f.ui.Title("PAUSED", render.UIWidth/2, 170, 40, accent)
+		f.ui.FillRect(0, 0, render.UIWidth, render.UIHeight, theme.Overlay)
+		f.ui.Title("PAUSED", render.UIWidth/2, 170, theme.H1, theme.Accent)
 	}
-	const bx, bw = 360.0, 280.0
+	bw, bh := 280.0, theme.BtnH
+	bx := render.UIWidth/2 - bw/2
 	y := 250.0
-	if f.button("Resume", bx, y, bw, 46) {
+	if f.button("Resume", bx, y, bw, bh) {
 		a.state = StatePlaying
 	}
-	y += 60
-	if f.button("Settings", bx, y, bw, 46) {
+	y += bh + 16
+	if f.button("Settings", bx, y, bw, bh) {
 		a.prevState = StatePaused
 		a.state = StateSettings
 	}
-	y += 60
-	if !a.duo && f.button("Restart", bx, y, bw, 46) {
+	y += bh + 16
+	if !a.duo && f.button("Restart", bx, y, bw, bh) {
 		a.startMatch(a.practice, a.human)
 	}
-	y += 60
-	if f.button("Quit to Menu", bx, y, bw, 46) {
+	y += bh + 16
+	if f.button("Quit to Menu", bx, y, bw, bh) {
 		a.match = nil
 		a.state = StateMenu
 	}
 }
 
+// resultScrollState persists the goal-timeline scroll offset across frames.
+var resultScroll scrollState
+
 func (a *App) screenResult(f frame) {
+	r := buildResult(a.match)
+
+	// Full-time panel over the dimmed final frame.
+	const px, py, pw, ph = 110.0, 40.0, 780.0, 600.0
+	const barH = 52.0
+	pad := theme.PanelPad
 	if f.draw {
-		f.ui.FillRect(0, render.UIHeight-150, render.UIWidth, 150, overlayBG)
+		f.ui.FillRect(0, 0, render.UIWidth, render.UIHeight, theme.Overlay)
+		f.ui.Panel(px, py, pw, ph, theme.Panel, theme.Edge)
 	}
-	const bx, bw = 360.0, 280.0
-	y := render.UIHeight - 128.0
-	if !a.duo && f.button("Rematch", bx, y, bw, 42) {
+	innerX := px + pad
+	innerW := pw - 2*pad
+
+	// --- Header: team chips flanking the big scoreline, then the winner line + tag. ---
+	headTop := py + 24
+	a.drawResultHeader(f, r, innerX, headTop, innerW)
+
+	// Action bar (pinned bottom).
+	barY := py + ph - pad - barH
+	bw := 220.0
+	gap := 24.0
+	bx := innerX + (innerW-(2*bw+gap))/2
+	if !a.duo && f.button("Rematch", bx, barY, bw, barH) {
 		a.startMatch(a.practice, a.human)
 	}
-	y += 54
-	if f.button("Quit to Menu", bx, y, bw, 42) {
+	if f.button("Quit to Menu", bx+bw+gap, barY, bw, barH) {
 		a.match = nil
 		a.state = StateMenu
 	}
+
+	// --- Body: a scroll pane holding the goal timeline, shootout block, and stats. ---
+	bodyTop := headTop + 132
+	bodyBot := barY - 16
+	paneH := bodyBot - bodyTop
+
+	if !f.draw {
+		if _, wy := ebiten.Wheel(); wy != 0 {
+			resultScroll.Scroll(wy)
+		}
+	}
+	top := f.beginScroll(&resultScroll, innerX, bodyTop, innerW, paneH)
+	col := newCol(innerX, top, innerW-12) // -12 leaves room for the scrollbar
+	a.drawResultTimeline(f, r, &col)
+	if r.HasShootout {
+		col.gapRow(0.4)
+		a.drawResultShootout(f, r, &col)
+	}
+	col.gapRow(0.4)
+	a.drawResultStats(f, &col)
+	f.endScroll(&resultScroll, innerX, bodyTop, innerW, paneH, col.cursorY())
+}
+
+// drawResultHeader renders the two team chips, the big final scoreline between them, the
+// winner line with a trophy, and the context tag.
+func (a *App) drawResultHeader(f frame, r ResultModel, x, y, w float64) {
+	if !f.draw {
+		return
+	}
+	cx := x + w/2
+	chipW := 220.0
+	badgeR := 16.0
+
+	// Big centred scoreline.
+	score := strconv.Itoa(r.Teams[0].Score) + " - " + strconv.Itoa(r.Teams[1].Score)
+	f.ui.TextCenteredS(score, cx, y+30, 52, theme.Text)
+
+	// Left (home) chip: badge then name.
+	render.IconShield(f.screen, x+badgeR, y+24, badgeR*2, r.Teams[0].Color, theme.Edge)
+	f.ui.TextS(fitMenu(f, r.Teams[0].Name, chipW-2*badgeR-12, theme.Body), x+2*badgeR+8, y+24, theme.Body, r.Teams[0].Color)
+
+	// Right (away) chip: name then badge, mirrored.
+	rxEnd := x + w
+	render.IconShield(f.screen, rxEnd-badgeR, y+24, badgeR*2, r.Teams[1].Color, theme.Edge)
+	f.ui.TextRightS(fitMenu(f, r.Teams[1].Name, chipW-2*badgeR-12, theme.Body), rxEnd-2*badgeR-8, y+24, theme.Body, r.Teams[1].Color)
+
+	// Winner line with a trophy (a trophy only for a decided result), then the context tag.
+	winY := y + 76
+	line := r.WinnerLine
+	tw := f.ui.MeasureUI(line, theme.Section)
+	if r.WinnerIdx >= 0 {
+		render.IconTrophy(f.screen, cx-tw/2-18, winY, 24, theme.Accent)
+	}
+	f.ui.TextCenteredS(line, cx, winY, theme.Section, r.WinnerTint)
+	if r.ContextTag != "" {
+		f.ui.TextCenteredS(r.ContextTag, cx, winY+24, theme.Small, theme.TextDim)
+	}
+}
+
+// drawResultTimeline renders the chronological goal list, team-coloured per row.
+func (a *App) drawResultTimeline(f frame, r ResultModel, col *colLayout) {
+	f.sectionHeader("GOALS", col.x, col.header(1), col.w)
+	if len(r.Goals) == 0 {
+		y := col.row()
+		if f.draw {
+			f.ui.TextS("No goals.", col.x, y+theme.RowH/2, theme.Body, theme.TextDim)
+		}
+		return
+	}
+	for _, g := range r.Goals {
+		y := col.row()
+		if !f.draw {
+			continue
+		}
+		midY := y + theme.RowH/2
+		// Time, then a team-colour dot, scorer, and detail.
+		f.ui.TextS(g.Time, col.x, midY, theme.Body, theme.TextDim)
+		dotX := col.x + 64
+		f.ui.FillRect(dotX, midY-5, 10, 10, g.Color)
+		textX := dotX + 22
+		label := g.Scorer
+		if label == "" {
+			label = "goal"
+		}
+		f.ui.TextS(label, textX, midY, theme.Body, theme.Text)
+		if g.Detail != "" {
+			f.ui.TextS(g.Detail, textX+90, midY, theme.Small, theme.TextDim)
+		}
+	}
+}
+
+// drawResultShootout renders, per side, a row of scored/missed dots plus the tally.
+func (a *App) drawResultShootout(f frame, r ResultModel, col *colLayout) {
+	f.sectionHeader("PENALTY SHOOTOUT", col.x, col.header(1), col.w)
+	for i := 0; i < 2; i++ {
+		y := col.row()
+		if !f.draw {
+			continue
+		}
+		midY := y + theme.RowH/2
+		st := r.Shootout[i]
+		f.ui.TextS(fitMenu(f, r.Teams[i].Name, 150, theme.Body), col.x, midY, theme.Body, r.Teams[i].Color)
+		dx := col.x + 168
+		const dr, dgap = 7.0, 22.0
+		for _, scored := range st.Scored {
+			if scored {
+				f.ui.FillRect(dx-dr, midY-dr, dr*2, dr*2, theme.Accent)
+			} else {
+				f.ui.StrokeRect(dx-dr, midY-dr, dr*2, dr*2, 2, theme.Bad)
+			}
+			dx += dgap
+		}
+		f.ui.TextRightS(strconv.Itoa(st.Goals), col.x+col.w, midY, theme.Section, r.Teams[i].Color)
+	}
+}
+
+// drawResultStats renders the scaffolded stats table (no recorder yet): every cell shows
+// "—" with a footnote, the deliberate placeholder.
+func (a *App) drawResultStats(f frame, col *colLayout) {
+	f.sectionHeader("STATS", col.x, col.header(1), col.w)
+	rows := []string{"Shots", "Possession", "Passes"}
+	homeX := col.x + col.w*0.62
+	awayX := col.x + col.w
+	for _, label := range rows {
+		y := col.row()
+		if !f.draw {
+			continue
+		}
+		midY := y + theme.RowH/2
+		f.ui.TextS(label, col.x, midY, theme.Body, theme.Text)
+		f.ui.TextCenteredS("—", homeX, midY, theme.Body, theme.TextDim)
+		f.ui.TextRightS("—", awayX, midY, theme.Body, theme.TextDim)
+	}
+	y := col.row()
+	if f.draw {
+		f.ui.TextS("Detailed stats coming soon.", col.x, y+theme.RowH/2, theme.Small, theme.TextDim)
+	}
+}
+
+// fitMenu truncates s with an ellipsis so its measured width fits within maxW at sizeUI.
+// It measures with the same scale-independent MeasureUI used for layout, so the two
+// immediate-mode passes agree.
+func fitMenu(f frame, s string, maxW, sizeUI float64) string {
+	if f.ui.MeasureUI(s, sizeUI) <= maxW {
+		return s
+	}
+	for len(s) > 1 {
+		s = s[:len(s)-1]
+		if f.ui.MeasureUI(s+"…", sizeUI) <= maxW {
+			return s + "…"
+		}
+	}
+	return s
 }
 
 func dir(inc bool) int {
@@ -457,4 +814,47 @@ func capLabel(n int) string {
 		return "off"
 	}
 	return strconv.Itoa(n)
+}
+
+// dimLabel shows an optional dimension override (0 reads as "auto" = inherit the preset).
+func dimLabel(v float64) string {
+	if v <= 0 {
+		return "auto"
+	}
+	return strconv.Itoa(int(v))
+}
+
+// stepDim steps an optional dimension override. Stepping up from "auto" (0) starts at
+// base; stepping down past min snaps back to "auto" (inherit the preset).
+func stepDim(v float64, d int, step, base, hi float64) float64 {
+	if v <= 0 {
+		if d > 0 {
+			return base
+		}
+		return 0
+	}
+	v += float64(d) * step
+	if v < base {
+		return 0
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// penBestLabel shows the shootout length (0 reads as the default of 5).
+func penBestLabel(n int) string {
+	if n <= 0 {
+		return "5 (default)"
+	}
+	return strconv.Itoa(n)
+}
+
+// disabledRow draws a greyed-out informational row in place of an interactive widget
+// (used for box sub-rows that are inactive because the box is off or keeper-only).
+func (f frame) disabledRow(label string, x, y, w float64) {
+	if f.draw {
+		f.ui.TextS(label, x, y+theme.RowH/2, theme.Body, theme.TextDim)
+	}
 }

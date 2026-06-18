@@ -102,15 +102,19 @@ func (gf *geomFlags) fill(s *MatchSetup) error {
 	return nil
 }
 
-// ruleFlags collects the match-mode flags shared by the game and server.
+// ruleFlags collects the match-rule flags shared by the game and server. The win
+// conditions are orthogonal (goals and/or time); the draw resolution is a chain of extra
+// time (sudden death when golden) then penalties.
 type ruleFlags struct {
-	mode           string
-	minutes        float64
+	winByGoals     bool
 	winScore       int
+	winByTime      bool
+	minutes        float64
 	extraTime      bool
+	extraMinutes   float64
 	goldenGoal     bool
 	penalties      bool
-	directPens     bool
+	penBestOf      int
 	offsideFrac    float64
 	penBoxMax      int
 	penBoxMaxOpp   int
@@ -123,13 +127,15 @@ type ruleFlags struct {
 
 func bindRules(fs *flag.FlagSet) *ruleFlags {
 	rf := &ruleFlags{}
-	fs.StringVar(&rf.mode, "mode", "friendly", "match mode: friendly, quick, timed, cup, golden")
-	fs.Float64Var(&rf.minutes, "minutes", 3, "regulation length in minutes (timed and cup modes)")
-	fs.IntVar(&rf.winScore, "win-score", 3, "goals needed to win (quick mode)")
-	fs.BoolVar(&rf.extraTime, "extra-time", false, "if a timed match is drawn, play extra time")
-	fs.BoolVar(&rf.goldenGoal, "golden-goal", false, "if a timed match is drawn, play sudden death")
-	fs.BoolVar(&rf.penalties, "penalties", false, "if a timed match is drawn, decide it on penalties")
-	fs.BoolVar(&rf.directPens, "direct-pens", false, "if a timed match is drawn, go straight to penalties")
+	fs.BoolVar(&rf.winByGoals, "win-goals", false, "win by reaching a goal target (first to -win-score)")
+	fs.IntVar(&rf.winScore, "win-score", 3, "goals needed to win (with -win-goals)")
+	fs.BoolVar(&rf.winByTime, "time-limit", false, "win by the clock: lead when regulation expires")
+	fs.Float64Var(&rf.minutes, "minutes", 3, "regulation length in minutes (with -time-limit)")
+	fs.BoolVar(&rf.extraTime, "extra-time", false, "if drawn at regulation, play extra time")
+	fs.Float64Var(&rf.extraMinutes, "extra-minutes", 1, "length of extra time in minutes (ignored with -golden-goal)")
+	fs.BoolVar(&rf.goldenGoal, "golden-goal", false, "make extra time sudden death: the next goal wins")
+	fs.BoolVar(&rf.penalties, "penalties", false, "if still drawn, decide on a penalty shootout (direct when -extra-time is off)")
+	fs.IntVar(&rf.penBestOf, "penalties-best-of", 0, "kicks per side in a shootout (0 = the default of 5)")
 	fs.Float64Var(&rf.offsideFrac, "offside-frac", 0, "anti-camp line as a fraction of the pitch from a team's own goal (0 = off, e.g. 0.667)")
 	fs.IntVar(&rf.penBoxMax, "penalty-box-max", 0, "max DEFENDING players allowed in their penalty area (0 = off)")
 	fs.IntVar(&rf.penBoxMaxOpp, "penalty-box-max-opp", 0, "max OPPONENT (attacking) players allowed in a penalty area (0 = off)")
@@ -143,17 +149,23 @@ func bindRules(fs *flag.FlagSet) *ruleFlags {
 
 // fill writes the rule flags into a MatchSetup (the single mapping).
 func (rf *ruleFlags) fill(s *MatchSetup) error {
-	if rf.minutes < 0 {
-		return usagef("minutes must not be negative")
-	}
-	if rf.winScore < 1 {
+	if rf.winByGoals && rf.winScore < 1 {
 		return usagef("win-score must be at least 1")
+	}
+	if rf.winByTime && rf.minutes <= 0 {
+		return usagef("minutes must be positive with -time-limit")
+	}
+	if rf.extraTime && !rf.goldenGoal && rf.extraMinutes <= 0 {
+		return usagef("extra-minutes must be positive with -extra-time")
 	}
 	if rf.offsideFrac < 0 || rf.offsideFrac > 1 {
 		return usagef("offside-frac must be between 0 and 1")
 	}
 	if rf.penBoxMax < 0 || rf.goalAreaMax < 0 || rf.gkBoxMax < 0 || rf.penBoxMaxOpp < 0 || rf.goalAreaMaxOpp < 0 {
 		return usagef("box-max players must not be negative")
+	}
+	if rf.penBestOf < 0 {
+		return usagef("penalties-best-of must not be negative")
 	}
 	switch strings.ToLower(strings.TrimSpace(rf.zoneEnforce)) {
 	case "", "clamp":
@@ -164,8 +176,10 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 	default:
 		return usagef("unknown zone-enforce %q (want clamp or evict)", rf.zoneEnforce)
 	}
-	s.Mode, s.Minutes, s.WinScore = rf.mode, rf.minutes, rf.winScore
-	s.ExtraTime, s.GoldenGoal, s.Penalties, s.DirectPens = rf.extraTime, rf.goldenGoal, rf.penalties, rf.directPens
+	s.WinByGoals, s.WinScore = rf.winByGoals, rf.winScore
+	s.WinByTime, s.Minutes = rf.winByTime, rf.minutes
+	s.ExtraTime, s.ExtraMinutes = rf.extraTime, rf.extraMinutes
+	s.GoldenGoal, s.Penalties, s.PenaltyBestOf = rf.goldenGoal, rf.penalties, rf.penBestOf
 	if rf.offsideFrac > 0 {
 		s.Offside, s.OffsideFrac = true, rf.offsideFrac
 	}
@@ -204,6 +218,8 @@ type GameOptions struct {
 	Logging    Logging
 	Version    bool
 	TeamSize   int
+	HomeSize   int // resolved home (Blue) roster size (falls back to TeamSize)
+	AwaySize   int // resolved away (Red) roster size (falls back to TeamSize)
 	AIBoth     bool
 	Solo       bool
 	Duo        bool
@@ -222,7 +238,9 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	gf := bindGeometry(fs)
 	rf := bindRules(fs)
 	seed := fs.Int64("seed", 1, "deterministic RNG seed (coin tosses, kickoff side)")
-	teamSize := fs.Int("team-size", 3, "players per team")
+	teamSize := fs.Int("team-size", 3, "players per team (seeds both teams unless -home-size/-away-size are set)")
+	homeSize := fs.Int("home-size", 0, "players on the home (Blue) team (0 = use -team-size)")
+	awaySize := fs.Int("away-size", 0, "players on the away (Red) team (0 = use -team-size)")
 	aiBoth := fs.Bool("ai-both", false, "AI controls both teams (spectate)")
 	solo := fs.Bool("solo", false, "single human player + ball only, no opponents (for testing)")
 	duo := fs.Bool("duo", false, "two players you switch control of with 1 and 2 (for testing)")
@@ -243,6 +261,12 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	if *teamSize < 1 || *teamSize > 11 {
 		return GameOptions{}, usagef("team-size must be between 1 and 11")
 	}
+	if *homeSize < 0 || *homeSize > 11 {
+		return GameOptions{}, usagef("home-size must be between 0 and 11")
+	}
+	if *awaySize < 0 || *awaySize > 11 {
+		return GameOptions{}, usagef("away-size must be between 0 and 11")
+	}
 	if *zoom <= 0 {
 		return GameOptions{}, usagef("zoom must be positive")
 	}
@@ -257,7 +281,7 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	if !validDifficulty(*difficulty) {
 		return GameOptions{}, usagef("unknown difficulty %q (want easy, normal, hard, or impossible)", *difficulty)
 	}
-	setup := MatchSetup{TeamSize: *teamSize, Seed: *seed}
+	setup := MatchSetup{TeamSize: *teamSize, HomeSize: *homeSize, AwaySize: *awaySize, Seed: *seed}
 	if err := gf.fill(&setup); err != nil {
 		return GameOptions{}, err
 	}
@@ -268,10 +292,13 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	if err != nil {
 		return GameOptions{}, usagef("%v", err)
 	}
+	homeResolved, awayResolved := setup.sizes()
 	return GameOptions{
 		Config:     cfg,
 		Logging:    *logging,
 		TeamSize:   *teamSize,
+		HomeSize:   homeResolved,
+		AwaySize:   awayResolved,
 		AIBoth:     *aiBoth,
 		Solo:       *solo,
 		Duo:        *duo,
@@ -290,6 +317,8 @@ type ServerOptions struct {
 	Version    bool
 	Addr       string
 	TeamSize   int
+	HomeSize   int // resolved home (Blue) roster size (falls back to TeamSize)
+	AwaySize   int // resolved away (Red) roster size (falls back to TeamSize)
 	TickRate   float64
 	Difficulty string // AI difficulty tier name (see control.SkillFromString)
 }
@@ -303,7 +332,9 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	rf := bindRules(fs)
 	seed := fs.Int64("seed", 1, "deterministic RNG seed (coin tosses, kickoff side)")
 	addr := fs.String("addr", ":4000", "listen address")
-	teamSize := fs.Int("team-size", 3, "players per team")
+	teamSize := fs.Int("team-size", 3, "players per team (seeds both teams unless -home-size/-away-size are set)")
+	homeSize := fs.Int("home-size", 0, "players on the home (Blue) team (0 = use -team-size)")
+	awaySize := fs.Int("away-size", 0, "players on the away (Red) team (0 = use -team-size)")
 	tickRate := fs.Float64("tick-rate", 60, "simulation ticks per second (1..240)")
 	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, or impossible")
 	if err := fs.Parse(args); err != nil {
@@ -318,6 +349,12 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	if *teamSize < 1 || *teamSize > 11 {
 		return ServerOptions{}, usagef("team-size must be between 1 and 11")
 	}
+	if *homeSize < 0 || *homeSize > 11 {
+		return ServerOptions{}, usagef("home-size must be between 0 and 11")
+	}
+	if *awaySize < 0 || *awaySize > 11 {
+		return ServerOptions{}, usagef("away-size must be between 0 and 11")
+	}
 	if *tickRate < 1 || *tickRate > 240 {
 		return ServerOptions{}, usagef("tick-rate must be between 1 and 240")
 	}
@@ -327,7 +364,7 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	if !validDifficulty(*difficulty) {
 		return ServerOptions{}, usagef("unknown difficulty %q (want easy, normal, hard, or impossible)", *difficulty)
 	}
-	setup := MatchSetup{TeamSize: *teamSize, Seed: *seed}
+	setup := MatchSetup{TeamSize: *teamSize, HomeSize: *homeSize, AwaySize: *awaySize, Seed: *seed}
 	if err := gf.fill(&setup); err != nil {
 		return ServerOptions{}, err
 	}
@@ -338,11 +375,14 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	if err != nil {
 		return ServerOptions{}, usagef("%v", err)
 	}
+	homeResolved, awayResolved := setup.sizes()
 	return ServerOptions{
 		Config:     cfg,
 		Logging:    *logging,
 		Addr:       *addr,
 		TeamSize:   *teamSize,
+		HomeSize:   homeResolved,
+		AwaySize:   awayResolved,
 		TickRate:   *tickRate,
 		Difficulty: *difficulty,
 	}, nil

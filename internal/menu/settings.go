@@ -11,30 +11,48 @@ import (
 	"phootball/internal/sim"
 )
 
-// matchKind is the play mode chosen from the main menu.
-type matchKind int
+// TeamControl describes who plays one team and how. A team is either driven by a local
+// human (at slot HumanSlot, a 1-based jersey-style index into its roster) with the rest
+// of the roster filled by AI, or it is entirely AI at the given Difficulty. Size is the
+// team's roster size (min 1). This is a controller/lobby concern and never leaks into
+// config, which stays renderer- and AI-agnostic.
+type TeamControl struct {
+	Human      bool   // true: a local human plays this team
+	HumanSlot  int    // 1-based slot the human occupies (clamped to [1, Size])
+	Difficulty string // AI difficulty tier for the non-human players (see control.SkillFromString)
+	Size       int    // roster size (min 1)
+}
 
+// Team side indices into Settings.Teams.
 const (
-	kindVsAI matchKind = iota
-	kindPractice
-	kindWatchAI
+	teamHome = 0 // Blue / left
+	teamAway = 1 // Red / right
 )
 
 // Settings is the in-memory, lobby-editable match configuration: the shared
-// config.MatchSetup (the single mapping to a config.Config) plus the AI difficulty (a
-// controller concern that does not belong in the config layer). Not persisted (v1).
+// config.MatchSetup (the single mapping to a config.Config) plus per-team control (who
+// plays each team and at what difficulty -- a controller concern that does not belong in
+// the config layer). Not persisted (v1).
 type Settings struct {
 	config.MatchSetup
-	Difficulty string // AI difficulty tier (see control.SkillFromString)
+	Teams [2]TeamControl // [teamHome] = Blue, [teamAway] = Red
 }
 
-// DefaultSettings returns the lobby's starting configuration: a quick best-of-3 on the
-// standard pitch with both boxes, no positional limits, hard AI.
+// DefaultSettings returns the lobby's starting configuration: a 3v3 on the standard pitch
+// with both boxes, decided by first-to-3 goals or a 5-minute clock, with the local human
+// playing Blue at slot 2 and Red controlled by a hard AI.
 func DefaultSettings() Settings {
 	ms := config.DefaultMatchSetup()
-	ms.Mode = "quick"
-	ms.WinScore = 3
-	s := Settings{MatchSetup: ms, Difficulty: "hard"}
+	ms.WinByGoals, ms.WinScore = true, 3
+	ms.WinByTime, ms.Minutes = true, 5
+	s := Settings{
+		MatchSetup: ms,
+		Teams: [2]TeamControl{
+			teamHome: {Human: true, HumanSlot: 2, Difficulty: "hard", Size: 3},
+			teamAway: {Human: false, HumanSlot: 1, Difficulty: "hard", Size: 3},
+		},
+	}
+	s.syncSizes()
 	s.seedSizesFromField()
 	return s
 }
@@ -55,11 +73,17 @@ func DefaultAppPrefs() AppPrefs {
 
 var (
 	fieldPresets      = []string{"standard", "small", "large"}
-	modePresets       = []string{"friendly", "quick", "timed", "cup", "golden"}
 	difficultyPresets = []string{"easy", "normal", "hard"}
 	cameraPresets     = []string{"ball", "player", "fit"}
-	fracPresets       = []float64{0.5, 0.6, 2.0 / 3.0, 0.75}
+	controlPresets    = []string{"Human", "AI"}
 )
+
+// syncSizes mirrors the per-team sizes into the config.MatchSetup (which the geometry/
+// validation layer reads via HomeSize/AwaySize).
+func (s *Settings) syncSizes() {
+	s.HomeSize = s.Teams[teamHome].Size
+	s.AwaySize = s.Teams[teamAway].Size
+}
 
 // seedSizesFromField fills the geometry size fields from the chosen preset, so the lobby
 // edits absolute sizes (and switching presets resets them to that preset's values).
@@ -78,6 +102,85 @@ func (s *Settings) seedSizesFromField() {
 	s.GoalAreaDepth = g.GoalAreaDepth
 }
 
+// ClampDependents enforces the relational constraints live after every edit so a
+// menu-built setup always stays inside the validator's envelope:
+//   - sizes mirrored into the config; human slot within [1, team size];
+//   - goal width <= goal-area width <= penalty width (and depths);
+//   - pitch length (PlayWidth) >= pitch width (PlayHeight) when both are overridden.
+//
+// It nudges the looser bound up rather than clamping the just-edited value down, so the
+// box nesting reads naturally as the player widens an inner box.
+func (s *Settings) ClampDependents() {
+	s.syncSizes()
+	for i := range s.Teams {
+		if s.Teams[i].Size < 1 {
+			s.Teams[i].Size = 1
+		}
+		if s.Teams[i].HumanSlot < 1 {
+			s.Teams[i].HumanSlot = 1
+		}
+		if s.Teams[i].HumanSlot > s.Teams[i].Size {
+			s.Teams[i].HumanSlot = s.Teams[i].Size
+		}
+	}
+	s.syncSizes()
+
+	// Width nesting: goal mouth <= goal-area <= penalty-area.
+	if s.GoalArea && s.GoalAreaWidth < s.GoalWidth {
+		s.GoalAreaWidth = s.GoalWidth
+	}
+	if s.PenaltyArea {
+		floor := s.GoalWidth
+		if s.GoalArea && s.GoalAreaWidth > floor {
+			floor = s.GoalAreaWidth
+		}
+		if s.PenaltyWidth < floor {
+			s.PenaltyWidth = floor
+		}
+	}
+	// Depth nesting: goal pocket <= goal-area <= penalty-area. GoalDepth defaults to 0
+	// (inherit the preset pocket), so only nest the editable box depths here.
+	if s.PenaltyArea && s.GoalArea && s.PenaltyDepth < s.GoalAreaDepth {
+		s.PenaltyDepth = s.GoalAreaDepth
+	}
+	// Pitch proportions only when both dimensions are overridden (0 = inherit preset).
+	if s.PlayWidth > 0 && s.PlayHeight > 0 && s.PlayWidth < s.PlayHeight {
+		s.PlayWidth = s.PlayHeight
+	}
+
+	// Win/draw fields: keep the validator's envelope. A shootout needs a positive best-of
+	// (the stepper's 0 reads as "default"); golden goal is a no-op without extra time.
+	if s.Penalties && s.PenaltyBestOf < 1 {
+		s.PenaltyBestOf = 5
+	}
+	if !s.Penalties {
+		s.PenaltyBestOf = 0
+	}
+	if !s.ExtraTime {
+		s.GoldenGoal = false
+	}
+}
+
+// SeedCLI seeds the per-team control from the legacy command-line flags: both teams take
+// the given roster size and AI difficulty, keeping the default human-on-Blue layout. This
+// keeps the CLI's -size/-difficulty flags meaningful while the lobby owns the rest.
+func (s *Settings) SeedCLI(size int, difficulty string) {
+	if size > 0 {
+		s.Teams[teamHome].Size = size
+		s.Teams[teamAway].Size = size
+	}
+	if difficulty != "" {
+		s.Teams[teamHome].Difficulty = difficulty
+		s.Teams[teamAway].Difficulty = difficulty
+	}
+	s.ClampDependents()
+	s.seedSizesFromField()
+}
+
+// Validate reports the first relational/range error in the resolved setup, delegating to
+// the single config-layer validator. The menu gates Start on this.
+func (s Settings) Validate() error { return s.MatchSetup.Validate() }
+
 // Config builds the config.Config for this match via the single mapping.
 func (s Settings) Config() config.Config {
 	cfg, err := s.MatchSetup.Build()
@@ -87,9 +190,12 @@ func (s Settings) Config() config.Config {
 	return cfg
 }
 
-// BuildMatch builds a fresh match and its controllers. practice is a single-player
-// friendly dribble session; otherwise it is a match against AI at the chosen difficulty,
-// with a local human on the blue team unless human is false (watch-AI).
+// BuildMatch builds a fresh match and its controllers from the per-team control model.
+// Each team gets a human at its chosen slot (when Human is set) with the rest of the
+// roster filled by control.NewAISkill at that team's difficulty; a both-AI configuration
+// is a "watch" match with no human. The legacy practice/human flags are accepted for
+// call-site compatibility: practice still builds a solo dribble session, and a false
+// human forces both teams to AI regardless of the per-team control.
 func (s Settings) BuildMatch(practice, human bool) (*sim.Match, map[int]control.Controller) {
 	cfg := s.Config()
 	field := sim.NewFieldFromGeometry(cfg.Geometry)
@@ -103,27 +209,51 @@ func (s Settings) BuildMatch(practice, human bool) (*sim.Match, map[int]control.
 		return m, controllers
 	}
 
-	m := sim.BuildMatchFromConfig(field, s.TeamSize, cfg)
-	skill, _ := control.SkillFromString(s.Difficulty)
-	humanID := -1
-	if human {
-		humanID = humanSlot(m.Teams[0])
+	home, away := s.Teams[teamHome].Size, s.Teams[teamAway].Size
+	if home < 1 {
+		home = 1
 	}
-	for _, p := range m.Players {
-		if p.PlayerID == humanID {
-			controllers[p.PlayerID] = input.NewHuman()
-		} else {
-			controllers[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
+	if away < 1 {
+		away = 1
+	}
+	m := sim.BuildMatchFromConfigSized(field, home, away, cfg)
+
+	// humanID is the single local human's PlayerID, or -1 for a watch match. With two
+	// human teams configured we still drive only one local player (the home team's),
+	// matching the single-keyboard input model.
+	humanID := -1
+	for ti, t := range []*sim.Team{m.Teams[teamHome], m.Teams[teamAway]} {
+		tc := s.Teams[ti]
+		if tc.Human && human && humanID < 0 {
+			humanID = slotPlayerID(t, tc.HumanSlot)
+		}
+		skill, _ := control.SkillFromString(tc.Difficulty)
+		for _, p := range t.Players {
+			if p.PlayerID == humanID {
+				controllers[p.PlayerID] = input.NewHuman()
+			} else {
+				controllers[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
+			}
 		}
 	}
 	return m, controllers
 }
 
-func humanSlot(t *sim.Team) int {
-	if len(t.Players) > 1 {
-		return t.Players[1].PlayerID
+// slotPlayerID maps a 1-based human slot to a PlayerID on the team, clamped to the
+// roster. Slot 1 is the keeper (jersey 1); the default lobby seeds slot 2 (an outfielder)
+// so the human is not forced into goal.
+func slotPlayerID(t *sim.Team, slot int) int {
+	if len(t.Players) == 0 {
+		return -1
 	}
-	return t.Players[0].PlayerID
+	idx := slot - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(t.Players) {
+		idx = len(t.Players) - 1
+	}
+	return t.Players[idx].PlayerID
 }
 
 func cycle(list []string, cur string, dir int) string {
@@ -137,23 +267,14 @@ func cycle(list []string, cur string, dir int) string {
 	return list[idx]
 }
 
-// cycleFrac steps to the next/prev preset offside fraction nearest to cur.
-func cycleFrac(cur float64, dir int) float64 {
-	idx, best := 0, 1e9
-	for i, v := range fracPresets {
-		if d := absF(v - cur); d < best {
-			best, idx = d, i
+// indexOf returns the index of cur in list, or 0 if absent (for segmented controls).
+func indexOf(list []string, cur string) int {
+	for i, v := range list {
+		if v == cur {
+			return i
 		}
 	}
-	idx = (idx + dir + len(fracPresets)) % len(fracPresets)
-	return fracPresets[idx]
-}
-
-func absF(x float64) float64 {
-	if x < 0 {
-		return -x
-	}
-	return x
+	return 0
 }
 
 func clampInt(v, lo, hi int) int {

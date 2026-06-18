@@ -8,7 +8,9 @@ import "fmt"
 // command line and the pre-match lobby both feed, so the two never drift. Zero-valued
 // dimension overrides mean "keep the field preset's value".
 type MatchSetup struct {
-	TeamSize int
+	TeamSize int    // back-compat seed: per-team size when HomeSize/AwaySize are 0
+	HomeSize int    // players on the home (left/Blue) team (0 = inherit TeamSize)
+	AwaySize int    // players on the away (right/Red) team (0 = inherit TeamSize)
 	Field    string // preset name (standard, small, large)
 
 	// Geometry overrides (0 = inherit the preset).
@@ -35,16 +37,34 @@ type MatchSetup struct {
 	Enforcement EnforcementMode
 	EvictGrace  float64
 
-	// Win / draw conditions.
-	Mode       string
-	Minutes    float64
-	WinScore   int
-	ExtraTime  bool
-	GoldenGoal bool
-	Penalties  bool
-	DirectPens bool
+	// Win / draw conditions. The two win conditions are orthogonal and may combine: both
+	// on is "first to N goals OR the clock, whichever comes first"; neither on is a
+	// never-ending friendly. The draw resolution (extra time, golden goal, penalties) only
+	// applies when regulation ends level.
+	WinByGoals    bool    // end early once a team reaches WinScore goals
+	WinScore      int     // goals needed to win when WinByGoals
+	WinByTime     bool    // end when the regulation clock expires
+	Minutes       float64 // regulation length in minutes when WinByTime
+	ExtraTime     bool    // if drawn at regulation, play extra time
+	ExtraMinutes  float64 // length of extra time in minutes (ignored when GoldenGoal)
+	GoldenGoal    bool    // modifier: when ExtraTime is on, extra time is sudden death (next goal wins)
+	Penalties     bool    // if still drawn, decide on a shootout (DIRECT pens when ExtraTime is off)
+	PenaltyBestOf int     // kicks per side in a shootout (0 = the default of 5)
 
 	Seed int64
+}
+
+// sizes returns the resolved per-team roster sizes, falling back to TeamSize whenever a
+// per-team override is left at zero. It is the single place the two size conventions meet.
+func (s MatchSetup) sizes() (home, away int) {
+	home, away = s.HomeSize, s.AwaySize
+	if home <= 0 {
+		home = s.TeamSize
+	}
+	if away <= 0 {
+		away = s.TeamSize
+	}
+	return home, away
 }
 
 // DefaultMatchSetup reproduces the original default match (standard pitch, friendly
@@ -52,15 +72,15 @@ type MatchSetup struct {
 // legacy Default() config.
 func DefaultMatchSetup() MatchSetup {
 	return MatchSetup{
-		TeamSize:    3,
-		Field:       "standard",
-		PenaltyArea: true,
-		GoalArea:    true,
-		Mode:        "friendly",
-		Minutes:     3,
-		WinScore:    3,
-		OffsideFrac: 2.0 / 3.0,
-		Seed:        1,
+		TeamSize:     3,
+		Field:        "standard",
+		PenaltyArea:  true,
+		GoalArea:     true,
+		Minutes:      3,
+		WinScore:     3,
+		ExtraMinutes: 1,
+		OffsideFrac:  2.0 / 3.0,
+		Seed:         1,
 	}
 }
 
@@ -69,8 +89,12 @@ func (s MatchSetup) Validate() error {
 	if _, ok := PresetByName(s.Field); !ok {
 		return fmt.Errorf("unknown field preset %q (want standard, small, or large)", s.Field)
 	}
-	if s.TeamSize < 1 || s.TeamSize > 11 {
-		return fmt.Errorf("team size must be between 1 and 11")
+	home, away := s.sizes()
+	if home < 1 || home > 11 {
+		return fmt.Errorf("home team size must be between 1 and 11")
+	}
+	if away < 1 || away > 11 {
+		return fmt.Errorf("away team size must be between 1 and 11")
 	}
 	if s.OffsideFrac < 0 || s.OffsideFrac > 1 {
 		return fmt.Errorf("offside fraction must be between 0 and 1")
@@ -78,11 +102,26 @@ func (s MatchSetup) Validate() error {
 	if s.PenaltyBoxMax < 0 || s.GoalAreaMax < 0 || s.PenaltyBoxMaxOpp < 0 || s.GoalAreaMaxOpp < 0 {
 		return fmt.Errorf("box max players must not be negative")
 	}
-	if s.Minutes < 0 {
-		return fmt.Errorf("minutes must not be negative")
+	if s.WinByGoals && s.WinScore < 1 {
+		return fmt.Errorf("win score must be at least 1 when winning by goals")
 	}
-	if s.WinScore < 1 {
-		return fmt.Errorf("win score must be at least 1")
+	if s.WinByTime && s.Minutes <= 0 {
+		return fmt.Errorf("minutes must be positive when winning by time")
+	}
+	if s.ExtraTime && !s.GoldenGoal && s.ExtraMinutes <= 0 {
+		return fmt.Errorf("extra minutes must be positive when extra time is fixed-length")
+	}
+	if s.Penalties && s.PenaltyBestOf < 1 {
+		return fmt.Errorf("penalty best-of must be at least 1 when penalties are enabled")
+	}
+	// The resolved geometry must satisfy the relational constraints (box nesting, pitch
+	// proportions). Validate the geometry exactly as the match will see it.
+	g, err := s.Geometry()
+	if err != nil {
+		return err
+	}
+	if err := g.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -117,34 +156,47 @@ func (s MatchSetup) Geometry() (Geometry, error) {
 	return g.Normalize(), nil
 }
 
-// Ruleset builds the match ruleset: the base mode, the draw-decider chain (same order as
-// the CLI), the offside line, and the per-box caps. A cap on a non-existent box is
-// harmless -- enforcement no-ops when the box has no geometry.
+// Ruleset builds the match ruleset from the orthogonal win/draw fields: the win condition
+// (goals, time, both, or neither), the draw-resolution chain (extra time -- sudden death
+// when golden -- then penalties), the offside line, and the per-box caps. A cap on a
+// non-existent box is harmless -- enforcement no-ops when the box has no geometry.
 func (s MatchSetup) Ruleset() (Ruleset, error) {
-	r, err := RulesetForMode(s.Mode, s.Minutes, s.WinScore)
-	if err != nil {
-		return Ruleset{}, err
-	}
+	r := DefaultRuleset()
+
+	// Win condition: the two flags are orthogonal and combine into a hybrid.
 	switch {
-	case s.DirectPens:
-		r.OnDraw = []Continuation{ContinuePenalties}
-		r.Penalties = DefaultPenalties()
-	case s.ExtraTime || s.GoldenGoal || s.Penalties:
-		r.OnDraw = nil
-		if s.ExtraTime {
-			r.OnDraw = append(r.OnDraw, ContinueExtraTime)
-			if r.ExtraTimeSeconds == 0 {
-				r.ExtraTimeSeconds = (s.Minutes * 60) / 3
-			}
-		}
+	case s.WinByGoals && s.WinByTime:
+		r.Win = WinFirstAndTimed
+		r.ScoreTarget = s.WinScore
+		r.RegulationSeconds = s.Minutes * 60
+	case s.WinByGoals:
+		r.Win = WinFirstToScore
+		r.ScoreTarget = s.WinScore
+	case s.WinByTime:
+		r.Win = WinTimed
+		r.RegulationSeconds = s.Minutes * 60
+	default:
+		r.Win = WinFriendly
+	}
+
+	// Draw resolution (only reachable when level at regulation end). Extra time first --
+	// sudden death (until a goal) when golden, otherwise a fixed period -- then penalties.
+	// Penalties with no extra time is therefore a "direct" shootout.
+	r.OnDraw = nil
+	if s.ExtraTime {
 		if s.GoldenGoal {
 			r.OnDraw = append(r.OnDraw, ContinueGoldenGoal)
-		}
-		if s.Penalties {
-			r.OnDraw = append(r.OnDraw, ContinuePenalties)
-			r.Penalties = DefaultPenalties()
+			r.GoldenGoalSeconds = 0 // until a goal is scored
+		} else {
+			r.OnDraw = append(r.OnDraw, ContinueExtraTime)
+			r.ExtraTimeSeconds = s.ExtraMinutes * 60
 		}
 	}
+	if s.Penalties {
+		r.OnDraw = append(r.OnDraw, ContinuePenalties)
+		r.Penalties = DefaultPenalties()
+	}
+
 	if s.Offside {
 		r.OffsideEnabled = true
 		if s.OffsideFrac > 0 {
@@ -166,6 +218,9 @@ func (s MatchSetup) Ruleset() (Ruleset, error) {
 		r.GoalAreaMaxOpponents = s.GoalAreaMaxOpp
 	}
 	r.GoalAreaKeeperOnly = s.GoalAreaKeeperOnly
+	if s.PenaltyBestOf > 0 {
+		r.Penalties.BestOf = s.PenaltyBestOf
+	}
 	r.Enforcement = s.Enforcement
 	r.EvictGrace = s.EvictGrace
 	return r, nil

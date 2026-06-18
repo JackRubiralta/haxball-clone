@@ -10,9 +10,16 @@ import (
 // a player jitter against an invisible line -- the AI voluntarily keeps its target slots
 // legal, so it simply never runs into the rule.
 
-// kickoffActive reports whether the ball is sitting (near) still on the centre spot, i.e.
-// the match is at a kickoff and play has not yet started.
+// kickoffActive reports whether the AI should treat the ball as a dead kickoff ball: the
+// authoritative case is the sim having armed a staged kickoff (View.KickoffArmed -- taker on
+// the centre dot, no touch yet), which is what gates the defending side's standoff. It also
+// stays true while the ball is simply sitting (near) still on the centre spot, so the AI's
+// own-half / formation clamps keep discipline through any centre-spot dead-ball lull, not
+// only a sim-staged kickoff (this is what the off-ball positioning has always relied on).
 func kickoffActive(p perception) bool {
+	if p.view.KickoffArmed() {
+		return true
+	}
 	f := p.view.Field()
 	return geom.Dist(p.ball, f.CenterSpot()) < f.CenterCircleRadius()*0.6 && geom.Norm(p.ballVel) < 8
 }

@@ -1,6 +1,10 @@
 package config
 
-import "phootball/internal/geom"
+import (
+	"fmt"
+
+	"phootball/internal/geom"
+)
 
 // Rect is an axis-aligned rectangle in world coordinates.
 type Rect struct {
@@ -64,6 +68,66 @@ func (g Geometry) Max() geom.Vec {
 // Center returns the centre of the play area (the kickoff spot).
 func (g Geometry) Center() geom.Vec {
 	return g.Min().Add(g.Max()).Scale(0.5)
+}
+
+// Validate checks the relational constraints between a RESOLVED geometry's dimensions:
+// the two boxes must nest (goal mouth <= goal area <= penalty area, in both the across-pitch
+// width and the into-pitch depth), the pitch must be longer than it is wide (PlayWidth is the
+// goal-to-goal length, PlayHeight the across-pitch width), the goal mouth must fit across the
+// pitch, and each enabled box must fit within the pitch. It is meant to run on the output of
+// MatchSetup.Geometry() (preset + overrides applied); Normalize remains the last-line guard.
+func (g Geometry) Validate() error {
+	if g.PlayWidth <= 0 || g.PlayHeight <= 0 {
+		return fmt.Errorf("pitch dimensions must be positive")
+	}
+	if g.PlayWidth < g.PlayHeight {
+		return fmt.Errorf("pitch length (%.0f) must be at least its width (%.0f)", g.PlayWidth, g.PlayHeight)
+	}
+	if g.GoalMouthWidth <= 0 {
+		return fmt.Errorf("goal mouth width must be positive")
+	}
+	if g.GoalMouthWidth > g.PlayHeight {
+		return fmt.Errorf("goal mouth (%.0f) must not exceed the pitch width (%.0f)", g.GoalMouthWidth, g.PlayHeight)
+	}
+	// Goal pocket depth is part of the goal; treat it as the goal's into-pitch reference depth.
+	if g.HasGoalArea {
+		if g.GoalAreaWidth < g.GoalMouthWidth {
+			return fmt.Errorf("goal-area width (%.0f) must be at least the goal mouth (%.0f)", g.GoalAreaWidth, g.GoalMouthWidth)
+		}
+		if g.GoalAreaDepth < g.GoalPocketDepth {
+			return fmt.Errorf("goal-area depth (%.0f) must be at least the goal depth (%.0f)", g.GoalAreaDepth, g.GoalPocketDepth)
+		}
+		if g.GoalAreaWidth > g.PlayHeight {
+			return fmt.Errorf("goal-area width (%.0f) must not exceed the pitch width (%.0f)", g.GoalAreaWidth, g.PlayHeight)
+		}
+		if 2*g.GoalAreaDepth > g.PlayWidth {
+			return fmt.Errorf("goal-area depth (%.0f) must fit within the pitch length (%.0f)", g.GoalAreaDepth, g.PlayWidth)
+		}
+	}
+	if g.HasPenaltyArea {
+		if g.HasGoalArea {
+			if g.PenaltyWidth < g.GoalAreaWidth {
+				return fmt.Errorf("penalty-area width (%.0f) must be at least the goal-area width (%.0f)", g.PenaltyWidth, g.GoalAreaWidth)
+			}
+			if g.PenaltyDepth < g.GoalAreaDepth {
+				return fmt.Errorf("penalty-area depth (%.0f) must be at least the goal-area depth (%.0f)", g.PenaltyDepth, g.GoalAreaDepth)
+			}
+		} else {
+			if g.PenaltyWidth < g.GoalMouthWidth {
+				return fmt.Errorf("penalty-area width (%.0f) must be at least the goal mouth (%.0f)", g.PenaltyWidth, g.GoalMouthWidth)
+			}
+			if g.PenaltyDepth < g.GoalPocketDepth {
+				return fmt.Errorf("penalty-area depth (%.0f) must be at least the goal depth (%.0f)", g.PenaltyDepth, g.GoalPocketDepth)
+			}
+		}
+		if g.PenaltyWidth > g.PlayHeight {
+			return fmt.Errorf("penalty-area width (%.0f) must not exceed the pitch width (%.0f)", g.PenaltyWidth, g.PlayHeight)
+		}
+		if 2*g.PenaltyDepth > g.PlayWidth {
+			return fmt.Errorf("penalty-area depth (%.0f) must fit within the pitch length (%.0f)", g.PenaltyDepth, g.PlayWidth)
+		}
+	}
+	return nil
 }
 
 // Normalize fills in any sizes left at zero with sensible derived values, so a config

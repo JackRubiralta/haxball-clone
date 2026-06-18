@@ -7,6 +7,7 @@ package render
 import (
 	"image/color"
 	"math"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
@@ -44,6 +45,8 @@ var (
 	coneInner    = color.RGBA{252, 206, 130, 255}
 	hudColor     = color.RGBA{0, 0, 0, 110}
 	bannerColor  = color.RGBA{0, 0, 0, 165}
+	hudText      = color.RGBA{240, 244, 240, 255} // legible HUD text
+	hudDim       = color.RGBA{210, 218, 210, 200} // secondary HUD text (controls hint)
 	offsideLine  = color.RGBA{235, 240, 235, 105} // translucent white anti-camp line
 )
 
@@ -210,6 +213,56 @@ func (c canvas) number(s string, x, y, sizeWorld float64, clr color.Color) {
 	text.Draw(c.dst, s, face, int(ox), int(oy), clr)
 }
 
+// Text alignment for the sized vector-text API.
+const (
+	AlignLeft   = 0
+	AlignCenter = 1
+	AlignRight  = 2
+)
+
+// measureRefPx is the fixed reference pixel size the layout-measuring face is
+// cached at. MeasureUI measures with this face once and scales the result
+// linearly, so a width is identical in both immediate-mode passes (the update
+// pass runs before any canvas/scale exists).
+const measureRefPx = 64
+
+// textSized draws text at a UI/world position in the smooth vector (jersey) font,
+// sized in the same units as the coordinates (world/UI units, scaled by c.scale).
+// align picks the horizontal anchor at x: AlignLeft/AlignCenter/AlignRight. The
+// baseline is vertically centred on y. Centring uses text.BoundString -- no
+// len(s)*k fudging -- so it is correct for any glyphs.
+func (c canvas) textSized(s string, x, y, sizePx float64, align int, clr color.Color) {
+	if s == "" {
+		return
+	}
+	face := jerseyFace(int(sizePx * c.scale))
+	b := text.BoundString(face, s)
+	px := float64(c.px(x))
+	switch align {
+	case AlignCenter:
+		px -= float64(b.Min.X) + float64(b.Dx())/2
+	case AlignRight:
+		px -= float64(b.Min.X) + float64(b.Dx())
+	default:
+		px -= float64(b.Min.X)
+	}
+	oy := float64(c.py(y)) - float64(b.Min.Y) - float64(b.Dy())/2
+	text.Draw(c.dst, s, face, int(px), int(oy), clr)
+}
+
+// measureUI returns the rendered width of s, in UI units, for vector text drawn
+// at sizeUI. It measures with a face cached at a fixed reference size and scales
+// linearly, so the result does not depend on the current canvas scale (and is
+// available in the update pass, which has no canvas). Layout math built on this
+// therefore agrees between the update and draw passes.
+func measureUI(s string, sizeUI float64) float64 {
+	if s == "" {
+		return 0
+	}
+	b := text.BoundString(jerseyFace(measureRefPx), s)
+	return float64(b.Dx()) * sizeUI / float64(measureRefPx)
+}
+
 // ScreenToWorld converts a framebuffer (cursor) coordinate back to world space using
 // the most recent frame's transform.
 func ScreenToWorld(x, y int) geom.Vec {
@@ -253,6 +306,27 @@ func (u UI) TextCentered(s string, cx, y float64) { u.c.text(s, cx, y, -len(s)*3
 // TextRight draws text ending near x (rough right alignment for the debug font).
 func (u UI) TextRight(s string, x, y float64) { u.c.text(s, x, y, -len(s)*6, 0) }
 
+// TextS draws left-aligned vector text at a UI position, sized in UI units and
+// vertically centred on y. This is the legible, scalable replacement for Text.
+func (u UI) TextS(s string, x, y, sizeUI float64, clr color.Color) {
+	u.c.textSized(s, x, y, sizeUI, AlignLeft, clr)
+}
+
+// TextCenteredS draws vector text centred horizontally on cx, sized in UI units.
+func (u UI) TextCenteredS(s string, cx, y, sizeUI float64, clr color.Color) {
+	u.c.textSized(s, cx, y, sizeUI, AlignCenter, clr)
+}
+
+// TextRightS draws vector text ending at x (right-aligned), sized in UI units.
+func (u UI) TextRightS(s string, x, y, sizeUI float64, clr color.Color) {
+	u.c.textSized(s, x, y, sizeUI, AlignRight, clr)
+}
+
+// MeasureUI returns the width, in UI units, of s drawn as vector text at sizeUI.
+// It is scale-independent, so menu layout math is identical in both the update
+// and draw passes.
+func (u UI) MeasureUI(s string, sizeUI float64) float64 { return measureUI(s, sizeUI) }
+
 // Panel draws a filled, outlined rounded-feel rectangle for a menu surface.
 func (u UI) Panel(x, y, w, h float64, fill, border color.Color) {
 	u.c.fillRect(x, y, w, h, fill)
@@ -277,20 +351,26 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
 	drawPossessionBarsAll(screen, m)
-	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
-		m.ClockSeconds(), m.PhaseLabel())
-	if m.InShootout() {
-		lg, rg := m.ShootoutScore()
-		lt, rt := m.ShootoutTaken()
-		ShootoutPanel(screen, m.Teams[0].Name, lg, lt, m.Teams[1].Name, rg, rt)
+	DrawHUD(screen, hudFromMatch(m))
+	drawMatchOverlays(screen, m)
+}
+
+// drawMatchOverlays draws the animated goal overlay, the stage-card transition, the
+// pause banner, and the final result for a local match. It is shared by Match and Frame
+// so both draw paths get the same presentation. The FX timers are client-side and purely
+// cosmetic (advanced by wall time in advanceFX), so they never touch determinism.
+func drawMatchOverlays(screen *ebiten.Image, m *sim.Match) {
+	advanceFX()
+	fx.observe(m.Celebrating(), m.Phase())
+	drawStageCard(screen, m.Phase())
+	if m.Celebrating() {
+		drawGoalOverlay(screen, goalMessage(m), goalTint(m), m.Ball.Position, m.Field.Geo.ScreenWidth, m.Field.Geo.ScreenHeight)
 	}
 	switch {
 	case m.Paused:
 		CenterBanner(screen, "P A U S E D")
 	case m.Finished():
 		CenterBanner(screen, winnerMessage(m))
-	case m.Celebrating():
-		CenterBanner(screen, goalMessage(m))
 	}
 }
 
@@ -338,19 +418,8 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 	drawZoneIndicators(newCanvas(screen), m.Field, m.Rules)
 	camActive = false
 
-	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
-		m.ClockSeconds(), m.PhaseLabel())
-	if m.InShootout() {
-		lg, rg := m.ShootoutScore()
-		lt, rt := m.ShootoutTaken()
-		ShootoutPanel(screen, m.Teams[0].Name, lg, lt, m.Teams[1].Name, rg, rt)
-	}
-	switch {
-	case m.Finished():
-		CenterBanner(screen, winnerMessage(m))
-	case m.Celebrating():
-		CenterBanner(screen, goalMessage(m))
-	}
+	DrawHUD(screen, hudFromMatch(m))
+	drawMatchOverlays(screen, m)
 }
 
 // goalMessage describes the most recent goal (scorer, assist, own goal, deflection).
@@ -774,6 +843,462 @@ func strokeArc(c canvas, center geom.Vec, r, a0, a1, w float64, clr color.Color)
 	}
 }
 
+// ---------------------------------------------------------------------------
+// In-game HUD model and drawer.
+// ---------------------------------------------------------------------------
+
+// HUDModel is the plain, render-agnostic data the HUD needs. It is built identically
+// from a local *sim.Match (hudFromMatch) or a network snapshot (HUDFromSnapshot via the
+// client), so a single DrawHUD covers every draw path with no new snapshot fields.
+type HUDModel struct {
+	LeftName, RightName   string
+	LeftColor, RightColor color.RGBA
+	LeftScore, RightScore int
+	ClockSeconds          float64
+	Phase                 string // scoreboard phase label ("" during ordinary play)
+
+	InShootout bool
+	// Shootout result dots, oldest first, per side. true = scored, false = missed.
+	LeftDots, RightDots []bool
+	// Fallback tallies when no per-kick detail is available (network path).
+	LeftPenGoals, LeftPenTaken   int
+	RightPenGoals, RightPenTaken int
+}
+
+// hudFromMatch builds the HUD model from a local match.
+func hudFromMatch(m *sim.Match) HUDModel {
+	h := HUDModel{
+		LeftName:     m.Teams[0].Name,
+		RightName:    m.Teams[1].Name,
+		LeftColor:    m.Teams[0].Color,
+		RightColor:   m.Teams[1].Color,
+		LeftScore:    m.Teams[0].Score,
+		RightScore:   m.Teams[1].Score,
+		ClockSeconds: m.ClockSeconds(),
+		Phase:        m.PhaseLabel(),
+		InShootout:   m.InShootout(),
+	}
+	if h.InShootout {
+		lg, rg := m.ShootoutScore()
+		lt, rt := m.ShootoutTaken()
+		h.LeftPenGoals, h.LeftPenTaken = lg, lt
+		h.RightPenGoals, h.RightPenTaken = rg, rt
+		for _, k := range m.ShootoutKicks() {
+			if k.Side == m.Teams[0].Side {
+				h.LeftDots = append(h.LeftDots, k.Scored)
+			} else {
+				h.RightDots = append(h.RightDots, k.Scored)
+			}
+		}
+	}
+	return h
+}
+
+// HUDFromSnapshot builds the HUD model from a network snapshot's already-present fields
+// (no new snapshot data). The client passes the scoreboard strings/colours/scores it
+// receives; shootout detail falls back to the goal/taken tallies.
+func HUDFromSnapshot(leftName, rightName string, leftColor, rightColor color.RGBA,
+	leftScore, rightScore int, clockSeconds float64, phase string,
+	inShootout bool, leftPenGoals, leftPenTaken, rightPenGoals, rightPenTaken int) HUDModel {
+	return HUDModel{
+		LeftName: leftName, RightName: rightName,
+		LeftColor: leftColor, RightColor: rightColor,
+		LeftScore: leftScore, RightScore: rightScore,
+		ClockSeconds: clockSeconds, Phase: phase,
+		InShootout:   inShootout,
+		LeftPenGoals: leftPenGoals, LeftPenTaken: leftPenTaken,
+		RightPenGoals: rightPenGoals, RightPenTaken: rightPenTaken,
+	}
+}
+
+// HUD layout constants (UI/world units, scaled by the canvas).
+const (
+	hudBarH   = 44.0
+	hudChipW  = 188.0
+	hudGap    = 14.0
+	hudScoreS = 30.0 // big vector score size
+	hudNameS  = 16.0
+	hudClockS = 17.0
+	hudPhaseS = 13.0
+)
+
+var (
+	hudPanel  = color.RGBA{16, 22, 28, 180}
+	hudScored = color.RGBA{96, 220, 110, 255} // shootout scored dot
+	hudMissed = color.RGBA{210, 78, 78, 255}  // shootout missed dot
+	hudEmpty  = color.RGBA{210, 218, 210, 80} // untaken dot
+)
+
+// DrawHUD draws the in-game top tally: two team chips (colour block + name + procedural
+// badge), the big vector score between them, the clock on the left and the phase on the
+// right, plus a shootout sub-row of scored/missed dots. It is fit-to-window (never pans
+// or zooms) so it stays put under the camera.
+func DrawHUD(screen *ebiten.Image, h HUDModel) {
+	c := newHUDCanvas(screen)
+	w := worldW
+
+	// Top bar background.
+	c.fillRect(0, 0, w, hudBarH, hudPanel)
+
+	cx := w / 2
+	// Big central score "L - R".
+	score := itoa(h.LeftScore) + "  -  " + itoa(h.RightScore)
+	c.textSized(score, cx, hudBarH/2, hudScoreS, AlignCenter, hudText)
+	scoreHalf := measureUI(score, hudScoreS) / 2
+
+	// Left team chip, right-anchored against the score.
+	chipPad := 12.0
+	leftChipR := cx - scoreHalf - hudGap
+	drawTeamChip(c, h.LeftName, h.LeftColor, leftChipR-hudChipW, 4, hudChipW, hudBarH-8, false)
+	// Right team chip, left-anchored against the score.
+	rightChipL := cx + scoreHalf + hudGap
+	drawTeamChip(c, h.RightName, h.RightColor, rightChipL, 4, hudChipW, hudBarH-8, true)
+
+	// Clock (left) with a small clock icon, and the phase label (right).
+	c.iconClock(chipPad+9, hudBarH/2, 18, hudDim)
+	c.textSized(formatClock(h.ClockSeconds), chipPad+24, hudBarH/2, hudClockS, AlignLeft, hudText)
+	if h.Phase != "" {
+		c.textSized(h.Phase, w-chipPad, hudBarH/2, hudPhaseS, AlignRight, hudColorForPhase(h.Phase))
+	}
+
+	if h.InShootout {
+		drawShootoutRow(c, h, w)
+	}
+
+	// Controls hint along the bottom.
+	c.textSized("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap  -  Esc pause",
+		10, worldH-14, 12, AlignLeft, hudDim)
+}
+
+// drawTeamChip draws a colour block, the team name, and a procedural shield badge. When
+// mirror is set the badge sits on the right (for the right-hand team) so the two chips
+// face inward toward the score.
+func drawTeamChip(c canvas, name string, col color.RGBA, x, y, w, h float64, mirror bool) {
+	c.fillRect(x, y, w, h, withAlpha(col, 60))
+	c.strokeRect(x, y, w, h, 1.5, withAlpha(col, 200))
+	badgeR := h * 0.8
+	pad := 8.0
+	badgeX := x + pad + badgeR/2
+	nameX := x + pad*2 + badgeR
+	nameAlign := AlignLeft
+	if mirror {
+		badgeX = x + w - pad - badgeR/2
+		nameX = x + w - pad*2 - badgeR
+		nameAlign = AlignRight
+	}
+	c.iconShield(badgeX, y+h/2, badgeR, col, outlineColor)
+	// Clip the name to the chip with a simple width budget.
+	c.textSized(fitText(name, w-badgeR-pad*3, hudNameS), nameX, y+h/2, hudNameS, nameAlign, hudText)
+}
+
+// drawShootoutRow draws the penalties sub-bar: a "PENALTIES" tag and a row of result dots
+// per side (scored = green, missed = red, untaken slots = faint).
+func drawShootoutRow(c canvas, h HUDModel, w float64) {
+	const rowY = hudBarH
+	const rowH = 22.0
+	c.fillRect(0, rowY, w, rowH, hudPanel)
+	c.textSized("PENALTIES", w/2, rowY+rowH/2, 12, AlignCenter, hudDim)
+
+	dotR := 4.0
+	gap := 11.0
+	cy := rowY + rowH/2
+	// Left dots grow leftward from centre-left; right dots grow rightward from centre-right.
+	left := dotsFor(h.LeftDots, h.LeftPenGoals, h.LeftPenTaken)
+	right := dotsFor(h.RightDots, h.RightPenGoals, h.RightPenTaken)
+	startL := w/2 - 70
+	for i, scored := range left {
+		c.fillCircle(startL-float64(i)*gap, cy, dotR, dotColor(scored))
+	}
+	startR := w/2 + 70
+	for i, scored := range right {
+		c.fillCircle(startR+float64(i)*gap, cy, dotR, dotColor(scored))
+	}
+}
+
+// dotsFor returns the per-kick scored flags, falling back to reconstructing them from the
+// goal/taken tallies when no per-kick detail is available (the network path): the first
+// `goals` are scored, the rest missed.
+func dotsFor(detail []bool, goals, taken int) []bool {
+	if len(detail) > 0 {
+		return detail
+	}
+	out := make([]bool, 0, taken)
+	for i := 0; i < taken; i++ {
+		out = append(out, i < goals)
+	}
+	return out
+}
+
+func dotColor(scored bool) color.RGBA {
+	if scored {
+		return hudScored
+	}
+	return hudMissed
+}
+
+// hudColorForPhase tints the phase label so a sudden-death stage reads as urgent.
+func hudColorForPhase(phase string) color.RGBA {
+	switch phase {
+	case "GOLDEN GOAL", "PENALTIES":
+		return color.RGBA{255, 196, 90, 255}
+	case "FULL TIME":
+		return color.RGBA{255, 120, 120, 255}
+	default:
+		return hudText
+	}
+}
+
+// fitText trims s with an ellipsis so its rendered width stays within maxW (UI units).
+func fitText(s string, maxW, sizeUI float64) string {
+	if measureUI(s, sizeUI) <= maxW {
+		return s
+	}
+	for len(s) > 1 {
+		s = s[:len(s)-1]
+		if measureUI(s+"…", sizeUI) <= maxW {
+			return s + "…"
+		}
+	}
+	return s
+}
+
+// ---------------------------------------------------------------------------
+// Client-side, cosmetic FX: animated goal overlay and stage-card transitions.
+// ---------------------------------------------------------------------------
+
+// fxState holds the client-only celebration/stage animators. The timers advance by wall
+// time (render is client-only and never linked into the headless server, so this does
+// not affect simulation determinism). They are edge-triggered off the match's
+// Celebrating()/Phase() so a rising edge restarts the animation.
+type fxState struct {
+	lastTick    time.Time
+	wasCeleb    bool
+	celebT      float64 // seconds since the goal celebration began (0 = none)
+	lastPhase   sim.Phase
+	phaseLabel0 string  // last observed snapshot phase label (client edge-detect)
+	phaseT      float64 // seconds since the last stage change (counts up; card shown while < stageCardSeconds)
+	phaseLabel  string  // the label to show on the stage card
+	initialised bool
+}
+
+const (
+	celebDuration    = 2.4 // goal overlay lifetime (seconds)
+	stageCardSeconds = 2.0 // stage-card fade-in/out lifetime (seconds)
+)
+
+var fx fxState
+
+// advanceFX ticks the cosmetic FX clock by the real elapsed time since the last draw.
+func advanceFX() {
+	now := time.Now()
+	if fx.lastTick.IsZero() {
+		fx.lastTick = now
+		return
+	}
+	dt := now.Sub(fx.lastTick).Seconds()
+	fx.lastTick = now
+	if dt < 0 {
+		dt = 0
+	}
+	if dt > 0.1 {
+		dt = 0.1 // clamp a long stall so the animation does not jump
+	}
+	if fx.celebT > 0 {
+		fx.celebT += dt
+		if fx.celebT > celebDuration {
+			fx.celebT = 0
+		}
+	}
+	if fx.phaseT >= 0 && fx.phaseT < stageCardSeconds {
+		fx.phaseT += dt
+	}
+}
+
+// observe edge-detects the celebration and the phase so the FX timers restart on a rising
+// edge. The phase that ENTERS a sudden-death/finished stage shows a card.
+func (s *fxState) observe(celebrating bool, phase sim.Phase) {
+	if celebrating && !s.wasCeleb {
+		s.celebT = 0.0001 // arm
+	}
+	s.wasCeleb = celebrating
+	if !s.initialised {
+		s.lastPhase = phase
+		s.initialised = true
+		return
+	}
+	if phase != s.lastPhase {
+		s.lastPhase = phase
+		if label := stageCardLabel(phase); label != "" {
+			s.phaseLabel = label
+			s.phaseT = 0
+		}
+	}
+}
+
+// stageCardLabel returns the full-screen card text for a phase transition, or "" if that
+// phase does not warrant a card.
+func stageCardLabel(p sim.Phase) string {
+	switch p {
+	case sim.PhaseExtraTime:
+		return "EXTRA TIME"
+	case sim.PhaseGoldenGoal:
+		return "GOLDEN GOAL — next goal wins"
+	case sim.PhasePenalties:
+		return "PENALTIES"
+	case sim.PhaseFinished:
+		return "FULL TIME"
+	default:
+		return ""
+	}
+}
+
+// drawGoalOverlay draws the animated goal celebration: an expanding fading ring at the
+// goal spot plus a scale-in/fade banner with the scorer/assist message, tinted to the
+// scoring team. It is keyed off the client-side celebT timer.
+func drawGoalOverlay(screen *ebiten.Image, message string, tint color.RGBA, ballPos geom.Vec, sw, sh float64) {
+	if fx.celebT <= 0 {
+		return
+	}
+	prog := fx.celebT / celebDuration
+	if prog > 1 {
+		prog = 1
+	}
+	// Expanding ring at the ball/goal spot (world space, under the camera-fit HUD canvas).
+	worldW, worldH = sw, sh
+	wc := newHUDCanvas(screen)
+	ringR := 18 + prog*120
+	alpha := uint8(200 * (1 - prog))
+	const bands = 5
+	for i := 0; i < bands; i++ {
+		t := float64(i) / float64(bands)
+		r := ringR * (0.5 + 0.5*t)
+		a := uint8(float64(alpha) * (1 - t))
+		if a == 0 {
+			continue
+		}
+		wc.strokeCircle(ballPos.X, ballPos.Y, r, 3, color.RGBA{tint.R, tint.G, tint.B, a})
+	}
+
+	// Scale-in / fade banner, centred. Fades out over the back third of the lifetime.
+	worldW, worldH = sw, sh
+	c := newHUDCanvas(screen)
+	bannerAlpha := 1.0
+	if prog > 0.7 {
+		bannerAlpha = 1 - (prog-0.7)/0.3
+	}
+	scaleIn := 1.0
+	if prog < 0.18 {
+		scaleIn = prog / 0.18
+	}
+	size := 22.0 * (0.6 + 0.4*scaleIn)
+	cx, cy := worldW/2, worldH*0.34
+	bw := measureUI(message, size) + 48
+	bh := size + 22
+	c.fillRect(cx-bw/2, cy-bh/2, bw, bh, color.RGBA{0, 0, 0, uint8(165 * bannerAlpha)})
+	c.fillRect(cx-bw/2, cy-bh/2, 6, bh, color.RGBA{tint.R, tint.G, tint.B, uint8(255 * bannerAlpha)})
+	c.fillRect(cx+bw/2-6, cy-bh/2, 6, bh, color.RGBA{tint.R, tint.G, tint.B, uint8(255 * bannerAlpha)})
+	c.textSized(message, cx, cy, size, AlignCenter, color.RGBA{240, 244, 240, uint8(255 * bannerAlpha)})
+}
+
+// drawStageCard draws the brief full-screen transition card ("EXTRA TIME", etc.) keyed
+// off the client-side phaseT timer, fading in then out over stageCardSeconds.
+func drawStageCard(screen *ebiten.Image, _ sim.Phase) {
+	if fx.phaseLabel == "" || fx.phaseT >= stageCardSeconds {
+		return
+	}
+	t := fx.phaseT / stageCardSeconds // 0..1 across the card's life
+	// Fade in over the first 25%, hold, fade out over the last 35%.
+	alpha := 1.0
+	switch {
+	case t < 0.25:
+		alpha = t / 0.25
+	case t > 0.65:
+		alpha = 1 - (t-0.65)/0.35
+	}
+	if alpha < 0 {
+		alpha = 0
+	}
+	c := newHUDCanvas(screen)
+	c.fillRect(0, 0, worldW, worldH, color.RGBA{8, 12, 16, uint8(150 * alpha)})
+	bandH := 96.0
+	cy := worldH / 2
+	c.fillRect(0, cy-bandH/2, worldW, bandH, color.RGBA{12, 18, 24, uint8(210 * alpha)})
+	c.fillRect(0, cy-bandH/2, worldW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
+	c.fillRect(0, cy+bandH/2-3, worldW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
+	c.textSized(fx.phaseLabel, worldW/2, cy, 30, AlignCenter, color.RGBA{245, 240, 230, uint8(255 * alpha)})
+}
+
+// DrawClientOverlays drives the goal overlay and stage-card transitions for the network
+// client, which has no *sim.Match. It derives the same edge-triggered FX from the
+// snapshot's existing fields: celebrating, the phase label, the goal text, the scoring
+// team's tint (resolved by the caller), and the ball position. finished/finalText draw
+// the result banner. Mirrors drawMatchOverlays for the local path.
+func DrawClientOverlays(screen *ebiten.Image, celebrating bool, phaseLabel, goalText string,
+	tint color.RGBA, ballPos geom.Vec, sw, sh float64, finished bool, finalText string) {
+	advanceFX()
+	fx.observeLabels(celebrating, phaseLabel)
+	drawStageCard(screen, sim.PhasePlaying)
+	if celebrating {
+		msg := goalText
+		if msg == "" {
+			msg = "G O A L !"
+		}
+		drawGoalOverlay(screen, msg, tint, ballPos, sw, sh)
+	}
+	if finished {
+		worldW, worldH = sw, sh
+		CenterBanner(screen, finalText)
+	}
+}
+
+// observeLabels is the snapshot-driven counterpart to observe: it edge-detects the
+// celebration and the phase by its label string (the client has no sim.Phase).
+func (s *fxState) observeLabels(celebrating bool, phaseLabel string) {
+	if celebrating && !s.wasCeleb {
+		s.celebT = 0.0001
+	}
+	s.wasCeleb = celebrating
+	if !s.initialised {
+		s.phaseLabel0 = phaseLabel
+		s.initialised = true
+		return
+	}
+	if phaseLabel != s.phaseLabel0 {
+		s.phaseLabel0 = phaseLabel
+		if label := stageCardLabelFor(phaseLabel); label != "" {
+			s.phaseLabel = label
+			s.phaseT = 0
+		}
+	}
+}
+
+// stageCardLabelFor maps a snapshot phase label to a stage-card message.
+func stageCardLabelFor(phaseLabel string) string {
+	switch phaseLabel {
+	case "EXTRA TIME":
+		return "EXTRA TIME"
+	case "GOLDEN GOAL":
+		return "GOLDEN GOAL — next goal wins"
+	case "PENALTIES":
+		return "PENALTIES"
+	case "FULL TIME":
+		return "FULL TIME"
+	default:
+		return ""
+	}
+}
+
+// goalTint returns the scoring team's colour for the goal overlay, defaulting to white.
+func goalTint(m *sim.Match) color.RGBA {
+	if g := m.LastGoal; g != nil {
+		if m.Teams[0].Side == g.Team {
+			return m.Teams[0].Color
+		}
+		return m.Teams[1].Color
+	}
+	return color.RGBA{240, 244, 240, 255}
+}
+
 // Scoreboard draws a HUD bar with the score and the controls hint.
 func Scoreboard(screen *ebiten.Image, leftName string, leftScore int, rightName string, rightScore int) {
 	c := newHUDCanvas(screen)
@@ -789,12 +1314,13 @@ func ScoreboardWithClock(screen *ebiten.Image, leftName string, leftScore int, r
 	c := newHUDCanvas(screen)
 	c.fillRect(0, 0, worldW, 28, hudColor)
 	score := leftName + " " + itoa(leftScore) + "   -   " + itoa(rightScore) + " " + rightName
-	c.text(score, worldW/2, 7, -len(score)*3, 0)
-	c.text(formatClock(clockSeconds), 0, 7, 12, 0)
+	c.textSized(score, worldW/2, 14, 16, AlignCenter, hudText)
+	c.textSized(formatClock(clockSeconds), 12, 14, 16, AlignLeft, hudText)
 	if phase != "" {
-		c.text(phase, worldW, 7, -len(phase)*7-12, 0)
+		c.textSized(phase, worldW-12, 14, 14, AlignRight, hudText)
 	}
-	c.text("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap  -  Esc pause", 10, worldH-22, 0, 0)
+	c.textSized("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap  -  Esc pause",
+		10, worldH-14, 12, AlignLeft, hudDim)
 }
 
 // ShootoutPanel draws a sub-bar with the penalty tally: goals/kicks taken per side.
@@ -802,7 +1328,7 @@ func ShootoutPanel(screen *ebiten.Image, leftName string, lg, lt int, rightName 
 	c := newHUDCanvas(screen)
 	c.fillRect(0, 28, worldW, 22, hudColor)
 	s := "PENALTIES   " + leftName + " " + itoa(lg) + "/" + itoa(lt) + "   -   " + itoa(rg) + "/" + itoa(rt) + " " + rightName
-	c.text(s, worldW/2, 33, -len(s)*3, 0)
+	c.textSized(s, worldW/2, 39, 13, AlignCenter, hudText)
 }
 
 // GoalBanner draws the "GOAL!" overlay shown after a goal.
@@ -812,7 +1338,7 @@ func GoalBanner(screen *ebiten.Image) { CenterBanner(screen, "G O A L !") }
 func CenterBanner(screen *ebiten.Image, message string) {
 	c := newHUDCanvas(screen)
 	c.fillRect(0, worldH/2-26, worldW, 52, bannerColor)
-	c.text(message, worldW/2, worldH/2-4, -len(message)*3, 0)
+	c.textSized(message, worldW/2, worldH/2, 24, AlignCenter, hudText)
 }
 
 // formatClock renders seconds as mm:ss.

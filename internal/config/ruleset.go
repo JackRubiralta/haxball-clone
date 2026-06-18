@@ -1,10 +1,5 @@
 package config
 
-import (
-	"fmt"
-	"strings"
-)
-
 // WinCondition selects how a match is decided.
 type WinCondition int
 
@@ -16,6 +11,10 @@ const (
 	// WinTimed ends when the regulation clock expires; whoever leads then wins (or the
 	// draw is resolved by the OnDraw chain).
 	WinTimed
+	// WinFirstAndTimed is a hybrid: the match ends EARLY when a team reaches ScoreTarget,
+	// OR when the regulation clock expires (whoever leads then wins, otherwise the OnDraw
+	// chain resolves the draw) -- whichever comes first.
+	WinFirstAndTimed
 )
 
 // Continuation is one stage applied, in order, when regulation ends level.
@@ -84,17 +83,6 @@ func DefaultRuleset() Ruleset {
 	}
 }
 
-// QuickRuleset wins for the first team to reach target goals (default 3).
-func QuickRuleset(target int) Ruleset {
-	if target < 1 {
-		target = 3
-	}
-	r := DefaultRuleset()
-	r.Win = WinFirstToScore
-	r.ScoreTarget = target
-	return r
-}
-
 // TimedRuleset plays for seconds of regulation; whoever leads at the whistle wins, and a
 // level score is a draw (unless an OnDraw chain is added).
 func TimedRuleset(seconds float64) Ruleset {
@@ -104,34 +92,16 @@ func TimedRuleset(seconds float64) Ruleset {
 	return r
 }
 
-// GoldenGoalRuleset wins for the first goal from kickoff.
-func GoldenGoalRuleset() Ruleset { return QuickRuleset(1) }
-
-// CupRuleset is a timed match that, if drawn, plays extra time and then a penalty
-// shootout.
-func CupRuleset(seconds float64) Ruleset {
-	r := TimedRuleset(seconds)
-	r.OnDraw = []Continuation{ContinueExtraTime, ContinuePenalties}
-	r.ExtraTimeSeconds = seconds / 3
-	r.Penalties = DefaultPenalties()
-	return r
-}
-
-// RulesetForMode builds the base ruleset for a named mode. The draw-decider chain and
-// the positional rules are layered on by the caller (the CLI flags or the menu).
-func RulesetForMode(mode string, minutes float64, winScore int) (Ruleset, error) {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", "friendly":
-		return DefaultRuleset(), nil
-	case "quick":
-		return QuickRuleset(winScore), nil
-	case "timed":
-		return TimedRuleset(minutes * 60), nil
-	case "cup":
-		return CupRuleset(minutes * 60), nil
-	case "golden", "golden-goal":
-		return GoldenGoalRuleset(), nil
-	default:
-		return Ruleset{}, fmt.Errorf("unknown mode %q (want friendly, quick, timed, cup, or golden)", mode)
+// HybridRuleset is a timed match that also ends early once a team reaches the target
+// score: it ends on the target OR the clock, whichever comes first. A level score at the
+// whistle is a draw unless an OnDraw chain is added.
+func HybridRuleset(seconds float64, target int) Ruleset {
+	if target < 1 {
+		target = 3
 	}
+	r := DefaultRuleset()
+	r.Win = WinFirstAndTimed
+	r.RegulationSeconds = seconds
+	r.ScoreTarget = target
+	return r
 }

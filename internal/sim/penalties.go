@@ -7,11 +7,26 @@ import (
 
 // Penalty shootout timing (seconds).
 const (
-	penaltyReadySeconds   = 0.8 // pause before each kick goes live and after a result
+	penaltyReadySeconds   = 0.8 // pause before each kick goes live
+	penaltyResultSeconds  = 1.2 // pause after a MISS before the next kick
+	penaltyGoalSeconds    = 3.0 // pause after a SCORED pen before the next kick (longer to savour it)
 	penaltyAimSeconds     = 8.0 // a frozen taker has this long to aim and strike before it is a miss
 	penaltyResolveSeconds = 4.0 // after the strike, the shot has this long to score before it is a miss
 	penaltyStopSpeed      = 6.0 // a released ball slower than this (after a moment) is dead -> a miss
 )
+
+// keeperLineBand is how far (px) the keeper may stray from its goal line before release: it may
+// shuffle laterally along the line and aim, but cannot charge the spot.
+const keeperLineBand = 6.0
+
+// PenKick records one taken penalty for post-match attribution. Order is the count of kicks that
+// side had already taken before this one (so the first kick of a side is Order 1).
+type PenKick struct {
+	Side    Side
+	TakerID int
+	Scored  bool
+	Order   int
+}
 
 type penaltyKickState int
 
@@ -38,6 +53,7 @@ type Shootout struct {
 	takerID    int
 	keeperID   int
 	lastScored bool
+	kicks      []PenKick
 }
 
 func sideIndex(s Side) int {
@@ -99,6 +115,17 @@ func (m *Match) ShootoutTaken() (left, right int) {
 		return 0, 0
 	}
 	return m.shootout.taken[0], m.shootout.taken[1]
+}
+
+// ShootoutKicks returns a copy of every penalty taken so far (in order), for the post-match
+// screen, or nil if there is no shootout.
+func (m *Match) ShootoutKicks() []PenKick {
+	if m.shootout == nil || len(m.shootout.kicks) == 0 {
+		return nil
+	}
+	out := make([]PenKick, len(m.shootout.kicks))
+	copy(out, m.shootout.kicks)
+	return out
 }
 
 // penaltyTaker / penaltyKeeper pick a side's kicker (an outfielder if any) and keeper.
@@ -211,7 +238,11 @@ func (m *Match) stepShootout(inputs map[int]Intent, dt float64) {
 		}
 	case kickDone:
 		s.timer += dt
-		if s.timer < penaltyReadySeconds {
+		wait := penaltyResultSeconds
+		if s.lastScored {
+			wait = penaltyGoalSeconds // savour a scored pen for longer
+		}
+		if s.timer < wait {
 			return // brief pause to show the result
 		}
 		if w := s.winner(); w != SideNone {
@@ -241,17 +272,14 @@ func (m *Match) stepPenaltyPlay(inputs map[int]Intent, dt float64) {
 	taker := m.PlayerByID(s.takerID)
 	keeper := m.PlayerByID(s.keeperID)
 
-	// Keeper: it may turn to face, but stays planted on its line until the ball is released.
+	// Keeper: before release it may shuffle laterally along its line and aim, but it cannot charge
+	// the spot -- its X is clamped within keeperLineBand of the goal line (and its Y to the mouth).
 	if keeper != nil {
 		in := inputs[keeper.PlayerID]
-		if !s.released {
-			in.Move = geom.Vec{}
-			in.Throttle = 0
-		}
 		m.applyIntent(keeper, in, dt)
 		if !s.released {
-			keeper.Velocity = geom.NewVec(0, 0)
-			keeper.Acceleration = geom.NewVec(0, 0)
+			keeper.Body.Update(dt)
+			m.clampKeeperToLine(keeper, s.taker.Opponent())
 		}
 	}
 
@@ -317,6 +345,61 @@ func (m *Match) stepPenaltyPlay(inputs map[int]Intent, dt float64) {
 	}
 }
 
+// clampKeeperToLine holds the keeper near its goal line before release: it may shuffle laterally
+// (Y, within the goal mouth) and aim, but its X is pinned within keeperLineBand of the line so it
+// cannot charge the spot. Velocity into the line is killed so it does not drift off over time.
+func (m *Match) clampKeeperToLine(keeper *Player, defender Side) {
+	// Mirror setupKick's geometry exactly: goalX is the keeper's goal line and `into` points from
+	// the spot toward the goal, so the keeper stands at goalX - into*(r+1) and the pitch lies in
+	// the -into direction.
+	spot := m.Field.PenaltySpot(defender)
+	goalX := m.Field.Min.X
+	if defender == SideRight {
+		goalX = m.Field.Max.X
+	}
+	into := 1.0
+	if goalX < spot.X {
+		into = -1.0
+	}
+	// The keeper stands a hair off its line; allow a small band toward the pitch (never behind).
+	lineX := goalX - into*(keeper.Radius()+1)
+	near, far := lineX, lineX-into*keeperLineBand
+	lo, hi := near, far
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if keeper.Position.X < lo {
+		keeper.Position.X = lo
+		if keeper.Velocity.X < 0 {
+			keeper.Velocity.X = 0
+		}
+	} else if keeper.Position.X > hi {
+		keeper.Position.X = hi
+		if keeper.Velocity.X > 0 {
+			keeper.Velocity.X = 0
+		}
+	}
+	// Confine laterally to the goal mouth so it patrols the line, not the whole box.
+	top, bot := m.Field.goalMouthRange()
+	r := keeper.Radius()
+	top += r
+	bot -= r
+	if top > bot {
+		top, bot = (top+bot)/2, (top+bot)/2
+	}
+	if keeper.Position.Y < top {
+		keeper.Position.Y = top
+		if keeper.Velocity.Y < 0 {
+			keeper.Velocity.Y = 0
+		}
+	} else if keeper.Position.Y > bot {
+		keeper.Position.Y = bot
+		if keeper.Velocity.Y > 0 {
+			keeper.Velocity.Y = 0
+		}
+	}
+}
+
 func (m *Match) recordKick(scored bool) {
 	s := m.shootout
 	i := sideIndex(s.taker)
@@ -324,6 +407,12 @@ func (m *Match) recordKick(scored bool) {
 	if scored {
 		s.goals[i]++
 	}
+	s.kicks = append(s.kicks, PenKick{
+		Side:    s.taker,
+		TakerID: s.takerID,
+		Scored:  scored,
+		Order:   s.taken[i], // this side's kicks taken so far (this kick included)
+	})
 	s.lastScored = scored
 	s.kickState = kickDone
 	s.timer = 0

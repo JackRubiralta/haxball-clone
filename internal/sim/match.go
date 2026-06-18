@@ -44,10 +44,13 @@ type Match struct {
 	Paused bool           // set by the front end; while true Step does nothing
 	Clock  float64        // total elapsed match time in seconds (+= dt each live tick)
 
-	rng       *rand.Rand   // deterministic, seeded; used only for coin tosses
-	celebrate float64      // seconds until kickoff after a goal (play continues meanwhile)
-	shootout  *Shootout    // set only while Phase is PhasePenalties
-	sounds    []SoundEvent // sound events emitted this tick (drained by the client)
+	rng          *rand.Rand   // deterministic, seeded; used only for coin tosses
+	celebrate    float64      // seconds until kickoff after a goal (play continues meanwhile)
+	shootout     *Shootout    // set only while Phase is PhasePenalties
+	sounds       []SoundEvent // sound events emitted this tick (drained by the client)
+	kickoffArmed bool         // a staged kickoff is set up (taker on the dot) and not yet taken;
+	// purely informational (the HUD/AI read it) -- it never gates physics. Cleared on the first
+	// touch after a staged kickoff.
 
 	// Scoring attribution.
 	LastTouch    *Touch       // the most recent toucher (nil at kickoff)
@@ -190,6 +193,12 @@ func (m *Match) Step(inputs map[int]Intent, deltaTime float64) {
 	// draw-resolution chain (extra time, golden goal, penalties). Play is never paused
 	// for a goal -- the match keeps simulating during the celebration countdown.
 	m.advanceRules(deltaTime)
+
+	// A staged kickoff is disarmed the instant any touch is recorded -- the ball is in play.
+	// Informational only; this does not gate physics.
+	if m.kickoffArmed && m.LastTouch != nil {
+		m.kickoffArmed = false
+	}
 
 	m.Tick++
 }
@@ -380,16 +389,20 @@ func (m *Match) touching(p *Player) bool {
 	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Stats.TouchRange
 }
 
-// inPullRange reports whether the ball is within the player's (trap-extended) pull radius --
-// close enough to act on the ball without touching it. Used so a player can contest/steal
-// possession from arm's length (a held trap reaches further), not only in direct contact.
+// inPullRange reports whether the ball is within the player's POSSESSION radius -- close enough
+// to act on the ball without touching it. It uses possessionRadius() (the PossessionRange knob,
+// defaulting to base PullRange), NOT the trap-extended pullRadius(): a held trap extends the ball
+// ATTRACTION (the centre-pull in handleBallToPlayerInteraction) but it must NOT extend possession
+// reach, so trapping never widens who builds or contests possession. This is the single reach test
+// behind both the player-possession builder (engaged/advancePossessionBuilder) and the
+// team-possession contest (ballInTeamPullRange/advanceTeamPossession).
 func (m *Match) inPullRange(p *Player) bool {
-	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.pullRadius()
+	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.possessionRadius()
 }
 
-// ballInTeamPullRange reports whether any player on the given side has the ball within its pull
-// radius (the trap-extended reach). Used to detect a pull-range possession contest: the ball is
-// in BOTH the owning team's and an opponent's pull radius.
+// ballInTeamPullRange reports whether any player on the given side has the ball within its BASE
+// pull radius (inPullRange; NOT trap-extended). Used to detect a pull-range possession contest:
+// the ball is in BOTH the owning team's and an opponent's pull radius.
 func (m *Match) ballInTeamPullRange(side Side) bool {
 	for _, p := range m.Players {
 		if p.Team.Side == side && m.inPullRange(p) {
@@ -404,11 +417,13 @@ func playersTouching(a, b *Player) bool {
 	return geom.Dist(a.Position, b.Position) < a.Radius()+b.Radius()
 }
 
-// playerReach reports whether challenger c has target t within c's (trap-extended) pull radius --
-// a player-to-player reach (body contact is included, since the surface gap is then negative). A
-// held trap extends it.
+// playerReach reports whether challenger c has target t within c's POSSESSION radius -- a
+// player-to-player reach (body contact is included, since the surface gap is then negative). It
+// uses possessionRadius() (PossessionRange, defaulting to base PullRange), NOT the trap-extended
+// pullRadius(), so trapping does not widen the marking/pressure that drives the possession contest
+// (pressuredByOpponent / markedByNonBallOpponent).
 func playerReach(c, t *Player) bool {
-	return geom.Dist(c.Position, t.Position)-c.Radius()-t.Radius() < c.pullRadius()
+	return geom.Dist(c.Position, t.Position)-c.Radius()-t.Radius() < c.possessionRadius()
 }
 
 // pressuredByOpponent reports whether any opponent has p within its pull reach (an opponent is
@@ -441,7 +456,8 @@ func (m *Match) hasBall(p *Player) bool {
 	return m.possessor == p || m.touching(p)
 }
 
-// engaged reports whether a player has the BALL within its (trap-extended) pull reach this tick.
+// engaged reports whether a player has the BALL within its BASE pull reach this tick (inPullRange;
+// NOT trap-extended -- trapping does not widen who can build possession).
 // The latest player to become engaged is the sole possession BUILDER (advancePossessionBuilder)
 // -- so a player only builds/gains possession while it can actually reach the ball (Rule 3),
 // never merely by marking an opponent. Denial-by-marking (draining a holder who has nobody near
@@ -770,10 +786,14 @@ func (m *Match) addScore(goalEntered Side) {
 	}
 }
 
-// resetKickoff recentres the ball and returns every player to its home position. The
-// touch history is cleared so a goal can never be attributed across a kickoff; the
-// goal log and the match clock are kept.
-func (m *Match) resetKickoff() {
+// resetKickoff recentres the ball and returns every player to its home position, facing
+// its attacking goal. The touch history is cleared so a goal can never be attributed
+// across a kickoff; the goal log and the match clock are kept. When staged, the conceding
+// team's (KickoffSide) taker is placed on the centre dot facing the opponent goal with a
+// tiny gap and m.kickoffArmed is set; an unstaged reset (match start / a fresh timed stage)
+// just leaves the ball dead-centre with everyone home. The flag is informational only --
+// it never gates physics.
+func (m *Match) resetKickoff(staged bool) {
 	m.LastTouch = nil
 	m.touchHistory = m.touchHistory[:0]
 	m.resetTeamPossession()
@@ -797,8 +817,60 @@ func (m *Match) resetKickoff() {
 		p.evictDwell = 0
 		p.Body.SetRadius(p.Stats.Radius)
 		p.Body.MaxSpeed = p.Stats.MaxSpeed
+		// Face the attacking goal (FaceTowards normalises and is a no-op for a coincident point).
+		p.FaceTowards(m.AttackingGoal(p.Team).Center)
 	}
+
+	m.kickoffArmed = staged
+	if !staged {
+		return
+	}
+	// Place the conceding team's taker on the centre dot facing the opponent goal.
+	taker := m.kickoffTaker(m.KickoffSide())
+	if taker == nil {
+		m.kickoffArmed = false
+		return
+	}
+	m.placeTakerBehindBall(taker, m.Ball.Position, m.AttackingGoal(taker.Team).Center)
 }
+
+// kickoffTaker picks the side's kickoff taker: the lone outfielder closest behind the
+// ball is awkward to model here, so we simply use the first outfielder (index 1) when one
+// exists, else the only player (a 1-player team). Mirrors penaltyTaker's index convention
+// (index 0 is the keeper).
+func (m *Match) kickoffTaker(side Side) *Player {
+	t := m.teamFor(side)
+	if len(t.Players) > 1 {
+		return t.Players[1]
+	}
+	if len(t.Players) > 0 {
+		return t.Players[0]
+	}
+	return nil
+}
+
+// placeTakerBehindBall stands a player just behind the ball on the line from the ball to
+// goalCenter, facing the goal, motionless. Mirrors the setupKick positioning in
+// penalties.go: the taker is a tiny gap off the ball so it can strike without a run-up.
+func (m *Match) placeTakerBehindBall(p *Player, ballPos, goalCenter geom.Vec) {
+	dir := goalCenter.Sub(ballPos)
+	if dir == (geom.Vec{}) {
+		dir = geom.NewVec(1, 0)
+	}
+	unit := geom.Unit(dir)
+	gap := m.Ball.Radius() + p.Radius() + 1
+	p.Position = ballPos.Sub(unit.Scale(gap)) // a tiny gap behind the ball, toward our own half
+	p.HomePosition = p.Position
+	p.Velocity = geom.NewVec(0, 0)
+	p.Acceleration = geom.NewVec(0, 0)
+	p.moveHeading = geom.Vec{}
+	p.Facing = unit
+}
+
+// KickoffArmed reports whether a staged kickoff is set up and not yet taken (the taker is
+// on the centre dot). It is informational only -- it never gates physics -- and is cleared
+// the first tick a touch is recorded after the kickoff.
+func (m *Match) KickoffArmed() bool { return m.kickoffArmed }
 
 // PlayerByID returns the player with the given id, or nil.
 func (m *Match) PlayerByID(id int) *Player {
@@ -852,6 +924,13 @@ func (m *Match) ClosestToBall(p *Player) bool {
 // BuildMatch creates a standard match: a centred field with a goal on each side,
 // two teams of teamSize players in a simple formation, and the ball on the spot.
 func BuildMatch(field *Field, teamSize int) *Match {
+	return BuildMatchSized(field, teamSize, teamSize)
+}
+
+// BuildMatchSized builds a standard match with per-team roster sizes (home = left/Blue,
+// away = right/Red). buildFormation already lays out an arbitrary count per team, so the
+// two teams may differ in size.
+func BuildMatchSized(field *Field, homeSize, awaySize int) *Match {
 	left := &Team{Side: SideLeft, Name: "Blue", Color: color.RGBA{80, 140, 255, 255}}
 	right := &Team{Side: SideRight, Name: "Red", Color: color.RGBA{255, 100, 100, 255}}
 
@@ -862,8 +941,8 @@ func BuildMatch(field *Field, teamSize int) *Match {
 	}
 
 	id := 0
-	left.Players = buildFormation(field, left, teamSize, &id)
-	right.Players = buildFormation(field, right, teamSize, &id)
+	left.Players = buildFormation(field, left, homeSize, &id)
+	right.Players = buildFormation(field, right, awaySize, &id)
 	m.Players = append(m.Players, left.Players...)
 	m.Players = append(m.Players, right.Players...)
 	m.applyConfig(config.Default())
@@ -873,7 +952,14 @@ func BuildMatch(field *Field, teamSize int) *Match {
 // BuildMatchFromConfig builds a standard match and applies a full config (ruleset,
 // physics tuning, RNG seed). The field is expected to be built from cfg.Geometry.
 func BuildMatchFromConfig(field *Field, teamSize int, cfg config.Config) *Match {
-	m := BuildMatch(field, teamSize)
+	return BuildMatchFromConfigSized(field, teamSize, teamSize, cfg)
+}
+
+// BuildMatchFromConfigSized builds a per-team-sized match and applies a full config
+// (ruleset, physics tuning, RNG seed). The field is expected to be built from
+// cfg.Geometry.
+func BuildMatchFromConfigSized(field *Field, homeSize, awaySize int, cfg config.Config) *Match {
+	m := BuildMatchSized(field, homeSize, awaySize)
 	m.applyConfig(cfg)
 	return m
 }
@@ -930,11 +1016,57 @@ func BuildDuo(field *Field) *Match {
 	return m
 }
 
-// buildFormation lays out one team's players across its own half: a keeper near the
-// goal, the rest spread as midfielders and strikers.
+// formationLine groups the outfield players into depth-banded lines: defenders, then
+// midfielders, then forwards. The keeper is always added separately at index 0.
+type formationLine struct {
+	role  Role
+	count int
+	// depth is the fraction of the team's OWN half (0 = on the goal line, 1 = at the
+	// halfway line) at which the line sits.
+	depth float64
+}
+
+// outfieldLines returns the DEF/MID/FWD line breakdown for k outfield players (the
+// roster minus the keeper). The shapes mirror real small-sided formations and scale
+// across the supported team sizes; any larger count keeps adding midfielders. Depths
+// deepen the further forward a line plays.
+func outfieldLines(k int) []formationLine {
+	switch k {
+	case 0:
+		return nil
+	case 1: // GK + lone striker
+		return []formationLine{{RoleStriker, 1, 0.78}}
+	case 2: // 1-0-1
+		return []formationLine{{RoleMidfielder, 1, 0.45}, {RoleStriker, 1, 0.82}}
+	case 3: // 1-1-1
+		return []formationLine{{RoleMidfielder, 1, 0.35}, {RoleMidfielder, 1, 0.6}, {RoleStriker, 1, 0.85}}
+	case 4: // 2-1-1
+		return []formationLine{{RoleMidfielder, 2, 0.35}, {RoleMidfielder, 1, 0.62}, {RoleStriker, 1, 0.86}}
+	case 5: // 2-2-1
+		return []formationLine{{RoleMidfielder, 2, 0.35}, {RoleMidfielder, 2, 0.62}, {RoleStriker, 1, 0.86}}
+	case 6: // 2-3-1
+		return []formationLine{{RoleMidfielder, 2, 0.32}, {RoleMidfielder, 3, 0.58}, {RoleStriker, 1, 0.86}}
+	default: // 7+ : 3 at the back, the surplus in midfield, 1 up top
+		fwd := 1
+		def := 3
+		mid := k - def - fwd
+		return []formationLine{{RoleMidfielder, def, 0.3}, {RoleMidfielder, mid, 0.56}, {RoleStriker, fwd, 0.86}}
+	}
+}
+
+// buildFormation lays out one team across its own half in role-based, depth-banded lines:
+// a keeper on the goal line at index 0 (number 1) -- always, so penaltyTaker/humanSlot's
+// index-0-is-keeper convention holds -- then DEF/MID/FWD lines per outfieldLines, each
+// line spread evenly across the pitch via (i+1)/(count+1) so a player never sits on a
+// touchline. A team of 1 is a lone midfielder with no keeper. PlayerID order follows the
+// *id sequence (keeper first, then each line). Every player faces the opponent goal.
 func buildFormation(f *Field, team *Team, n int, id *int) []*Player {
+	if n < 1 {
+		return nil
+	}
 	players := make([]*Player, 0, n)
 	center := f.CenterSpot
+	halfWidth := f.Width() / 2 // distance from the goal line to the halfway line
 
 	var ownX, dir float64
 	face := geom.NewVec(1, 0)
@@ -944,31 +1076,34 @@ func buildFormation(f *Field, team *Team, n int, id *int) []*Player {
 		ownX, dir, face = f.Max.X, -1, geom.NewVec(-1, 0)
 	}
 
-	for i := 0; i < n; i++ {
-		role := RoleMidfielder
-		var pos geom.Vec
-		if i == 0 {
-			role = RoleGoalkeeper
-			pos = geom.NewVec(ownX+dir*40, center.Y)
-		} else {
-			if i%2 == 0 {
-				role = RoleStriker
-			}
-			depth := 80 + (float64(i)/float64(n))*(f.Width()*0.35)
-			spread := f.Height() * 0.6
-			denom := float64(n - 1)
-			if denom < 1 {
-				denom = 1
-			}
-			y := center.Y - spread/2 + spread*float64(i-1)/denom
-			pos = geom.NewVec(ownX+dir*depth, y)
-		}
+	number := 1
+	add := func(role Role, pos geom.Vec) {
 		p := NewPlayer(*id, pos, StatsForRole(role), team)
 		p.Role = role
-		p.Number = i + 1
+		p.Number = number
 		p.Facing = face
 		players = append(players, p)
 		*id++
+		number++
+	}
+
+	// A lone player (n == 1) is an outfielder, not a keeper. Otherwise the keeper is
+	// always index 0 / number 1, parked just off its own goal line.
+	k := n
+	if n >= 2 {
+		add(RoleGoalkeeper, geom.NewVec(ownX+dir*40, center.Y))
+		k = n - 1
+	}
+
+	for _, line := range outfieldLines(k) {
+		depth := 60 + line.depth*(halfWidth-60) // keep a margin off the goal line
+		x := ownX + dir*depth
+		for i := 0; i < line.count; i++ {
+			// Even Y-spread: (i+1)/(count+1) places count players inside the pitch height
+			// with equal gaps, so a line never sits on a touchline.
+			y := f.Min.Y + f.Height()*float64(i+1)/float64(line.count+1)
+			add(line.role, geom.NewVec(x, y))
+		}
 	}
 	return players
 }

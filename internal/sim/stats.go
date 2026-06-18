@@ -36,7 +36,17 @@ type PlayerStats struct {
 
 	// Ball-control geometry (surface gaps).
 	TouchRange float64
-	PullRange  float64
+	// PullRange is the BASE reach of the centre-pull: the surface gap within which the player
+	// can act on the ball. It seeds the dribble attraction (pullRadius, which a held trap
+	// EXTENDS) -- see pullRadius / handleBallToPlayerInteraction.
+	PullRange float64
+	// PossessionRange is the reach used by the POSSESSION contest (who builds/contests/steals
+	// player- and team-possession -- see Match.inPullRange / playerReach). It is a SEPARATE knob
+	// from PullRange so possession reach can be tuned independently of the attraction base, and --
+	// crucially -- it is NEVER trap-extended: a trap may pull the ball in from further, but it must
+	// not widen who owns possession (see possessionRadius). A value <= 0 means "use PullRange", so
+	// it defaults to the attraction base and any PlayerStats that omits it behaves as before.
+	PossessionRange float64
 
 	// Angle-dependent quantities (each is a curve plus its front/back endpoints).
 	Restitution  CurveSpec // bounce: soft front touch -> springy back
@@ -303,22 +313,23 @@ func (s PlayerStats) ShootDirection(radial, facing geom.Vec) geom.Vec {
 // DefaultStats returns the baseline player tuning.
 func DefaultStats(shootForce float64) PlayerStats {
 	return PlayerStats{
-		Radius:         18,
-		Mass:           20,
-		Friction:       -1.5,
-		MaxSpeed:       140,
-		Acceleration:   300,
-		TurnRate:       14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
-		TouchRange:     2,
-		PullRange:      5,                                            // reduced reach (was 6)
-		Restitution:    CurveSpec{InverseQuadraticCurve, 0.24, 0.20}, // front 0.30->0.24: baseline capture improved (a neutral receiver sometimes catches a blast); buff/debuff endpoints held via the multipliers
-		CaptureSpeed:   CurveSpec{LinearCurve, 230, 30},              // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; capture improved via restitution+control instead
-		CenterPull:     CurveSpec{InverseQuadraticCurve, 800, 0},     // power reduced (950 -> 800)
-		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
-		Control:        CurveSpec{LinearCurve, 1850, 340},            // roll-to-front speed raised further (1700->1850) to help capture
-		Shoot:          CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
-		ControlDamping: 11,
-		OrbitStick:     8,
+		Radius:          18,
+		Mass:            20,
+		Friction:        -1.5,
+		MaxSpeed:        140,
+		Acceleration:    300,
+		TurnRate:        14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
+		TouchRange:      2,
+		PullRange:       5,                                            // base centre-pull reach (the dribble attraction; a held trap extends this)
+		PossessionRange: 5,                                            // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionRadius)
+		Restitution:     CurveSpec{InverseQuadraticCurve, 0.24, 0.20}, // front 0.30->0.24: baseline capture improved (a neutral receiver sometimes catches a blast); buff/debuff endpoints held via the multipliers
+		CaptureSpeed:    CurveSpec{LinearCurve, 230, 30},              // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; capture improved via restitution+control instead
+		CenterPull:      CurveSpec{InverseQuadraticCurve, 800, 0},     // power reduced (950 -> 800)
+		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
+		Control:         CurveSpec{LinearCurve, 1850, 340},            // roll-to-front speed raised further (1700->1850) to help capture
+		Shoot:           CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
+		ControlDamping:  11,
+		OrbitStick:      8,
 
 		CaptureConeRadians: 0.3839724354387525, // ~22deg (widened: bigger cone)
 		CaptureConeSoft:    0.5235987755982988, // ~30deg (wider falloff)

@@ -20,6 +20,7 @@ import (
 
 	"phootball/internal/audio"
 	"phootball/internal/config"
+	"phootball/internal/geom"
 	"phootball/internal/input"
 	"phootball/internal/logging"
 	"phootball/internal/netcode"
@@ -70,8 +71,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 
 	render.Field(screen, g.field, snap.LeftColor, snap.RightColor)
+	var ballPos geom.Vec
 	for _, e := range snap.Entities {
 		if e.Kind == netcode.KindBall {
+			ballPos = e.Position
 			render.BallAt(screen, e.Position, e.Radius)
 		} else {
 			render.PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge)
@@ -83,26 +86,18 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		PenaltyBoxMaxPlayers: snap.PenaltyBoxMaxPlayers,
 		GoalAreaMaxPlayers:   snap.GoalAreaMaxPlayers,
 	})
-	render.ScoreboardWithClock(screen, snap.LeftName, snap.LeftScore, snap.RightName, snap.RightScore,
-		snap.ClockSeconds, snap.PhaseLabel)
-	if snap.InShootout {
-		render.ShootoutPanel(screen, snap.LeftName, snap.PenLeftGoals, snap.PenLeftTaken,
-			snap.RightName, snap.PenRightGoals, snap.PenRightTaken)
-	}
-	switch {
-	case snap.Finished:
-		render.CenterBanner(screen, snap.WinnerText)
-	case snap.Celebrating:
-		render.CenterBanner(screen, bannerOr(snap.GoalText, "G O A L !"))
-	}
+	render.DrawHUD(screen, render.HUDFromSnapshot(
+		snap.LeftName, snap.RightName, snap.LeftColor, snap.RightColor,
+		snap.LeftScore, snap.RightScore, snap.ClockSeconds, snap.PhaseLabel,
+		snap.InShootout, snap.PenLeftGoals, snap.PenLeftTaken, snap.PenRightGoals, snap.PenRightTaken))
+	render.DrawClientOverlays(screen, snap.Celebrating, snap.PhaseLabel, snap.GoalText,
+		goalTint, ballPos, snap.Geometry.ScreenWidth, snap.Geometry.ScreenHeight,
+		snap.Finished, snap.WinnerText)
 }
 
-func bannerOr(s, fallback string) string {
-	if s == "" {
-		return fallback
-	}
-	return s
-}
+// goalTint is a neutral celebration tint for the network client, which does not receive
+// the scoring side in the snapshot.
+var goalTint = color.RGBA{240, 244, 240, 255}
 
 // Layout renders at the display's physical pixel resolution so shapes stay crisp on
 // high-DPI / 4K screens. The render package scales the fixed world to fill it.

@@ -34,6 +34,10 @@ type View interface {
 	DefendingGoalCenter(of PlayerView) geom.Vec
 	// KickoffSide returns the team taking the next kickoff.
 	KickoffSide() Side
+	// KickoffArmed reports whether a staged kickoff is set up and not yet taken (the
+	// conceding side's taker is on the centre dot). Informational only -- it never gates
+	// physics; the defending side uses it to stand off until the ball is played.
+	KickoffArmed() bool
 	// Tick is the current simulation tick.
 	Tick() uint64
 	// Clock is the elapsed match time in seconds.
@@ -209,6 +213,7 @@ func (v matchView) DefendingGoalCenter(of PlayerView) geom.Vec {
 }
 
 func (v matchView) KickoffSide() Side     { return v.m.KickoffSide() }
+func (v matchView) KickoffArmed() bool    { return v.m.KickoffArmed() }
 func (v matchView) Tick() uint64          { return v.m.Tick }
 func (v matchView) Clock() float64        { return v.m.Clock }
 func (v matchView) Seed() int64           { return v.m.Seed }
