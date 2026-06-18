@@ -102,6 +102,29 @@ func (s *Settings) seedSizesFromField() {
 	s.GoalAreaDepth = g.GoalAreaDepth
 }
 
+// ApplyPreset fully POPULATES every editable pitch/goal/box dimension from the named
+// config geometry preset, so after the call each dimension is a concrete, independently
+// editable value with nothing left to inherit from a mode. It sets Field to "custom" --
+// the back-compat preset key now only supplies the non-editable markings (and serves as
+// the CLI's 0-means-inherit base), while the lobby no longer presents Field as a mode.
+// Unknown names are a no-op.
+func (s *Settings) ApplyPreset(name string) {
+	g, ok := config.PresetByName(name)
+	if !ok || name == "custom" {
+		return
+	}
+	s.PlayWidth = g.PlayWidth
+	s.PlayHeight = g.PlayHeight
+	s.GoalWidth = g.GoalMouthWidth
+	s.GoalDepth = g.GoalPocketDepth
+	s.PenaltyWidth = g.PenaltyWidth
+	s.PenaltyDepth = g.PenaltyDepth
+	s.GoalAreaWidth = g.GoalAreaWidth
+	s.GoalAreaDepth = g.GoalAreaDepth
+	s.Field = "custom"
+	s.ClampDependents()
+}
+
 // ClampDependents enforces the relational constraints live after every edit so a
 // menu-built setup always stays inside the validator's envelope:
 //   - sizes mirrored into the config; human slot within [1, team size];

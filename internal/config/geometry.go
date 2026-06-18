@@ -216,10 +216,14 @@ func LargeGeometry() Geometry {
 }
 
 // PresetByName returns the named geometry preset. An empty name selects the standard
-// pitch. The second result is false for an unknown name.
+// pitch. The "custom" name also resolves to the standard pitch as a BASE: it is the
+// marker the lobby uses once every editable dimension has been populated explicitly
+// (so no dimension is bundled), and the base only supplies the non-editable markings
+// (post radius, centre-circle/spot radii) that the explicit overrides do not cover.
+// The second result is false for an unknown name.
 func PresetByName(name string) (Geometry, bool) {
 	switch name {
-	case "", "standard":
+	case "", "standard", "custom":
 		return StandardGeometry(), true
 	case "small", "futsal":
 		return SmallGeometry(), true

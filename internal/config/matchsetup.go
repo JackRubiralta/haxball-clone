@@ -41,16 +41,16 @@ type MatchSetup struct {
 	// on is "first to N goals OR the clock, whichever comes first"; neither on is a
 	// never-ending friendly. The draw resolution (extra time, golden goal, penalties) only
 	// applies when regulation ends level.
-	WinByGoals    bool    // end early once a team reaches WinScore goals
-	WinScore      int     // goals needed to win when WinByGoals
-	WinByTime     bool    // end when the regulation clock expires
-	Minutes       float64 // regulation length in minutes when WinByTime
+	WinByGoals       bool    // end early once a team reaches WinScore goals
+	WinScore         int     // goals needed to win when WinByGoals
+	WinByTime        bool    // end when the regulation clock expires
+	Minutes          float64 // regulation length in minutes when WinByTime
 	ExtraTime        bool    // if drawn at regulation, play extra time
 	ExtraMinutes     float64 // length of extra time in minutes (also the golden-goal cap when GoldenGoalCapped)
 	GoldenGoal       bool    // modifier: when ExtraTime is on, extra time is sudden death (next goal wins)
 	GoldenGoalCapped bool    // modifier: when GoldenGoal is on, cap sudden death at ExtraMinutes (else it runs until a goal)
-	Penalties     bool    // if still drawn, decide on a shootout (DIRECT pens when ExtraTime is off)
-	PenaltyBestOf int     // kicks per side in a shootout (0 = the default of 5)
+	Penalties        bool    // if still drawn, decide on a shootout (DIRECT pens when ExtraTime is off)
+	PenaltyBestOf    int     // kicks per side in a shootout (0 = the default of 5)
 
 	Seed int64
 }
@@ -88,7 +88,7 @@ func DefaultMatchSetup() MatchSetup {
 // Validate checks the option ranges.
 func (s MatchSetup) Validate() error {
 	if _, ok := PresetByName(s.Field); !ok {
-		return fmt.Errorf("unknown field preset %q (want standard, small, or large)", s.Field)
+		return fmt.Errorf("unknown field preset %q (want standard, small, large, or custom)", s.Field)
 	}
 	home, away := s.sizes()
 	if home < 1 || home > 11 {

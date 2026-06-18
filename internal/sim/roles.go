@@ -19,19 +19,19 @@ const (
 // yet; a defender would currently resolve to this same preset.
 func fieldPlayerStats() PlayerStats {
 	s := DefaultStats(500)
-	s.Radius = 18                                                // [gk 22 | mid 18 | attack 18]
-	s.MaxSpeed = 140                                             // [gk 126 | mid 147 | attack 168]
-	s.Acceleration = 300                                         // [gk 340 | mid 300 | attack 320]
-	s.Shoot = CurveSpec{LinearCurve, 575, 172.5}                 // +15% power at max (was 500/150)
-	s.Restitution = CurveSpec{InverseQuadraticCurve, 0.24, 0.20} // front 0.30->0.24: baseline capture improved (a neutral receiver now sometimes catches a blast instead of always deflecting it); buff/debuff endpoints held via the multipliers, so a debuffed opponent still bounces it off
-	s.CaptureSpeed = CurveSpec{LinearCurve, 230, 30}             // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; baseline capture is improved via restitution+control instead
-	s.CenterPull = CurveSpec{InverseQuadraticCurve, 800, 0}      // power reduced (was 950)
-	s.Stickiness = CurveSpec{InverseQuadraticCurve, 420, 30}     // front restored to 420; small baseline hold at the back (was 0)
-	s.Control = CurveSpec{LinearCurve, 1850, 340}                // roll-to-front speed raised further (1700->1850) to help capture
-	s.CaptureConeRadians = 0.3839724354387525                    // ~22deg, widened (bigger cone; was ~16deg)
-	s.TrapPullBonus = 1.0                                        // reduced (was 1.5)
-	s.TrapRangeBonus = 6                                         // reduced (was 10)
-	s.PossessionBuildSeconds = 1.5                               // [gk 1.5 | mid 1.5 | attack 1.2]
+	s.Radius = 18                                                 // [gk 22 | mid 18 | attack 18]
+	s.MaxSpeed = 140                                              // [gk 126 | mid 147 | attack 168]
+	s.Acceleration = 300                                          // [gk 340 | mid 300 | attack 320]
+	s.Shoot = CurveSpec{LinearCurve, 575, 172.5}                  // +15% power at max (was 500/150)
+	s.Restitution = CurveSpec{InverseQuadraticCurve, 0.23, 0.24} // front 0.23: controlled front touch (still >0.20, so a full pass deflects off rather than sticking); back 0.24: springier behind. Buff/debuff multipliers unchanged -> buffed ~0.19, debuffed ~0.43, still tamed
+	s.CaptureSpeed = CurveSpec{LinearCurve, 230, 30}              // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; baseline capture is improved via restitution+control instead
+	s.CenterPull = CurveSpec{InverseQuadraticCurve, 800, 0}       // power reduced (was 950)
+	s.Stickiness = CurveSpec{InverseQuadraticCurve, 420, 30}      // front restored to 420; small baseline hold at the back (was 0)
+	s.Control = CurveSpec{LinearCurve, 1850, 340}                 // roll-to-front speed raised further (1700->1850) to help capture
+	s.CaptureConeRadians = 0.3839724354387525                     // ~22deg, widened (bigger cone; was ~16deg)
+	s.TrapPullBonus = 1.0                                         // reduced (was 1.5)
+	s.TrapRangeBonus = 6                                          // reduced (was 10)
+	s.PossessionBuildSeconds = 1.5                                // [gk 1.5 | mid 1.5 | attack 1.2]
 	return s
 }
 

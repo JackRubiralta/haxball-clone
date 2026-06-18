@@ -358,15 +358,30 @@ func (a *App) setupTeams(f frame, col *colLayout) {
 	}
 }
 
-// setupPitch draws the field preset and the pitch/goal dimensions.
+// setupPitch draws the pitch/goal dimension steppers as the primary direct controls,
+// preceded by quick-fill preset BUTTONS. Each button populates every dimension explicitly
+// from its config geometry (so nothing stays bundled in a mode); the steppers below are
+// always editable and apply the relational clamps after each edit.
 func (a *App) setupPitch(f frame, col *colLayout) {
 	s := &a.settings
 	f.sectionHeader("PITCH & GOALS", col.x, col.header(1), col.w)
-	if d, i := f.rowStepper("Field preset", s.Field, col.x, col.row(), col.w); d || i {
-		s.Field = cycle(fieldPresets, s.Field, dir(i))
-		s.seedSizesFromField()
-		s.ClampDependents()
+
+	// Quick-fill: three buttons that fully populate the dimensions from a preset.
+	if f.draw {
+		f.ui.TextS("Quick-fill from preset:", col.x, col.row()+theme.RowH/2, theme.Body, theme.Text)
+	} else {
+		col.row()
 	}
+	labels := [3]string{"Standard", "Small", "Large"}
+	by := col.row()
+	bw := (col.w - 2*theme.PanelPad) / 3
+	bh := theme.RowH - 10
+	for i, name := range fieldPresets {
+		if f.button(labels[i], col.x+float64(i)*(bw+theme.PanelPad), by, bw, bh) {
+			s.ApplyPreset(name)
+		}
+	}
+
 	if d, i := f.rowStepper("Pitch length", dimLabel(s.PlayWidth), col.x, col.row(), col.w); d || i {
 		s.PlayWidth = stepDim(s.PlayWidth, dir(i), 40, 400, 2400)
 		s.ClampDependents()
@@ -384,7 +399,7 @@ func (a *App) setupPitch(f frame, col *colLayout) {
 		s.ClampDependents()
 	}
 	if f.draw {
-		f.ui.TextS("Pitch length/depth \"auto\" = inherit the field preset.",
+		f.ui.TextS("\"auto\" = derive from the base; quick-fill makes every value explicit.",
 			col.x, col.row()+theme.RowH/2, theme.Small, theme.TextDim)
 	}
 }
@@ -483,8 +498,19 @@ func (a *App) setupRules(f frame, col *colLayout) {
 	if s.ExtraTime {
 		if f.rowToggle("Golden goal (next goal wins)", s.GoldenGoal, col.x, col.row(), col.w) {
 			s.GoldenGoal = !s.GoldenGoal
+			s.ClampDependents()
 		}
-		if !s.GoldenGoal {
+		if s.GoldenGoal {
+			// Golden goal: optionally cap the sudden-death period; the cap reuses Extra minutes.
+			if f.rowToggle("Time limit", s.GoldenGoalCapped, col.x, col.row(), col.w) {
+				s.GoldenGoalCapped = !s.GoldenGoalCapped
+			}
+			if s.GoldenGoalCapped {
+				if d, i := f.rowStepper("Minutes", strconv.Itoa(int(s.ExtraMinutes)), col.x, col.row(), col.w); d || i {
+					s.ExtraMinutes = clampF(s.ExtraMinutes+float64(dir(i)), 1, 30)
+				}
+			}
+		} else {
 			if d, i := f.rowStepper("Extra minutes", strconv.Itoa(int(s.ExtraMinutes)), col.x, col.row(), col.w); d || i {
 				s.ExtraMinutes = clampF(s.ExtraMinutes+float64(dir(i)), 1, 30)
 			}
@@ -503,8 +529,14 @@ func (a *App) setupRules(f frame, col *colLayout) {
 			s.PenaltyBestOf = clampInt(s.PenaltyBestOf+dir(i), 1, 11)
 		}
 	}
-	if !s.ExtraTime && !s.Penalties {
-		f.disabledRow("A draw stands.", col.x, col.row(), col.w)
+	// "A draw stands" is the explicit third outcome: selected (ON) only when neither extra
+	// time nor penalties is enabled. Clicking it when it is off turns both off, choosing it.
+	drawStands := !s.ExtraTime && !s.Penalties
+	if f.rowToggle("A draw stands", drawStands, col.x, col.row(), col.w) {
+		if !drawStands {
+			s.ExtraTime, s.Penalties = false, false
+			s.ClampDependents()
+		}
 	}
 }
 
