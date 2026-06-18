@@ -159,7 +159,12 @@ func (a *AI) keeperDistribute(p perception) sim.Intent {
 		return a.shootAt(p, in, a.applyAim(p, target), dc, a.tune.shootAlignRad)
 	}
 	a.lastOnBall = actClear
-	// No safe pass: clear it quickly (low charge, loose aim) rather than dwelling on the ball.
+	// No safe pass and a closing attacker bearing down: BOOT it clear instantly with a poke (no
+	// time to charge), as long as the radial sends it upfield/wide -- the keeper getting rid of it.
+	if p.pressureOnMe > a.tune.pokePressure && a.pokeClears(p) {
+		return a.pokeIntent(p)
+	}
+	// Otherwise clear it quickly with a low-charge, loose-aim kick rather than dwelling on the ball.
 	return a.shootAt(p, in, a.applyAim(p, a.clearTarget(p)), a.tune.clearCharge, a.tune.clearAlignRad)
 }
 

@@ -17,6 +17,14 @@ func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 	reach := p.me.Radius() + p.ballRadius
 	ip := interceptPoint(p.me.Position(), p.me.Stats().MaxSpeed, p.me.Stats().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
 
+	// Receiving an incoming pass (a loose, moving ball our side is collecting uncontested):
+	// don't charge the fast ball head-on at the first point we can touch it -- run ONTO its
+	// trajectory and meet it a little deeper, where it has slowed to a controllable pace, for a
+	// clean first touch. A genuine 50/50 still goes for the earliest intercept (win the race).
+	if a.receivingPass(p) {
+		ip = a.receivePoint(p)
+	}
+
 	// At a kickoff the defending side must not barge the spot before the ball is in play;
 	// hold just outside the centre circle until it moves.
 	if kickoffActive(p) && p.view.KickoffSide() != p.me.Side() {
@@ -49,6 +57,63 @@ func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 		in.Trap = true
 	}
 	return in
+}
+
+// receivingPass reports that the ball is an in-flight pass this player should glide onto and
+// receive rather than a 50/50 to win at the earliest point: it is loose (no firm carrier),
+// genuinely moving (a played ball, not a near-stopped one), our side is the one collecting it
+// (teamControls), and no opponent can contest the intercept. Under those conditions meeting it
+// a touch deeper on its path -- where it has slowed -- gives a clean reception with no risk.
+func (a *AI) receivingPass(p perception) bool {
+	if !p.ballLoose {
+		return false // someone has firm possession -> not a ball in flight
+	}
+	if geom.Norm(p.ballVel) < a.tune.receiveMinSpeed {
+		return false // basically stopped -> a loose ball to win, not a pass to receive
+	}
+	if !p.teamControls {
+		return false // the other side is better placed -> not ours to receive
+	}
+	return !a.contested(p) // a real 50/50 -> take the earliest intercept, don't dawdle
+}
+
+// receivePoint returns where on the ball's predicted path the receiver should meet an incoming
+// pass: the SOONEST point it can reach where the ball has also slowed to a controllable speed,
+// so it runs onto the trajectory and takes a clean touch instead of charging the fast ball.
+// Falls back to the earliest reachable point if the ball never slows enough within the horizon.
+func (a *AI) receivePoint(p perception) geom.Vec {
+	reach := p.me.Radius() + p.ballRadius
+	from := p.me.Position()
+	maxSpeed := p.me.Stats().MaxSpeed
+	turnRate := p.me.Stats().TurnRate
+	heading := p.me.Heading()
+	penalize := a.tune.turnPenaltyGain > 0 && turnRate > 0 && geom.Norm(heading) > 1e-9
+
+	var earliest geom.Vec
+	haveEarliest := false
+	for t := 0.0; t <= a.tune.interceptHorizon; t += a.tune.interceptStep {
+		target := predictBall(p.ball, p.ballVel, t, p.friction, p.dt)
+		usable := t
+		if penalize {
+			usable = t - a.tune.turnPenaltyGain*geom.AngleBetween(heading, target.Sub(from))/turnRate
+			if usable < 0 {
+				usable = 0
+			}
+		}
+		if geom.Dist(from, target)-reach > maxSpeed*usable {
+			continue // can't reach this point of the path in time
+		}
+		if !haveEarliest {
+			earliest, haveEarliest = target, true
+		}
+		if ballSpeedAt(p.ballVel, t, p.friction, p.dt) <= a.tune.receiveControlSpeed {
+			return target // soonest reachable point where the ball is controllable
+		}
+	}
+	if haveEarliest {
+		return earliest
+	}
+	return predictBall(p.ball, p.ballVel, a.tune.interceptHorizon, p.friction, p.dt)
 }
 
 // contested reports whether an opponent can reach the ball about as quickly as this player,

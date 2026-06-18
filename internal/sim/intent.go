@@ -25,6 +25,6 @@ type Intent struct {
 	// AimFromCursor marks Aim as a raw human cursor target, so the sim turns the facing toward
 	// it at the player's TurnRate (the disk can't instantly snap to the cursor). The AI leaves it
 	// false: its facing is instant in the sim (its on-ball aim is smoothed in the control layer,
-	// and its off-ball aim is rate-limited there too -- see AI.capAim).
+	// and its off-ball and keeper aim is rate-limited there too -- see AI.capAim).
 	AimFromCursor bool
 }

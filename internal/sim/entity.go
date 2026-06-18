@@ -44,7 +44,8 @@ type Player struct {
 	shootHeldPrev bool     // shoot-button state last tick, for release-edge detection
 	shootCanceled bool     // current shoot charge was canceled (by a trap-tap); suppress the release-edge kick
 	wantsPoke     bool     // middle-click jab requested this tick (instant min-power radial push)
-	pokeFlash     float64  // 1->0 cosmetic timer set when a middle-click poke fires; drives the poke pulse animation
+	pokeFlash     float64  // 1->0 cosmetic timer set whenever a middle-click poke is ATTEMPTED (even a whiff with no ball in reach); drives the poke pulse animation over the player
+	pokeFlashPos  geom.Vec // player position at the moment of the poke -- anchors the pulse on the player
 	trapHeldPrev  bool     // trap-button state last tick, for the trap sound's rising edge
 	evictDwell    float64  // seconds spent violating a positional rule (warn-evict grace)
 	moveHeading   geom.Vec // current steering direction; rotates toward input at TurnRate
@@ -94,9 +95,19 @@ func (p *Player) TrapCharge() float64 { return p.trapCharge }
 // release. Drives the trap effect and is exposed for the renderer's trap glow (so they match).
 func (p *Player) TrapAura() float64 { return p.trapAura }
 
-// PokeFlash returns the current 1->0 poke-press animation timer: 1 the tick a middle-click poke
-// fires, fading to 0 over pokeFlashSeconds. Exposed for the renderer's poke pulse (local play).
+// PokeFlash returns the current 1->0 poke-press animation timer: 1 the tick a middle-click poke is
+// pressed (whether or not it connects with the ball), fading to 0 over pokeFlashSeconds. Exposed for
+// the renderer's poke pulse (local play).
 func (p *Player) PokeFlash() float64 { return p.pokeFlash }
+
+// PokeFlashPos returns the player's position at the moment of the poke. Vestigial: the renderer now
+// anchors the pulse on the live player position directly.
+func (p *Player) PokeFlashPos() geom.Vec { return p.pokeFlashPos }
+
+// PokeRange returns the surface-gap reach of the middle-click poke -- the BASE PullRange, NOT the
+// trap-extended pullRadius (the poke fires on any ball whose surface gap is below this; see poke).
+// Exposed so the renderer can size and gate the poke-pulse animation to the poke's actual reach.
+func (p *Player) PokeRange() float64 { return p.Stats.PullRange }
 
 // Possession returns the player's current 0..1 possession build-up (ball touching anywhere).
 func (p *Player) Possession() float64 { return p.possession }
@@ -194,8 +205,9 @@ func rotateToward(from, to geom.Vec, maxRad float64) geom.Vec {
 	return from.Rotate(step, geom.Vec{})
 }
 
-// FaceTowards points the player instantly toward the given point. Used for the AI (whose aim is
-// smoothed on-ball and rate-limited off-ball in the control layer) and the network path.
+// FaceTowards points the player instantly toward the given point. Used for the AI, whose aim is
+// rate-limited in the control layer (smoothed on-ball by aimKeepingBall, throttled off-ball and
+// for the keeper by AI.capAim) so it still cannot turn faster than a human despite this snap.
 func (p *Player) FaceTowards(point geom.Vec) {
 	direction := point.Sub(p.Position)
 	if length := geom.Norm(direction); length > 0 {

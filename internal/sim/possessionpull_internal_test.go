@@ -1,7 +1,6 @@
 package sim
 
 import (
-	"math"
 	"testing"
 
 	"phootball/internal/config"
@@ -38,7 +37,7 @@ func TestPossessionInPullRange(t *testing.T) {
 		}
 		for i := 0; i < 60; i++ {
 			m.advancePossessionBuilder()
-			updatePossession(m.Ball, p, dt, p == m.possBuilder)
+			updatePossession(m.Ball, p, dt, p == m.possBuilder, false)
 		}
 		if !(p.possession > 0) {
 			t.Errorf("possession should build while the ball is in the pull radius without touching, got %.3f", p.possession)
@@ -64,8 +63,9 @@ func TestPossessionInPullRange(t *testing.T) {
 		}
 	}
 
-	// (3) A pull-range contest steals possession conservatively, neither player touching: the
-	// holder's loss equals the taker's gain (nothing created or destroyed).
+	// (3) A pull-range contest, neither player touching: the challenger (the latest with the ball
+	// in reach) BUILDS while the displaced holder falls away -- the steal works. Drain and gain
+	// are decoupled now (denial vs acquisition), so it is not conserved.
 	{
 		m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 		h, c := firstOn(m, SideLeft), firstOn(m, SideRight)
@@ -83,14 +83,9 @@ func TestPossessionInPullRange(t *testing.T) {
 		if !m.inPullRange(h) || !m.inPullRange(c) {
 			t.Fatalf("setup: both players should have the ball in pull range")
 		}
-		before := h.possession + c.possession
-		m.advancePossessionBuilder()
-		m.updateBallPossessor(dt)
+		possessionTick(m, dt)
 		if !(h.possession < 0.8 && c.possession > 0.1) {
-			t.Errorf("a pull-range contest should drain the holder into the challenger: h=%.4f c=%.4f", h.possession, c.possession)
-		}
-		if after := h.possession + c.possession; math.Abs(after-before) > 1e-9 {
-			t.Errorf("possession must be conserved (drain == gain): before %.4f after %.4f", before, after)
+			t.Errorf("a pull-range contest should drain the holder and build the challenger: h=%.4f c=%.4f", h.possession, c.possession)
 		}
 	}
 }
@@ -110,8 +105,8 @@ func TestPossessionBuildsForLatestEntrantOnly(t *testing.T) {
 
 	tick := func() {
 		m.advancePossessionBuilder()
-		updatePossession(m.Ball, a, dt, a == m.possBuilder)
-		updatePossession(m.Ball, b, dt, b == m.possBuilder)
+		updatePossession(m.Ball, a, dt, a == m.possBuilder, false)
+		updatePossession(m.Ball, b, dt, b == m.possBuilder, false)
 	}
 
 	// Phase 1: A alone has the ball in reach (B still parked) -> A is the sole builder.

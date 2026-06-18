@@ -310,12 +310,12 @@ func DefaultStats(shootForce float64) PlayerStats {
 		Acceleration:   300,
 		TurnRate:       14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
 		TouchRange:     2,
-		PullRange:      5,                                              // reduced reach (was 6)
-		Restitution:    CurveSpec{InverseQuadraticCurve, 0.0667, 0.20}, // baseline front lowered (better neutral capture); buff/debuff kept via the multipliers
-		CaptureSpeed:   CurveSpec{LinearCurve, 290, 30},                // baseline front raised 260->290 (better neutral capture)
-		CenterPull:     CurveSpec{InverseQuadraticCurve, 800, 0},       // power reduced (950 -> 800)
-		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30},      // front restored to 420; small baseline hold at the back (0 -> 30)
-		Control:        CurveSpec{LinearCurve, 1700, 340},              // roll-to-front speed raised (was 1500/300)
+		PullRange:      5,                                            // reduced reach (was 6)
+		Restitution:    CurveSpec{InverseQuadraticCurve, 0.24, 0.20}, // front 0.30->0.24: baseline capture improved (a neutral receiver sometimes catches a blast); buff/debuff endpoints held via the multipliers
+		CaptureSpeed:   CurveSpec{LinearCurve, 230, 30},              // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; capture improved via restitution+control instead
+		CenterPull:     CurveSpec{InverseQuadraticCurve, 800, 0},     // power reduced (950 -> 800)
+		Stickiness:     CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
+		Control:        CurveSpec{LinearCurve, 1850, 340},            // roll-to-front speed raised further (1700->1850) to help capture
 		Shoot:          CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping: 11,
 		OrbitStick:     8,
@@ -358,10 +358,10 @@ func DefaultStats(shootForce float64) PlayerStats {
 		TouchQuality: TouchQuality{
 			OwnTeamMax:        1.0,                 // owning team at full charge -> the cleanest touch
 			OtherTeam:         -1.0,                // other team at the owner's full charge -> worst-case touch (ball flies off)
-			CaptureWorst:      0.628,               // scaled with the higher baseline so the debuffed front capture stays ~182 (290*0.628)
-			CaptureBest:       1.025,               // scaled with the higher baseline so the buffed front capture stays ~297 (290*1.025)
-			RestitutionWorst:  3.0,                 // scaled with the lower baseline so the debuffed front bounce stays ~0.24 (0.08*3.0)
-			RestitutionBest:   0.675,               // scaled with the lower baseline so the buffed front bounce stays ~0.054 (0.08*0.675)
+			CaptureWorst:      0.628,               // debuffed front capture ~144 (230*0.628): a conceding opponent absorbs even less, so the ball bounces off it sooner
+			CaptureBest:       1.025,               // buffed front capture ~236 (230*1.025): a buffed teammate captures slightly firmer balls than baseline (still far below a full shot, so it also bounces a point-blank blast)
+			RestitutionWorst:  1.875,               // debuffed front bounce ~0.45 (0.24*1.875): HELD at the prior value, springier than neutral so a conceding team still deflects the ball off
+			RestitutionBest:   0.844,               // buffed front bounce ~0.20 (0.24*0.844): HELD at the prior value, a buffed teammate deflects gentler than neutral (still bounces a blast)
 			ConeBonusRadians:  0.05235987755982988, // ~3deg: a slight cone widening at full team buff (biggest cone)
 			ConeDebuffRadians: 0.20943951023931953, // ~12deg: a debuffed opponent's cone shrinks a lot (to ~10deg) but a bit less than before (was ~15deg/~7deg) -- still well under the baseline
 		},

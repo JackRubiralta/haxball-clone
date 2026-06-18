@@ -108,6 +108,12 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 
 	switch best {
 	case actShoot:
+		// Toe-poke under pressure: from close range, with the ball already lined up at the mouth
+		// and a defender about to block a charged shot, jab it in instantly (no charge to wind up).
+		if p.pressureOnMe > a.tune.pokePressure && a.pokeShotOn(p) {
+			a.lastOnBall = actShoot
+			return a.pokeIntent(p)
+		}
 		dist := geom.Dist(p.me.Position(), p.enemyGoal)
 		desired := a.desiredCharge(dist)
 		// Urgency vs power: if a defender is closing the window, hurry the shot (less charge, get
@@ -130,7 +136,12 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 		a.passReceiver = passReceiver // keep the pass tracking the (moving) receiver
 		return a.shootAt(p, in, a.applyAim(p, passTarget), dc, a.tune.shootAlignRad)
 	case actClear:
-		// Quick clear: low charge + wide tolerance so it boots the ball away fast (loose aim).
+		// Under heavy pressure, BOOT it clear instantly with a poke (no time to charge) -- but only
+		// when the radial sends it upfield/wide, never back toward our own goal.
+		if p.pressureOnMe > a.tune.pokePressure && a.pokeClears(p) {
+			return a.pokeIntent(p)
+		}
+		// Otherwise a quick charged clear: low charge + wide tolerance so it boots away fast (loose aim).
 		return a.shootAt(p, in, a.applyAim(p, a.clearTarget(p)), a.tune.clearCharge, a.tune.clearAlignRad)
 	case actShield:
 		return a.shield(p, in)
@@ -178,10 +189,20 @@ func absFloat(v float64) float64 {
 // lane's clearance (distance to the nearest blocker). Aiming for the more open corner
 // naturally targets the side away from the keeper.
 func (a *AI) bestCorner(p perception) (geom.Vec, float64) {
-	// Aim a safe fraction of the way to the open post (not at the post itself) so that even
-	// with a small release-angle error the shot still hits the target -- on-target shots
-	// that force saves and rebounds, rather than ambitious corners that fly wide to nothing.
-	half := p.view.Field().GoalHeight() / 2 * a.tune.shootAimFrac
+	f := p.view.Field()
+	// The ball can cross the line at most this far from goal-centre and still be a goal: the
+	// gap from centre to the post, less the post and ball radii. Aiming for THIS edge -- the
+	// real corner -- is what beats a keeper, who guards the middle; the old aim sat only a
+	// third of the way out, right where the keeper stands, so shots flew straight at it.
+	playable := f.GoalHeight()/2 - sim.GoalPostRadius - p.ballRadius
+	// Hold a safety margin inside that edge so a small release-angle error still scores rather
+	// than flying wide. The margin GROWS with shot distance, because the same angular error is
+	// a larger lateral miss the farther out we are: a point-blank shot tucks right into the
+	// corner, while a long shot aims a little less ambitiously (a corner that scores beats a
+	// post-seeker that misses).
+	dist := geom.Dist(p.me.Position(), p.enemyGoal)
+	margin := a.tune.cornerInset + a.tune.cornerRangeInset*clampFloat(dist/a.tune.shootRange, 0, 1)
+	half := clampFloat(playable-margin, 0, playable)
 	top := geom.NewVec(p.enemyGoal.X, p.enemyGoal.Y-half)
 	bot := geom.NewVec(p.enemyGoal.X, p.enemyGoal.Y+half)
 	ct := laneClearance(p.ball, top, p.opponents, p.ballRadius)

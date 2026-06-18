@@ -254,16 +254,31 @@ become engaged is the *sole* builder — everyone else *decays* toward 0 (not in
 Each player is stamped the tick it engages; the newest stamp wins. If the latest builder loses
 the ball, the build falls back to whoever still has it in reach.
 
-*Won in a contest (`updateBallPossessor` / `contestPossession`):* while the holder is still
-engaged and a *different* player is the latest engager, possession transfers GRADUALLY from the
-holder **into that builder** — the holder loses exactly what the builder gains
-(**PossessionStealRate**/sec, conserved), and the ball changes hands once the builder holds the
-larger share. Possession always flows *to* the latest engager and never leaks back, so a
-sustained challenge wins the ball cleanly (rather than both bars bleeding to zero). A **loose**
-ball — no holder still engaged — is claimed only on an actual *touch*, so a ball merely in range
-or flying past doesn't flip possession (this protects passes). A player who *passed* has
-possession 0 (`shoot` resets it), so a clean reception starts cold; only a contested take
-carries possession.
+*Won/denied in a contest (`updateBallPossessor` + the per-tick possession update):* the sole
+**builder** — the latest player with the ball in its (trap-extended) reach — *gains* possession,
+so you only build while you can actually reach the ball (Rule 3). A **holder marked by an opponent
+that is NOT near the ball** is *denied*: its possession **drains** at **PossessionStealRate** while
+the marker gains **nothing** (Rule 2 — marking denies, but you only take the ball *for yourself* if
+you can reach it). Drain and gain are **decoupled** (no transfer): a steal happens when a ball-near
+opponent out-builds the holder; pure marking just bleeds the holder toward 0. The ball changes
+hands once a different builder out-holds the current holder. A **loose** ball — no holder still in
+reach — is claimed only on an actual *touch*, so a ball merely in range or flying past doesn't flip
+possession (protects passes). A player who *passed* has possession 0 (`shoot` resets it), so a
+clean reception starts cold.
+
+*Why each rule is shaped this way:*
+- **Marking only DRAINS (it doesn't steal).** A player's possession is their **grip** on the
+  ball, so eroding it is the *setup* for a steal, not the steal itself. Marking a carrier whose
+  ball you can't yet reach drains their grip without handing you anything — because you haven't
+  actually won the ball. The point is leverage: a loosened grip makes the ball **easier to knock
+  free**, and (just as important) a drained carrier **can't instantly re-grip it** the moment it
+  pops loose, so the same pressure that wins the ball also keeps you from immediately losing it
+  back.
+- **You only GAIN grip with the ball in reach.** Acquisition requires actually getting the ball
+  into *your* pull radius — which is why drain and gain are **decoupled**: marking *denies*, only
+  reaching the ball *acquires*. Without this, standing next to a carrier would magically transfer
+  the ball to you; with it, tight marking is a real but honest tool — it pries the ball loose,
+  then you still have to collect it.
 
 *What it affects (possession modulates these only MILDLY, and the two hold forces in
 opposite directions):*
@@ -281,8 +296,8 @@ opposite directions):*
 *Variables:* **PossessionBuildSeconds** `1.5` / **PossessionReleaseSeconds** `0.4` (build /
 decay time), **CenterPullGripFloor** `0.65`, **StickinessPossessionDebuff** `0.03`,
 **PossessionControlBonus** `0.09` (up to +9% control at full possession),
-**PossessionStealRate** `1.0` (possession/sec transferred while contesting). The build/steal
-**reach** is the pull radius (`PullRange + TrapRangeBonus·trapCharge`, trap-extended);
+**PossessionStealRate** `1.0` (possession/sec a marked holder is *denied/drained* at). The
+build/steal **reach** is the pull radius (`PullRange + TrapRangeBonus·trapCharge`, trap-extended);
 **PossessionSpeedFactor** / **PossessionAccelFactor** `0.925` (~7.5% slower). A parallel
 **control** state (gated by **PossessionArcRadians** `0.873`/50° — the ball within the front
 arc) is *tracked but not yet wired to anything*.
@@ -309,22 +324,45 @@ away the moment you move the ball on.
   they touch it*: receive within the hold and you keep the full built-up charge; receive late
   (deep in the decay, e.g. down to 30%) and you start at 30% and rebuild from there (the
   decayed strength is baked back into the build progress). Either way you continue, never restart.
-- **Reset** — the **other team touching** the ball hands ownership over and restarts their
-  build from zero; both teams touching at once (a scramble) clears it; a kickoff/shootout
-  clears it.
-- **Drained by a challenge (team-wide)** — a challenge on the held ball does NOT reset the charge
-  but **drains** it at `teamDrainPerSecond` (1.0/s of build progress), so sustained pressure wears
-  the boost away while a glancing bump only nicks it. Two triggers count as a challenge: an
-  **opposing-player collision involving the ball carrier** (a body challenge), or a **ranged
-  pull-radius contest** — the owning team has the ball in a player's pull radius *and* an opponent
-  also has it in *their* pull radius (`ballInTeamPullRange`), so closing down to arm's length drains
-  it without contact.
-- **Per-player contact drain (localized)** — separately, any boosted player **body-touched by an
-  opponent** (even off the ball) has only *its own* published `touchCoef` eroded: a per-player
-  `boostDrain` (0..1) rises at `boostContactDrainPerSecond` (2.0/s) while an opponent is on it and
-  recovers at `boostContactRecoverPerSecond` (1.5/s) when they leave, scaling that player's coef by
-  `(1 − boostDrain)`. The **team charge and team-mates are untouched** — only the marked player's
-  clean-touch buff fades toward neutral. (A conceding player has no boost to lose.)
+- **Handover (gradual — never an instant reset)** — an opponent contesting the ball does NOT
+  clear/flip the charge outright. It **drains** toward zero (below); only once it bottoms out *and*
+  an opponent actually has the ball in reach does ownership hand over — that team then builds its
+  own charge from zero and the former owner becomes the conceding side ("drain to black on both,
+  *then* the opponent gets the boost"). A kickoff/shootout still clears it.
+- **Team-wide drain — marked carrier (Rule 1, has-ball)** — while a boosted player that HAS the
+  ball is within an opponent's (trap-extended) pull reach (an opponent marking the carrier), OR an
+  opponent has the ball itself in reach, the owning team's **receiving buff is suppressed**
+  (`possBuffDrain` scales only the *owners'* published coefficient toward 0) and the charge drains
+  toward the gradual handover above. Crucially this erodes **only the owning team's buff — the
+  conceding team's debuff (`OtherTeam·strength`) is left untouched**: pressing the carrier takes
+  away *their* clean touches without giving the pressing side (which has conceded possession) any
+  cleaner ones of its own. Sustained pressure wears the boost down, then hands it over; a glancing
+  approach only nicks it.
+- **Per-player drain — marked off-ball player (Rule 1, no-ball)** — a boosted player WITHOUT the
+  ball that has an opponent within its pull reach (marked off the ball) has only *its own* published
+  `touchCoef` eroded: a per-player `boostDrain` (0..1) rises at `boostContactDrainPerSecond` (2.0/s)
+  while marked and recovers at `boostContactRecoverPerSecond` (1.5/s) otherwise, scaling that
+  player's coef by `(1 − boostDrain)`. The **team charge and team-mates are untouched** — only the
+  marked player's clean-touch buff fades toward neutral. (A conceding player has no boost to lose.)
+
+*Why each rule is shaped this way:*
+- **A contest drains the BUFF, never the DEBUFF.** The team charge is a **receiving** boost — it
+  makes the owning team's touches clean so passes stick. Pressing an opponent's carrier should
+  take *that* away (they fumble under pressure), but it should **not** reward the pressing side,
+  which has **conceded** possession and hasn't earned a clean touch. So a contest suppresses only
+  the **owning team's buff** and leaves the conceding team's **debuff in place** — you deny their
+  clean touches, you don't heal your own. (Otherwise the act of pressing would quietly cure your
+  own fumbliness, which makes no sense: you haven't built any control, you've just got close.)
+- **The boost only changes hands by WINNING the ball.** There is no instant "touch it and the
+  buff is yours". A contest drains the charge to zero on **both** sides first, and only once an
+  opponent actually has the ball in reach does the new owner start building it **up from zero**.
+  This makes the boost feel earned (sustained possession), not stolen on contact, and a single
+  poke can interrupt a buildup without flipping the whole advantage to a team that hasn't held
+  the ball yet.
+- **Marking off the ball is localized (per-player), not team-wide.** An opponent who marks a
+  boosted player that *isn't* carrying only spoils **that one player's** clean touch (`boostDrain`),
+  not the whole team's charge — pressure should cost the opponent exactly the player it commits a
+  marker to, no more, and it lifts the instant the marker leaves.
 
 *What it affects:* each player's **touch coefficient** (`Player.touchCoef`, in `[-1,1]`),
 which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQuality`, in
@@ -361,46 +399,37 @@ trade-off — so the feel can be retuned by swapping which trigger fires (and wh
 gradual/instant and per-player/team-wide).
 
 **A. What disrupts the TEAM possession charge (the squad-wide touch buff):**
-- **Opponent touches the ball** → hands ownership over and restarts their build (also: both teams
-  touching at once, kickoff, and shootout clear it). *(current — the primary, most intuitive
-  handover: they won the ball, you lost the buff.)*
-- **Opponent body-checks the player who has the ball** → drains the charge gradually
-  (`teamDrainPerSecond` 1.0), not a reset. *(current — pressure wears a buildup down even without
-  winning the ball; a glancing bump only nicks it.)* Open sub-choices on this one:
-  - *Scope:* **both are now live** — the **whole team's** charge drains when the *carrier* is
-    challenged, AND a separate **per-player localized** drain erodes only the *touch-boost* of any
-    boosted player an opponent body-checks (even off the ball), leaving the team charge and
-    team-mates intact (more intuitive — an opponent only spoils the player they're actually on).
-    See "Per-player contact drain" in the mechanics above.
-  - *Severity:* **drain** gradually *(current, both)* vs **reset** it instantly *(option, not used)*.
-- **Ball in an opponent's pull radius** (no contact yet) → drains at arm's length. *(current — a
-  ranged pull-radius contest: it drains when an opponent has the ball in reach AND the owning team
-  still does too, so closing down erodes the buff without a body-check; it does NOT drain off a
-  single far opponent or a ball flying away.)* Pros: pull-range pressure erodes the buff early; the
-  owner-also-in-range guard stops it from firing on a loose/escaping ball.
-- **A player merely inside an opponent's pull radius** (proximity, ball not involved) → drain.
-  *(option, not used.)* Pure marking-pressure; cons: you'd lose control with nobody touching the
-  ball *or* you, which reads as arbitrary.
+- **Opponent gets the ball (touch or pull-range)** → the charge **drains gradually to zero, then
+  hands over** to that team, which builds anew. *(current — Rule 4; a kickoff/shootout still clears
+  it instantly.)* The old behaviour was an **instant reset/flip** on the opponent's touch *(no
+  longer used — too abrupt).*
+- **Opponent within pull reach of the boosted ball-carrier** → drains the **whole team** charge
+  (`teamDrainPerSecond` 1.0). *(current — Rule 1, has-ball: marking the carrier wears the buff down
+  without winning the ball.)*
+- **Opponent within pull reach of a boosted player OFF the ball** → drains only **that player's**
+  touch-boost (`boostDrain`), leaving the team charge and team-mates intact. *(current — Rule 1,
+  no-ball: an opponent only spoils the player it is actually marking.)*
+- *Severity* is always a gradual **drain** now, never an instant **reset** *(reset = option, not
+  used — the gradual drain reads more clearly and rewards sustained pressure).*
 
-**B. What counts as "engaging" the ball for PLAYER possession (who builds + who can steal):**
-- **Ball touching the player** → build/steal. *(the original model; now superseded.)*
-- **Ball within the player's pull radius** (trap-extended, `PullRange + TrapRangeBonus·trapCharge`)
-  → build/steal from arm's length. *(current — `inPullRange`; rewards positioning and turns the
-  trap into a defensive reach tool.)*
-- **Body-contact with the current holder** → counts as engaged even if the ball isn't quite in
-  reach, so a physical challenge still contests. *(current — `playersTouching`.)*
-- **A player inside another player's pull radius** (player-proximity, ball elsewhere) → steal.
-  *(option, not used.)* Steal purely by marking tightly; cons: you'd drain a carrier whose ball is
-  on their far side just because you stood next to them — decoupled from the ball, unintuitive.
-- **Loose-ball takeover** (no holder still engaged): claim only on an **actual touch**
-  *(current — protects passes)* vs claim on **pull-range** *(rejected: a ball merely flying past
-  would flip possession, which tanks passing).*
+**B. PLAYER possession — who builds it, and how it is taken:**
+- **Build (gain)** → only the sole **builder**, the latest player with the **ball within its pull
+  reach** (`inPullRange`, trap-extended `PullRange + TrapRangeBonus·trapCharge`). *(current —
+  Rule 3: you gain only while you can actually reach the ball; ball-touching alone, the original
+  model, is superseded.)*
+- **Denial (drain)** → a holder **marked by an opponent that is NOT near the ball** is drained at
+  `PossessionStealRate`, and that marker gains nothing. *(current — Rule 2: tight marking denies the
+  carrier even when you can't take the ball for yourself.)*
+- **Steal** → a **ball-near** opponent out-builds the holder and takes over; drain and gain are
+  decoupled (no transfer). *(current.)*
+- **Loose-ball takeover** (no holder still in reach): claim only on an **actual touch** *(current —
+  protects passes)* vs on **pull-range** *(rejected: a ball flying past would flip possession,
+  which tanks passing).*
 
-The current design deliberately favours **ball-grounded, gradual** triggers — disruption is tied
-to the ball being touched/reachable or to a real body-check, and it happens over time — which
-keeps possession changes readable and rewards positioning over magnetic, proximity-only effects.
-Swapping any line above to an *option* shifts that balance (more aggressive pressing, faster
-swings, or a more localized buff) at the cost of some intuitiveness.
+The current design favours **gradual** triggers grounded in the ball or in real marking —
+possession changes happen over time and reward positioning. The one proximity-only effect is
+**denial** (marking erodes a carrier's possession/buff but can NOT hand it to you — you still need
+the ball to gain), which keeps it from feeling like a magnetic, take-it-by-standing-nearby steal.
 
 ### `PlayerStats` — charged shot
 

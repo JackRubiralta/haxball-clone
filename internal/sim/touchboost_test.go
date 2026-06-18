@@ -52,6 +52,20 @@ func bothTouch(m *Match, leftP, rightP *Player) {
 	m.Ball.Position = geom.NewVec(0, 0)
 }
 
+// possessionTick runs one full player-possession tick exactly as Match.Step does: choose the
+// builder, then build/drain/decay each player, then update who holds the ball. The sole builder
+// (latest with the ball in reach) gains; a holder marked by an opponent that is NOT near the ball
+// drains (denial); everyone else decays.
+func possessionTick(m *Match, dt float64) {
+	m.advancePossessionBuilder()
+	for _, p := range m.Players {
+		drain := p == m.possessor && m.markedByNonBallOpponent(p)
+		build := !drain && p == m.possBuilder
+		updatePossession(m.Ball, p, dt, build, drain)
+	}
+	m.updateBallPossessor(dt)
+}
+
 // TestPossessionStealFromPullRange: a challenger that is NOT touching the ball but has it within
 // its pull radius can still contest/steal the holder's possession, and the trap extends that
 // reach (a gap out of the base pull radius becomes reachable while trapping).
@@ -79,26 +93,25 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 		m.possessor = a
 	}
 
-	// 1. In the base pull radius but NOT touching: the steal works.
+	// 1. In the base pull radius but NOT touching: the challenger (latest with the ball in reach)
+	// builds while the displaced holder falls away -- the steal works.
 	setup(3, 0) // gap 3: >= TouchRange (not touching), < PullRange (in pull radius)
 	if m.touching(b) {
 		t.Fatalf("test setup: b should not be touching at gap 3")
 	}
-	m.advancePossessionBuilder()
-	m.updateBallPossessor(dt)
+	possessionTick(m, dt)
 	if !(b.possession > 0 && a.possession < 0.8) {
 		t.Errorf("a challenger in pull range (not touching) should steal possession: a=%.3f b=%.3f", a.possession, b.possession)
 	}
 
-	// 2. Beyond the base pull radius with no trap: no steal.
+	// 2. Beyond the base pull radius with no trap: no steal -- the holder keeps/builds its own.
 	setup(8, 0)
 	if m.inPullRange(b) {
 		t.Fatalf("test setup: gap 8 should be beyond the base pull radius")
 	}
-	m.advancePossessionBuilder()
-	m.updateBallPossessor(dt)
-	if !(b.possession == 0 && a.possession == 0.8) {
-		t.Errorf("a challenger beyond the pull radius should not steal: a=%.3f b=%.3f", a.possession, b.possession)
+	possessionTick(m, dt)
+	if !(b.possession == 0 && a.possession >= 0.8) {
+		t.Errorf("a challenger beyond the pull radius should not steal (holder keeps it): a=%.3f b=%.3f", a.possession, b.possession)
 	}
 
 	// 3. The trap EXTENDS the reach: the same gap 8 is now within the trap-extended pull radius.
@@ -106,16 +119,16 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 	if !m.inPullRange(b) {
 		t.Fatalf("test setup: a full trap should bring gap 8 into the extended pull radius")
 	}
-	m.advancePossessionBuilder()
-	m.updateBallPossessor(dt)
+	possessionTick(m, dt)
 	if !(b.possession > 0 && a.possession < 0.8) {
 		t.Errorf("a trapping challenger should steal from the extended pull radius (gap 8): a=%.3f b=%.3f", a.possession, b.possession)
 	}
 }
 
-// TestPossessionStealByPlayerContact: a challenger that does NOT have the ball in its pull radius
-// can still contest the holder's possession by bumping it body-to-body (player-to-player touch).
-func TestPossessionStealByPlayerContact(t *testing.T) {
+// TestPossessionDeniedByMarking: an opponent marking the holder body-to-body WITHOUT the ball in
+// its own reach DRAINS (denies) the holder's possession but gains nothing for itself -- pure
+// denial (Rule 2). A marker that IS near the ball instead steals by out-building (pull-range test).
+func TestPossessionDeniedByMarking(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 	const dt = 1.0 / 60
 	a, b := firstOn(m, SideLeft), firstOn(m, SideRight)
@@ -130,15 +143,17 @@ func TestPossessionStealByPlayerContact(t *testing.T) {
 	b.Position = geom.NewVec(a.Radius()+b.Radius()-1, 0) // bumping a body-to-body, ball NOT in b's reach
 
 	if m.inPullRange(b) {
-		t.Fatalf("setup: the ball should be out of b's pull radius (this tests the body-contact path)")
+		t.Fatalf("setup: the ball should be out of b's reach (this tests pure denial)")
 	}
 	if !playersTouching(a, b) {
-		t.Fatalf("setup: b should be touching a body-to-body")
+		t.Fatalf("setup: b should be marking a body-to-body")
 	}
-	m.advancePossessionBuilder()
-	m.updateBallPossessor(dt)
-	if !(b.possession > 0 && a.possession < 0.8) {
-		t.Errorf("a body-contact challenge should steal possession even with the ball out of reach: a=%.3f b=%.3f", a.possession, b.possession)
+	possessionTick(m, dt)
+	if !(a.possession < 0.8) {
+		t.Errorf("a holder marked by an opponent off the ball should be denied (drained), got a=%.3f", a.possession)
+	}
+	if b.possession != 0 {
+		t.Errorf("a marker not near the ball should gain nothing (pure denial), got b=%.3f", b.possession)
 	}
 }
 
@@ -163,8 +178,8 @@ func TestPossessionHandoffToLatestEntrantNoLeak(t *testing.T) {
 
 	tick := func() {
 		m.advancePossessionBuilder()
-		updatePossession(m.Ball, a, dt, a == m.possBuilder)
-		updatePossession(m.Ball, b, dt, b == m.possBuilder)
+		updatePossession(m.Ball, a, dt, a == m.possBuilder, false)
+		updatePossession(m.Ball, b, dt, b == m.possBuilder, false)
 		m.updateBallPossessor(dt)
 	}
 	for i := 0; i < 240; i++ {
@@ -194,11 +209,11 @@ func TestPossessionContestGradualTransfer(t *testing.T) {
 
 	bothTouch(m, a, b) // a (holder) and b (challenger) both in contact
 
-	// One tick: the challenger gains, the holder loses, but the holder still holds (only a sliver moved).
-	m.advancePossessionBuilder()
-	m.updateBallPossessor(dt)
+	// One tick: the challenger (latest at the ball) gains, the displaced holder falls away, but the
+	// holder still holds (only a sliver moved).
+	possessionTick(m, dt)
 	if !(b.possession > 0 && a.possession < 0.8) {
-		t.Fatalf("a contest should start transferring possession: a=%.3f b=%.3f", a.possession, b.possession)
+		t.Fatalf("a contest should start moving possession: a=%.3f b=%.3f", a.possession, b.possession)
 	}
 	if m.possessor != a {
 		t.Errorf("after one tick the holder should still hold, got %v", m.possessor)
@@ -206,8 +221,7 @@ func TestPossessionContestGradualTransfer(t *testing.T) {
 
 	// Sustained contest: the challenger eventually wins the ball.
 	for i := 0; i < 120 && m.possessor != b; i++ {
-		m.advancePossessionBuilder()
-		m.updateBallPossessor(dt)
+		possessionTick(m, dt)
 	}
 	if m.possessor != b {
 		t.Errorf("a sustained contest should hand the ball to the challenger, holder still %v", m.possessor)
@@ -249,32 +263,42 @@ func TestPossessionControlBonusAndCone(t *testing.T) {
 	}
 }
 
-// TestBaselineCaptureImprovedKeepsEndpoints: the neutral baseline capture is improved (higher
-// CaptureSpeed, lower Restitution) while the buffed and debuffed FRONT results are kept the same
-// (the multipliers were scaled inversely to the baseline change).
-func TestBaselineCaptureImprovedKeepsEndpoints(t *testing.T) {
+// TestFullPowerPassBouncesOffFront: the baseline is tuned so a full-power point-blank pass
+// DEFLECTS off a teammate's front (escapes the grip) rather than sticking -- the capture speed
+// sits below the full shot power at EVERY teammate coefficient (so a firm ball always bounces,
+// no trap needed), while a gentle pass stays below it and is still absorbed. The front
+// restitution is high enough that even a buffed receiver's deflection escapes the grip, and the
+// debuffed bounce is springier still but tamed off the near-elastic 0.95 cap.
+func TestFullPowerPassBouncesOffFront(t *testing.T) {
 	s := fieldPlayerStats() // the in-game preset
 	tq := s.TouchQuality
 	capFront := s.CaptureSpeed.Front
 	restFront := s.Restitution.Front
+	fullShot := s.Shoot.Eval(0) // full-power front shot speed (575)
 
-	// Buffed/debuffed FRONT capture unchanged (~297 / ~182).
-	if got := capFront * tq.captureMul(tq.OwnTeamMax); math.Abs(got-297) > 2 {
-		t.Errorf("buffed front capture should stay ~297, got %.1f", got)
+	// A full-power front shot must exceed the capture speed at both neutral and full buff, so it
+	// always lands in the BOUNCE branch -- a teammate cannot catch a point-blank blast untrapped.
+	for _, coef := range []float64{0, tq.OwnTeamMax} {
+		if cap := capFront * tq.captureMul(coef); cap >= fullShot {
+			t.Errorf("full shot (%.0f) must exceed the capture speed at coef %+.1f (%.0f) so it bounces off", fullShot, coef, cap)
+		}
 	}
-	if got := capFront * tq.captureMul(tq.OtherTeam); math.Abs(got-182) > 2 {
-		t.Errorf("debuffed front capture should stay ~182, got %.1f", got)
+	// ...but the capture speed stays high enough that a GENTLE pass is still absorbed (caught).
+	if capFront <= 200 {
+		t.Errorf("capture speed %.0f is too low -- gentle passes would bounce too", capFront)
 	}
-	// Buffed/debuffed FRONT restitution unchanged (~0.054 / ~0.24).
-	if got := restFront * tq.restitutionMul(tq.OwnTeamMax); math.Abs(got-0.054) > 0.005 {
-		t.Errorf("buffed front restitution should stay ~0.054, got %.4f", got)
+	// Front restitution was RAISED so the deflection escapes the sticky hold even for a buffed
+	// receiver; the debuffed bounce is springier but not near-elastic.
+	if restFront <= 0.20 {
+		t.Errorf("front restitution %.3f should be raised so a hard pass deflects off (not stick)", restFront)
 	}
-	if got := restFront * tq.restitutionMul(tq.OtherTeam); math.Abs(got-0.24) > 0.01 {
-		t.Errorf("debuffed front restitution should stay ~0.24, got %.4f", got)
+	buffedRest := restFront * tq.restitutionMul(tq.OwnTeamMax)
+	debuffRest := restFront * tq.restitutionMul(tq.OtherTeam)
+	if buffedRest < 0.12 {
+		t.Errorf("buffed front restitution %.4f too low -- a buffed teammate would catch a full pass", buffedRest)
 	}
-	// Baseline improved: higher capture and lower bounce than before (260 / 0.12).
-	if !(capFront > 260 && restFront < 0.12) {
-		t.Errorf("baseline should be improved: capture %.0f (want >260), restitution %.3f (want <0.12)", capFront, restFront)
+	if debuffRest <= buffedRest || debuffRest > 0.6 {
+		t.Errorf("debuffed front restitution %.4f should be springier than buffed (%.4f) but tamed (<=0.6)", debuffRest, buffedRest)
 	}
 }
 
@@ -325,9 +349,11 @@ func TestPossessionNotStolenAfterPass(t *testing.T) {
 	}
 }
 
-// TestTeamChargeDrainedByChallenge: an opposing-player collision that involves the ball CARRIER
-// DRAINS the team possession charge over time (it does not reset it), while an off-ball
-// collision leaves it untouched.
+// TestTeamChargeDrainedByChallenge: while both teams contest the ball (the owner holding it and an
+// opponent also on it), the OWNING team's buff drains (possBuffDrain) AND the conceding team's
+// debuff drains team-wide (possDebuffDrain) -- but the build progress is preserved and, while the
+// owner is still on the ball, ownership does NOT flip. It hands over only once the defender has the
+// ball alone (tested at the end). An off-ball collision leaves the charge untouched.
 func TestTeamChargeDrainedByChallenge(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 	const dt = 1.0 / 60
@@ -344,35 +370,66 @@ func TestTeamChargeDrainedByChallenge(t *testing.T) {
 		r.Position = m.Field.CenterSpot.Add(geom.NewVec(10, 0))
 	}
 
-	// One tick of challenge DRAINS the charge a little -- it does NOT reset, and ownership stays.
-	m.possSide, m.possProgress = SideLeft, 1
+	// One tick of challenge starts draining the owner's BUFF (possBuffDrain) but does NOT touch the
+	// build progress (which drives the conceding team's debuff) or hand ownership over.
+	m.possSide, m.possProgress, m.possCoast, m.possBuffDrain = SideLeft, 1, 0, 0
 	challenge()
-	m.resolveInteractions(dt)
+	m.advanceTeamPossession(dt)
 	if m.possSide != SideLeft {
-		t.Errorf("a single challenge tick should not hand ownership over, side=%v", m.possSide)
+		t.Errorf("a single challenge tick should not hand ownership over yet, side=%v", m.possSide)
 	}
-	if !(m.possProgress < 1 && m.possProgress > 0) {
-		t.Errorf("a challenge should DRAIN the charge a little, got progress=%.4f", m.possProgress)
+	if !(m.possBuffDrain > 0) {
+		t.Errorf("a challenge should start draining the owner's buff, got possBuffDrain=%.4f", m.possBuffDrain)
+	}
+	if m.possProgress != 1 {
+		t.Errorf("a challenge must NOT drain the build progress / the conceding team's debuff, got %.4f", m.possProgress)
 	}
 
-	// A sustained challenge drains it to empty (re-overlapping each tick, since Resolve separates them).
-	for i := 0; i < 200 && m.possProgress > 0; i++ {
+	// After draining for a while: the owner's BUFF is suppressed AND -- because the defender is ALSO
+	// on the ball (a true contest) -- the conceding team's DEBUFF drains team-wide toward neutral
+	// (the rule: a contested ball drains the debuff gradually rather than only clearing at handover).
+	// The owner is still on the ball, so ownership has NOT flipped and the build progress is kept.
+	for i := 0; i < 30; i++ {
 		challenge()
-		m.resolveInteractions(dt)
+		m.advanceTeamPossession(dt)
 	}
-	if m.possProgress > 0.01 {
-		t.Errorf("a sustained challenge should drain the charge to ~0, got %.4f", m.possProgress)
+	if m.possSide != SideLeft {
+		t.Fatalf("a contest with the owner still on the ball must not hand over, side=%v", m.possSide)
+	}
+	strength := m.teamPossessionStrength(SideLeft)
+	fullDebuff := r.Stats.TouchQuality.OtherTeam * strength
+	if !(r.touchCoef > fullDebuff && r.touchCoef < 0) {
+		t.Errorf("a contested ball with the defender on it should drain the conceding debuff toward neutral, got %.4f (full %.4f)", r.touchCoef, fullDebuff)
+	}
+	if !(l.touchCoef < l.Stats.TouchQuality.OwnTeamMax*strength) {
+		t.Errorf("the owner's buff should be suppressed by the drain, got %.4f (full %.4f)", l.touchCoef, l.Stats.TouchQuality.OwnTeamMax*strength)
 	}
 
-	// Off-ball collision: L and R overlap each other far from the ball -> no drain.
-	m.possSide, m.possProgress = SideLeft, 1
+	// A sustained contest with the owner STILL on the ball does NOT hand over -- it only drains.
+	// Ownership flips only once the defender has the ball ALONE (a clean takeover).
+	for i := 0; i < 120; i++ {
+		challenge()
+		m.advanceTeamPossession(dt)
+	}
+	if m.possSide != SideLeft {
+		t.Errorf("a sustained contest with the owner on the ball must NOT hand over, got side=%v", m.possSide)
+	}
+	// The owner LEAVES the ball -- the defender now has it alone, so it wins it outright (handover).
+	onlyToucher(m, r)
+	m.advanceTeamPossession(dt)
+	if m.possSide != SideRight {
+		t.Errorf("the defender alone on the ball should win it and take the charge, got side=%v", m.possSide)
+	}
+
+	// Off-ball collision: L and R overlap each other far from the ball -> no contest, no drain.
+	m.possSide, m.possProgress, m.possCoast, m.possBuffDrain = SideLeft, 1, 0, 0
 	park()
 	m.Ball.Position = m.Field.CenterSpot
 	l.Position = geom.NewVec(50000, 0)
 	r.Position = geom.NewVec(50010, 0) // overlap each other, nowhere near the ball
-	m.resolveInteractions(dt)
+	m.advanceTeamPossession(dt)
 	if m.possProgress != 1 {
-		t.Errorf("an off-ball collision should not drain the charge, got progress=%.4f", m.possProgress)
+		t.Errorf("an off-ball collision should not drain the team charge, got progress=%.4f", m.possProgress)
 	}
 }
 
@@ -393,25 +450,262 @@ func TestTeamChargeDrainedByOpponentInPullRange(t *testing.T) {
 		m.Ball.Velocity = geom.NewVec(0, 0)
 		a.Position = c.Add(geom.NewVec(-(a.Radius() + m.Ball.Radius() + 1), 0)) // left owner: touching the ball
 		b.Position = c.Add(geom.NewVec(b.Radius()+m.Ball.Radius()+3, 0))        // right opponent: gap 3 (in pull range, not touching)
-		m.possSide, m.possProgress, m.possCoast = SideLeft, 1.0, 0
+		m.possSide, m.possProgress, m.possCoast, m.possBuffDrain = SideLeft, 1.0, 0, 0
 	}
 
-	// Owner has the ball; opponent has it in its pull radius (not touching) -> the charge drains.
+	// Owner has the ball; opponent has it in its pull radius (not touching) -> the owner's buff
+	// drains, but the build progress (the conceding team's debuff) is left intact.
 	setup()
 	if !m.inPullRange(b) || m.touching(b) {
 		t.Fatalf("test setup: opponent should be in pull range but not touching at gap 3")
 	}
-	m.resolveInteractions(dt)
-	if !(m.possProgress < 1.0) {
-		t.Errorf("an opponent with the ball in its pull radius should drain the team charge, got %.4f", m.possProgress)
+	m.advanceTeamPossession(dt)
+	if !(m.possBuffDrain > 0) {
+		t.Errorf("an opponent with the ball in its pull radius should drain the owner's buff, got possBuffDrain=%.4f", m.possBuffDrain)
+	}
+	if m.possProgress != 1.0 {
+		t.Errorf("the drain must NOT reduce the build progress / the conceding team's debuff, got %.4f", m.possProgress)
 	}
 
-	// No opponent in range -> the charge is left alone.
+	// No opponent in range -> the charge is left alone (the owner is on the ball, so it holds/builds).
 	setup()
 	b.Position = m.Field.CenterSpot.Add(geom.NewVec(300, 0)) // far from the ball, out of pull range
-	m.resolveInteractions(dt)
+	m.advanceTeamPossession(dt)
 	if m.possProgress != 1.0 {
 		t.Errorf("no opponent in pull range should leave the charge untouched, got %.4f", m.possProgress)
+	}
+}
+
+// TestTeamDebuffDrainedByDefenderOnBall: while the defending team ALSO has the ball (a contest),
+// its team-wide debuff drains gradually toward neutral (possDebuffDrain) for EVERY conceding player
+// -- including one off the ball -- which is relief, never a buff; and the moment the defender has
+// the ball ALONE the debuff clears outright via the handover.
+func TestTeamDebuffDrainedByDefenderOnBall(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	owner, def := firstOn(m, SideLeft), firstOn(m, SideRight)
+	var def2 *Player // a second defender, off the ball, to prove the relief is team-wide
+	for _, p := range m.Players {
+		if p.Team.Side == SideRight && p != def {
+			def2 = p
+			break
+		}
+	}
+
+	contest := func() {
+		for _, p := range m.Players {
+			p.Position = geom.NewVec(-1e5, float64(p.PlayerID)*60)
+		}
+		c := m.Field.CenterSpot
+		m.Ball.Position = c
+		m.Ball.Velocity = geom.NewVec(0, 0)
+		owner.Position = c.Add(geom.NewVec(-(owner.Radius() + m.Ball.Radius() + 1), 0)) // owner touching
+		def.Position = c.Add(geom.NewVec(def.Radius()+m.Ball.Radius()+3, 0))            // defender in pull range
+		if def2 != nil {
+			def2.Position = geom.NewVec(-2e5, 0) // far off the ball
+		}
+	}
+
+	m.possSide, m.possProgress, m.possCoast = SideLeft, 1.0, 0
+	m.possBuffDrain, m.possDebuffDrain = 0, 0
+
+	// Both teams on the ball -> a contest: the conceding debuff drains team-wide, no handover.
+	for i := 0; i < 30; i++ {
+		contest()
+		m.advanceTeamPossession(dt)
+	}
+	if m.possSide != SideLeft {
+		t.Fatalf("a contest should not hand over while the owner is on the ball, side=%v", m.possSide)
+	}
+	if !(m.possDebuffDrain > 0) {
+		t.Errorf("a defender on the contested ball should drain the conceding debuff, got possDebuffDrain=%.4f", m.possDebuffDrain)
+	}
+	strength := m.teamPossessionStrength(SideLeft)
+	full := def.Stats.TouchQuality.OtherTeam * strength
+	conceding := []*Player{def}
+	if def2 != nil {
+		conceding = append(conceding, def2)
+	}
+	for _, p := range conceding {
+		if !(p.touchCoef > full && p.touchCoef < 0) {
+			t.Errorf("conceding player %d should be relieved team-wide toward neutral, got %.4f (full %.4f)", p.PlayerID, p.touchCoef, full)
+		}
+	}
+
+	// The defender gets the ball ALONE: the debuff keeps draining smoothly (no instant reset). One
+	// tick must NOT hand over while the relief is still draining.
+	onlyToucher(m, def)
+	m.advanceTeamPossession(dt)
+	if m.possSide != SideLeft {
+		t.Errorf("a defender just-alone on the ball must not snap the handover while the debuff is still draining, side=%v", m.possSide)
+	}
+	// Sustained possession by the defender alone drains the debuff fully, THEN hands the charge over.
+	for i := 0; i < 200 && m.possSide == SideLeft; i++ {
+		onlyToucher(m, def)
+		m.advanceTeamPossession(dt)
+	}
+	if m.possSide != SideRight {
+		t.Errorf("once the debuff fully drains, the defender alone on the ball should take the charge, got %v", m.possSide)
+	}
+	if m.possDebuffDrain != 0 {
+		t.Errorf("the handover should reset the debuff relief to 0, got %.4f", m.possDebuffDrain)
+	}
+}
+
+// TestReleasedCarrierMarkedDrainsOnlyOwnBoost pins refinement P1: a player that has RELEASED the
+// ball (a stale m.possessor whose ball is no longer in its own pull reach) and is then marked by an
+// opponent drains ONLY its own per-player boost (boostDrain), NOT the whole team buff. The carrier
+// check now keys off m.inPullRange(p), not the stale possessor flag. The contrast case -- the same
+// player WITH the ball in reach and marked -- DOES drain the team buff (possBuffDrain), pinning the
+// distinction between "marking a real carrier" and "marking a player who already passed".
+func TestReleasedCarrierMarkedDrainsOnlyOwnBoost(t *testing.T) {
+	const dt = 1.0 / 60
+
+	// mate is a parked team-mate on the boosted side, used to read the unsuppressed published buff.
+	pick := func(m *Match) (p, mate, opp *Player) {
+		for _, q := range m.Players {
+			if q.Team.Side == SideLeft {
+				if p == nil {
+					p = q
+				} else if mate == nil {
+					mate = q
+				}
+			} else if opp == nil {
+				opp = q
+			}
+		}
+		return p, mate, opp
+	}
+
+	// Case A (the P1 behaviour): the ball is OUT of p's reach (p has released/passed), an opponent
+	// marks p within reach but is NOT near the ball -> only p.boostDrain rises; the team buff and a
+	// team-mate's published buff are untouched.
+	{
+		m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+		p, mate, opp := pick(m)
+		for _, q := range m.Players {
+			q.Position = geom.NewVec(-1e5, float64(q.PlayerID)*60)
+		}
+		m.possSide, m.possProgress, m.possCoast, m.possBuffDrain = SideLeft, 1, 0, 0
+		m.possessor = p // stale: p still flagged as possessor though it has released the ball
+
+		p.Position = geom.NewVec(0, 0)
+		// Ball far away on the +X side so it is well beyond p's pull radius (p is NOT the carrier).
+		m.Ball.Position = geom.NewVec(p.Radius()+m.Ball.Radius()+p.pullRadius()+200, 0)
+		// Opponent overlapping p on the -X side: marks p (within p's reach) but far from the ball.
+		opp.Position = geom.NewVec(-(p.Radius() + opp.Radius() - 1), 0)
+		mate.Position = geom.NewVec(0, 5000) // parked, unpressured team-mate
+
+		if m.inPullRange(p) {
+			t.Fatalf("setup A: the ball should be OUT of p's pull range (p has released it)")
+		}
+		if !m.pressuredByOpponent(p) {
+			t.Fatalf("setup A: the opponent should be marking p within reach")
+		}
+		if m.ballInTeamPullRange(opp.Team.Side) {
+			t.Fatalf("setup A: the opponent must NOT be near the ball")
+		}
+
+		for i := 0; i < 30; i++ { // ~0.5s of marking
+			m.advanceTeamPossession(dt)
+		}
+
+		if !(p.boostDrain > 0) {
+			t.Errorf("a released carrier marked off the ball should drain its OWN boost, got boostDrain=%.4f", p.boostDrain)
+		}
+		if m.possBuffDrain != 0 {
+			t.Errorf("marking a released (non-carrier) player must NOT drain the team buff, got possBuffDrain=%.4f", m.possBuffDrain)
+		}
+		full := mate.Stats.TouchQuality.OwnTeamMax * m.teamPossessionStrength(SideLeft)
+		if !(mate.touchCoef > full*0.999) {
+			t.Errorf("a parked team-mate should keep the full unsuppressed buff, got %.4f (full %.4f)", mate.touchCoef, full)
+		}
+	}
+
+	// Case B (the contrast -- the real carrier): the SAME player WITH the ball in its reach, marked by
+	// an opponent, DOES drain the whole team buff (possBuffDrain rises). This pins the distinction.
+	{
+		m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+		p, _, opp := pick(m)
+		for _, q := range m.Players {
+			q.Position = geom.NewVec(-1e5, float64(q.PlayerID)*60)
+		}
+		m.possSide, m.possProgress, m.possCoast, m.possBuffDrain = SideLeft, 1, 0, 0
+		m.possessor = p
+
+		c := m.Field.CenterSpot
+		p.Position = c
+		m.Ball.Position = c.Add(geom.NewVec(p.Radius()+m.Ball.Radius()+3, 0)) // ball in p's pull range
+		// Opponent marks p (within p's reach) but is NOT itself near the ball, on the far side from it.
+		opp.Position = c.Add(geom.NewVec(-(p.Radius() + opp.Radius() - 1), 0))
+
+		if !m.inPullRange(p) {
+			t.Fatalf("setup B: the ball should be in p's pull range (p IS the carrier)")
+		}
+		if !m.pressuredByOpponent(p) {
+			t.Fatalf("setup B: the opponent should be marking p within reach")
+		}
+
+		m.advanceTeamPossession(dt)
+		if !(m.possBuffDrain > 0) {
+			t.Errorf("marking the real ball-carrier should drain the team buff, got possBuffDrain=%.4f", m.possBuffDrain)
+		}
+	}
+}
+
+// TestBoostHealsOnlyWhileTeamMateHasBall pins refinements P2 and EXT: a pre-drained per-player boost
+// (boostDrain) AND a pre-faded team buff (possBuffDrain) are FROZEN while the ball is loose (no
+// owning-team player has it in reach), and only RECOVER once a team-mate regains the ball.
+func TestBoostHealsOnlyWhileTeamMateHasBall(t *testing.T) {
+	const dt = 1.0 / 60
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+
+	var p, mate *Player // p: the drained player; mate: a team-mate who will hold the ball
+	for _, q := range m.Players {
+		if q.Team.Side == SideLeft {
+			if p == nil {
+				p = q
+			} else if mate == nil {
+				mate = q
+			}
+		}
+	}
+
+	m.possSide, m.possProgress, m.possCoast = SideLeft, 1, 0
+	p.boostDrain, m.possBuffDrain = 0.5, 0.5
+
+	// (a) Ball LOOSE -- nobody in reach (ownerNearBall false) and p unmarked: both drains FROZEN.
+	for _, q := range m.Players {
+		q.Position = geom.NewVec(-1e5, float64(q.PlayerID)*60)
+	}
+	p.Position = geom.NewVec(0, 0)
+	m.Ball.Position = geom.NewVec(1e5, 0) // far from everyone -> loose / in flight
+	if m.ballInTeamPullRange(SideLeft) || m.pressuredByOpponent(p) {
+		t.Fatalf("setup (a): the ball should be loose and p unmarked")
+	}
+
+	beforeBoost, beforeBuff := p.boostDrain, m.possBuffDrain
+	for i := 0; i < 30; i++ {
+		m.advanceTeamPossession(dt)
+	}
+	if math.Abs(p.boostDrain-beforeBoost) > 1e-9 {
+		t.Errorf("a drained boost should be FROZEN while the ball is loose: was %.4f, now %.4f", beforeBoost, p.boostDrain)
+	}
+	if math.Abs(m.possBuffDrain-beforeBuff) > 1e-9 {
+		t.Errorf("the faded team buff should be FROZEN while the ball is loose: was %.4f, now %.4f", beforeBuff, m.possBuffDrain)
+	}
+
+	// (b) A team-mate gets on the ball (ownerNearBall true): both RECOVER (drain toward 0).
+	onlyToucher(m, mate)
+	for i := 0; i < 30; i++ {
+		onlyToucher(m, mate) // keep mate holding (onlyToucher re-parks each call)
+		m.advanceTeamPossession(dt)
+	}
+	if !(p.boostDrain < beforeBoost) {
+		t.Errorf("p's boost should recover once a team-mate has the ball: was %.4f, now %.4f", beforeBoost, p.boostDrain)
+	}
+	if !(m.possBuffDrain < beforeBuff) {
+		t.Errorf("the team buff should recover once a team-mate has the ball: was %.4f, now %.4f", beforeBuff, m.possBuffDrain)
 	}
 }
 
@@ -650,9 +944,12 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 	}
 }
 
-// TestTeamChargeResetByOpponent: the other team touching the ball hands ownership over and
-// resets the build (an intercepted possession is not inherited by the thief at full strength).
-func TestTeamChargeResetByOpponent(t *testing.T) {
+// TestTeamChargeHandedOverWhenBallWonOutright: a clean takeover -- the defending team gets the ball
+// ALONE (the owner no longer on it) -- hands the charge over, but GRADUALLY: the conceding debuff
+// drains to fully cleared first (no instant snap), THEN ownership flips, the new owner builds from
+// zero, and the relief resets. A CONTESTED ball (both teams on it) likewise only drains without
+// flipping (see TestTeamChargeDrainedByChallenge).
+func TestTeamChargeHandedOverWhenBallWonOutright(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 	const dt = 1.0 / 60
 	left, right := firstOn(m, SideLeft), firstOn(m, SideRight)
@@ -662,19 +959,33 @@ func TestTeamChargeResetByOpponent(t *testing.T) {
 		t.Fatalf("the left team should be fully charged, side=%v progress=%.3f", m.possSide, m.possProgress)
 	}
 
+	// The opponent gets the ball ALONE (the owner parked away) -- a clean takeover, but GRADUAL: one
+	// tick must NOT flip it while the debuff is still draining.
 	onlyToucher(m, right)
 	m.advanceTeamPossession(dt)
-	if m.possSide != SideRight {
-		t.Errorf("an opponent touch should hand ownership over, got %v", m.possSide)
+	if m.possSide != SideLeft {
+		t.Errorf("a single tick of the defender on the ball must not snap the handover (gradual), got %v", m.possSide)
 	}
-	if m.possProgress > 0.05 {
-		t.Errorf("the build should reset for the new owner, got %.3f", m.possProgress)
+	// Sustained possession by the defender alone drains the debuff fully, THEN hands the charge over.
+	for i := 0; i < 200 && m.possSide == SideLeft; i++ {
+		onlyToucher(m, right)
+		m.advanceTeamPossession(dt)
+	}
+	if m.possSide != SideRight {
+		t.Errorf("once the debuff fully drains, the defender alone on the ball should take the charge, got %v", m.possSide)
+	}
+	if m.possProgress > 0.1 {
+		t.Errorf("after the handover the new owner should be building from ~zero, got %.3f", m.possProgress)
+	}
+	if m.possDebuffDrain != 0 {
+		t.Errorf("the handover should reset the debuff relief, got %.3f", m.possDebuffDrain)
 	}
 }
 
-// TestTeamChargeContestedReset: when both teams touch the ball at once, the charge clears
-// entirely (nobody gets a clean possession out of a scramble).
-func TestTeamChargeContestedReset(t *testing.T) {
+// TestTeamChargeContestDrains: when both teams touch the ball at once, the charge is CONTESTED --
+// it now DRAINS over time (Rule 4) rather than clearing instantly; ownership only changes once it
+// has drained to zero.
+func TestTeamChargeContestDrains(t *testing.T) {
 	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
 	const dt = 1.0 / 60
 	left, right := firstOn(m, SideLeft), firstOn(m, SideRight)
@@ -686,13 +997,14 @@ func TestTeamChargeContestedReset(t *testing.T) {
 
 	bothTouch(m, left, right)
 	m.advanceTeamPossession(dt)
-	if m.possSide != SideNone || m.possProgress != 0 {
-		t.Errorf("a contested ball should clear the charge, side=%v progress=%.3f", m.possSide, m.possProgress)
+	if m.possSide != SideLeft {
+		t.Errorf("a contested ball should not instantly clear ownership now (it drains), got %v", m.possSide)
 	}
-	for _, p := range m.Players {
-		if p.touchCoef != 0 {
-			t.Errorf("a contested reset should zero coefficients, player %d = %.3f", p.PlayerID, p.touchCoef)
-		}
+	if !(m.possBuffDrain > 0) {
+		t.Errorf("a contested ball should drain the owner's buff, got possBuffDrain=%.3f", m.possBuffDrain)
+	}
+	if m.possProgress < 0.99 {
+		t.Errorf("a contested ball must NOT drain the build progress / debuff, got %.3f", m.possProgress)
 	}
 }
 

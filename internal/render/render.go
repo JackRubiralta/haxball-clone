@@ -267,8 +267,9 @@ func Match(screen *ebiten.Image, m *sim.Match) {
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
-			sim.NormShootCharge(p.ShootCharge()), p.TrapAura(), p.PokeFlash())
+			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
+	drawPokePulses(screen, m)
 	drawPossessionBarsAll(screen, m)
 	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
 		m.ClockSeconds(), m.PhaseLabel())
@@ -334,8 +335,9 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
-			sim.NormShootCharge(p.ShootCharge()), p.TrapAura(), p.PokeFlash())
+			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
+	drawPokePulses(screen, m)
 	drawPossessionBarsAll(screen, m)
 	drawZoneIndicators(newCanvas(screen), m.Field, m.Rules)
 	camActive = false
@@ -588,7 +590,7 @@ func BallAt(screen *ebiten.Image, pos geom.Vec, radius float64) {
 
 // PlayerAt draws a player as a flat coloured disc with a thick outline, a jersey
 // number, and a white dot at the front showing which way it faces.
-func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body color.RGBA, number int, shootCharge, auraLevel, pokeFlash float64) {
+func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body color.RGBA, number int, shootCharge, auraLevel float64) {
 	c := newCanvas(screen)
 	drawTrapAura(c, pos, radius, auraLevel, body) // glow under the body
 
@@ -605,25 +607,54 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 
 	c.number(itoa(number), pos.X, pos.Y, radius, ballWhite)
 	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
-	drawPokePulse(c, pos, radius, pokeFlash)                   // middle-click jab ping, over the body
 }
 
-// drawPokePulse draws a quick expanding ring when a middle-click poke fires: `flash` is a 1->0
-// timer (sim.Player.PokeFlash). The ring starts just past the body and expands outward as it
-// fades -- a crisp white "jab" ping, distinct from the soft, body-coloured trap aura.
-func drawPokePulse(c canvas, pos geom.Vec, radius, flash float64) {
+// drawPokePulses draws the middle-click poke effect over an already-drawn match. For each player
+// whose poke just connected (PokeFlash > 0), it paints a soft burst centred on the PLAYER that
+// expands outward in all directions as the press fades -- the original player-anchored poke ping
+// (rather than the ball-anchored variant), so it reads as a shockwave radiating from the jabbing
+// player. Drawn after the players so the burst reads as welling up off the player.
+func drawPokePulses(screen *ebiten.Image, m *sim.Match) {
+	c := newCanvas(screen)
+	for _, p := range m.Players {
+		flash := p.PokeFlash()
+		if flash <= 0 {
+			continue
+		}
+		drawPokePulse(c, p.Position, p.Radius(), p.PokeRange(), flash, p.Team.Color)
+	}
+}
+
+// drawPokePulse draws one middle-click poke as a soft, semi-transparent burst centred on the
+// PLAYER: it starts at the player's surface and swells outward to ~2x the pull range in all
+// directions as the press fades -- brightest near the player and fading to nothing at its leading
+// edge, so it reads as a shockwave radiating out from the jabbing player. `flash` is the 1->0 press
+// timer (sim.Player.PokeFlash); `body` is the poking team's colour (the blue team -> blue), matching
+// the trap-aura and shoot-charge tints. This is the original player-anchored expanding ring, kept
+// blue, distance-faded, and bounded to ~2x the pull reach.
+func drawPokePulse(c canvas, center geom.Vec, innerRadius, pullRange, flash float64, body color.RGBA) {
 	if flash <= 0 {
 		return
 	}
-	const pokePulseReach = 20.0           // how far the ring expands past the body
-	prog := 1 - flash                     // 0 at the press, 1 at the end
-	r := radius + 4 + prog*pokePulseReach // expands outward from just past the body
-	a := uint8(flash * 200)               // bright at the press, fading as it expands
-	if a == 0 {
-		return
+	prog := 1 - flash                         // 0 at the press, 1 when the pulse ends
+	reach := innerRadius + prog*(2*pullRange) // outer radius: from the player surface out to ~2x pull range
+	const bands = 18
+	const peakAlpha = 130.0 // "a bit opaque": semi-transparent even at its brightest
+	width := reach / float64(bands-1) * 1.25
+	for i := 0; i < bands; i++ {
+		t := float64(i) / float64(bands-1) // 0 at the player centre, 1 at the leading edge
+		r := reach * t
+		if r < 0.5 {
+			continue
+		}
+		// Opacity is highest near the player and FADES the farther out the band sits (1-t); the whole
+		// burst also fades over the press timer (flash) -- so it dies away as it expands outward.
+		a := uint8(peakAlpha * (1 - t) * flash)
+		if a == 0 {
+			continue
+		}
+		c.strokeCircle(center.X, center.Y, r, width, color.RGBA{body.R, body.G, body.B, a})
 	}
-	w := 1.5 + 2.5*flash // a touch thicker at the press
-	c.strokeCircle(pos.X, pos.Y, r, w, color.RGBA{255, 255, 255, a})
 }
 
 // drawTrapAura draws a soft glow ring around a player while it traps. `level` is the trap's
@@ -674,10 +705,11 @@ func drawPossessionBarsAll(screen *ebiten.Image, m *sim.Match) {
 
 // drawPossessionBars draws two small test bars above a player: the TOP bar is the player's own
 // possession (0..1, white), the BOTTOM bar is the player's TOUCH COEFFICIENT magnitude (0..1) --
-// green while boosted (positive), red while conceding (negative). The coefficient already folds
-// in the PER-PLAYER contact drain (an opponent body-touching a boosted player erodes that
-// player's boost), so the bottom bar SHRINKS over the marked player while its team-mates' bars
-// stay full. For tuning/testing visibility of the possession mechanic.
+// green while boosted (positive), red while conceding (negative). The coefficient folds in BOTH
+// drains, so the bar reflects them live: the per-player contact drain shrinks one boosted player's
+// green bar when an opponent marks it, and the team-wide debuff drain (a defender on the contested
+// ball) shrinks the conceding team's RED bars toward empty as their debuff is relieved -- then they
+// flip green on handover. For tuning/testing visibility of the possession mechanic.
 func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, coef float64) {
 	const w, h, gap = 26.0, 3.0, 1.5
 	clamp01 := func(v float64) float64 {

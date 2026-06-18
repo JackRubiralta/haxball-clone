@@ -322,26 +322,27 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 // updatePossession maintains two related states from the ball's position relative to the
 // player, writing only the player (the ball and the body are untouched):
 //
-//   - possession: built toward 1 only while `build` is true -- i.e. this player is the sole
-//     possession builder for the tick: the player whose (trap-extended) PULL radius the ball
-//     entered MOST RECENTLY (chosen by advancePossessionBuilder) -- and decayed otherwise. So a
-//     player "has" the ball from arm's length, but when two players share it only the latest one
-//     to reach it builds up; the rest fall away. It drives the grip on the ball (centre-pull and
-//     stickiness, so the ball sticks to the player).
+//   - possession: `build` true -> builds toward 1 (this player is the sole builder: the one
+//     whose trap-extended PULL radius the ball entered MOST RECENTLY, so it can actually reach
+//     the ball -- Rule 3). `drain` true -> falls FAST at PossessionStealRate (this player is a
+//     holder being marked/denied by an opponent that is not near the ball -- Rule 2). Otherwise
+//     it decays gently. It drives the grip on the ball (centre-pull and stickiness).
 //   - control: built toward 1 while the ball is touching AND within the front
 //     PossessionArcRadians, decayed otherwise. This is the tighter "ball under control out
 //     in front" state. It is TRACKED but currently UNUSED -- no mechanic reads it yet.
-func updatePossession(ball *Ball, player *Player, deltaTime float64, build bool) {
-	if build {
+func updatePossession(ball *Ball, player *Player, deltaTime float64, build, drain bool) {
+	switch {
+	case build:
 		player.possession += deltaTime / player.Stats.PossessionBuildSeconds
-		if player.possession > 1 {
-			player.possession = 1
-		}
-	} else {
+	case drain:
+		player.possession -= player.Stats.PossessionStealRate * deltaTime
+	default:
 		player.possession -= deltaTime / player.Stats.PossessionReleaseSeconds
-		if player.possession < 0 {
-			player.possession = 0
-		}
+	}
+	if player.possession > 1 {
+		player.possession = 1
+	} else if player.possession < 0 {
+		player.possession = 0
 	}
 
 	// control: built only while the ball is touching within the front arc.

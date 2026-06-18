@@ -84,16 +84,20 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 	}
 
 	in = a.applyMoveJitter(p, in)
-	// Cap how fast the AI re-orients while it is AWAY from the ball (where it uses instant
-	// aimToward to point around and there is no ball-control feedback), so it can't snap-turn.
-	// Near the ball the facing drives the centre-pull/scoop, and rate-limiting it there fights
-	// that control loop and jitters -- so leave anyone close to the ball (and the keeper)
-	// responsive.
-	if me.Role() != sim.RoleGoalkeeper && p.gapToBall > aimCapGap {
+	// Cap how fast the AI re-orients while it is AWAY from the ball (where it uses instant aimToward
+	// to point around and there is no ball-control feedback), so it can't snap-turn -- this applies
+	// to the KEEPER too, which spends almost all its time off the ball and would otherwise whip
+	// round instantly toward shots and distribution. Near the ball the facing drives the
+	// centre-pull/scoop and is already smoothed by aimKeepingBall; rate-limiting it there fights
+	// that control loop and jitters, so anyone (keeper included) close to the ball stays responsive.
+	if p.gapToBall > aimCapGap {
 		in = a.capAim(p, in)
 	}
 
 	a.cached = in
+	// A poke is an instant one-shot edge action, not a held button: never let the reaction-delay
+	// replay re-fire it on the cached ticks (that would compound the jab). Fire it only this tick.
+	a.cached.Poke = false
 	a.haveCached = true
 	step := a.params.reactTicks
 	if step < 1 {

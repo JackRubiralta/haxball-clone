@@ -74,7 +74,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		if e.Kind == netcode.KindBall {
 			render.BallAt(screen, e.Position, e.Radius)
 		} else {
-			render.PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge, 0)
+			render.PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge)
 		}
 	}
 	render.ZoneIndicators(screen, g.field, config.Ruleset{

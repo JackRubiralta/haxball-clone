@@ -39,10 +39,10 @@ type aiTuning struct {
 	shootGap         float64 // extra standoff behind the ball when lining up a radial shot
 	shootAlignRad    float64 // alignment tolerance (radians) the shot must reach before releasing
 	shootAlignMaxRad float64 // widest alignment tolerance (radians) once a shot has fully relaxed
-	cornerInset      float64 // how far inside each post to aim (world units)
+	cornerInset      float64 // base safety margin inside the goal opening the shot aims (world units)
+	cornerRangeInset float64 // extra aim margin added at max shooting range (world units), scaled by distance
 	shootBallSide    float64 // min alignment of ball-side with goal to commit a shot (else reposition)
 	shootOpenBonus   float64 // flat utility bonus for a clear (open) shot, so good chances are taken
-	shootAimFrac     float64 // fraction of the way to the open post the shot aims (margin so it stays on target)
 	minShootCharge   float64 // floor on a shot's charge so even close shots are hit firmly
 
 	// Passing.
@@ -64,6 +64,9 @@ type aiTuning struct {
 	supportRangeFrac   float64 // distance the designated short supporter holds from the ball, as a fraction of pitch width
 	runForwardBias     float64 // stronger upfield bias for a give-and-go run after passing
 
+	receiveControlSpeed float64 // ball speed at/under which an incoming pass is controllable -- the receiver meets it on its path here for a clean touch
+	receiveMinSpeed     float64 // ball speed above which a loose ball counts as an in-flight pass to glide onto (vs a near-stopped ball to win)
+
 	recvLaneWeight    float64 // weight on a clear pass lane from the ball when picking a spot
 	recvSpaceWeight   float64 // weight on local open space when picking a receive spot
 	recvAdvanceWeight float64 // weight on goalward advancement when picking a receive spot
@@ -74,24 +77,27 @@ type aiTuning struct {
 	separationMinThrottle float64 // throttle floor so an idle-but-crowded off-ball player still drifts apart
 
 	// Pressure / decisions.
-	pressureRadius    float64 // an opponent within this distance applies pressure
-	shieldPressure    float64 // pressure above which the carrier shields/clears instead of dwelling
-	clearThird        float64 // normalized depth of own goal under which a clearance is favoured
-	clearCharge       float64 // charge for a clearance -- low, so it fires quickly
-	clearAlignRad     float64 // alignment tolerance for a clearance -- wide, so it boots it away fast
-	settlePossession  float64 // build possession to this before shooting/passing (don't kick a loose touch)
-	settleThrottle    float64 // throttle while nursing a fresh touch into control
-	actPressure       float64 // pressure above which the carrier must act now instead of settling
-	kickCooldownTicks uint64  // ticks after a kick during which the player dribbles, not kicks
-	shootHurryWindow  float64 // open-window (seconds) under which the shot is hurried (less charge)
-	contestMargin     float64 // intercept-time margin within which the ball is "contested" (don't trap)
-	maxChargeTicks    uint64  // give-up timeout: ticks a charge can run before the attempt is abandoned
-	aimRelaxTicks     uint64  // after charge, ticks over which the aim tolerance relaxes if not lined up
-	turnTrapRad       float64 // dribble heading change above which the player traps and eases the turn
-	maxTurnRad        float64 // max facing change per decision with a settled ball (anti-fling)
-	minTurnRad        float64 // max facing change per decision with a loose ball (it lags more, turn gentler)
-	turnTrapSettled   float64 // ball-settledness below which the dribbler traps to keep the ball glued
-	dribbleWallAvoid  float64 // penalty weight steering a dribble heading away from carrying the ball into a wall
+	pressureRadius float64 // an opponent within this distance applies pressure
+	shieldPressure float64 // pressure above which the carrier shields/clears instead of dwelling
+	clearThird     float64 // normalized depth of own goal under which a clearance is favoured
+	clearCharge    float64 // charge for a clearance -- low, so it fires quickly
+	clearAlignRad  float64 // alignment tolerance for a clearance -- wide, so it boots it away fast
+	// Middle-click poke (instant, no-charge, no-aim radial jab) usage.
+	pokePressure        float64 // pressure above which the carrier/keeper jabs the ball away (poke) instead of charging a clear/shot
+	pokeClearMinForward float64 // min radial component along our attack axis for a poke to count as clearing (never poke it back toward our own goal)
+	settlePossession    float64 // build possession to this before shooting/passing (don't kick a loose touch)
+	settleThrottle      float64 // throttle while nursing a fresh touch into control
+	actPressure         float64 // pressure above which the carrier must act now instead of settling
+	kickCooldownTicks   uint64  // ticks after a kick during which the player dribbles, not kicks
+	shootHurryWindow    float64 // open-window (seconds) under which the shot is hurried (less charge)
+	contestMargin       float64 // intercept-time margin within which the ball is "contested" (don't trap)
+	maxChargeTicks      uint64  // give-up timeout: ticks a charge can run before the attempt is abandoned
+	aimRelaxTicks       uint64  // after charge, ticks over which the aim tolerance relaxes if not lined up
+	turnTrapRad         float64 // dribble heading change above which the player traps and eases the turn
+	maxTurnRad          float64 // max facing change per decision with a settled ball (anti-fling)
+	minTurnRad          float64 // max facing change per decision with a loose ball (it lags more, turn gentler)
+	turnTrapSettled     float64 // ball-settledness below which the dribbler traps to keep the ball glued
+	dribbleWallAvoid    float64 // penalty weight steering a dribble heading away from carrying the ball into a wall
 
 	// Trap usage.
 	trapApproachFactor float64 // (reserved) trap to receive when ball approach speed exceeds capture*this
@@ -138,30 +144,32 @@ func defaultAITuning() aiTuning {
 		tapRange:         120,
 		fullRange:        260,
 		shootGap:         3,
-		shootAlignRad:    0.08726646259971647,
-		shootAlignMaxRad: 0.10471975511965977,
-		cornerInset:      16,
+		shootAlignRad:    0.06981317007977318, // 4deg: tighter lineup so corner shots fly true
+		shootAlignMaxRad: 0.10471975511965977, // 6deg: still relaxes to fire if the lineup drags
+		cornerInset:      4,
+		cornerRangeInset: 16,
 		shootBallSide:    -0.1,
 		shootOpenBonus:   0.6,
-		shootAimFrac:     0.35,
 		minShootCharge:   0.5,
 
 		passMinAdvance:    40,
 		passRiskMargin:    0.12,
 		passReachMargin:   0.4,
-		passContestMargin: 0.3,
+		passContestMargin: 0.6, // raised 0.3->0.6: an opponent reaching the target within this margin of our man kills the pass -- the AI only plays balls the receiver clearly wins, so far fewer are cut out (lifts completion past the 70% target)
 		passForwardBonus:  0.5,
 		passSafetyMin:     0.16,
 		passReceiverSpace: 30,
 		throughDist:       110,
-		passArriveSpeed:   215,
-		passSpeedMin:      185,
+		passArriveSpeed:   175, // softened 215->175, below the lowered baseline capture (~230): a pass arrives slow enough to STICK on the bouncier ball, not deflect (kept >=175 so the keeper's safe short outlet still rates over a blind clear)
+		passSpeedMin:      150, // even the shortest pass arrives gently (was 185, above the new capture floor)
 		passSpeedMax:      430,
 		passDistPenalty:   0.0004,
 
 		supportForwardBias:    40,
 		supportRangeFrac:      0.3,
 		runForwardBias:        150,
+		receiveControlSpeed:   205, // just under the lowered baseline capture (~230): meet the pass where it will actually stick, not bounce
+		receiveMinSpeed:       110, // a loose ball faster than this is an in-flight pass to glide onto
 		recvLaneWeight:        60,
 		recvSpaceWeight:       0.6,
 		recvAdvanceWeight:     0.45,
@@ -170,24 +178,26 @@ func defaultAITuning() aiTuning {
 		separationGain:        0.6,
 		separationMinThrottle: 0.3, // a near-collision pulls an idle player off the spot to step apart
 
-		pressureRadius:    70,
-		shieldPressure:    0.55,
-		clearThird:        0.32,
-		clearCharge:       0.45,
-		clearAlignRad:     0.4886921905584123,
-		settlePossession:  0.45,
-		settleThrottle:    0.72,
-		actPressure:       0.55,
-		kickCooldownTicks: 22,
-		shootHurryWindow:  0.45,
-		contestMargin:     0.1,
-		maxChargeTicks:    96,
-		aimRelaxTicks:     22,
-		turnTrapRad:       0.4363323129985824,
-		maxTurnRad:        0.22689280275926285,
-		minTurnRad:        0.08726646259971647,
-		turnTrapSettled:   0.5,
-		dribbleWallAvoid:  3.0,
+		pressureRadius:      70,
+		shieldPressure:      0.55,
+		clearThird:          0.32,
+		clearCharge:         0.45,
+		clearAlignRad:       0.4886921905584123,
+		pokePressure:        0.62, // an opponent within ~46u (centre-to-centre): boot it now, no time to charge
+		pokeClearMinForward: 0.15, // only poke-clear when the radial sends the ball clearly upfield/wide
+		settlePossession:    0.45,
+		settleThrottle:      0.72,
+		actPressure:         0.55,
+		kickCooldownTicks:   22,
+		shootHurryWindow:    0.45,
+		contestMargin:       0.1,
+		maxChargeTicks:      96,
+		aimRelaxTicks:       22,
+		turnTrapRad:         0.4363323129985824,
+		maxTurnRad:          0.22689280275926285,
+		minTurnRad:          0.08726646259971647,
+		turnTrapSettled:     0.5,
+		dribbleWallAvoid:    3.0,
 
 		trapApproachFactor: 0.7,
 		trapReceiveFactor:  0.4,

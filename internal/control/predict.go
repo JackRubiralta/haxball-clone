@@ -31,6 +31,21 @@ func predictBall(p0, v0 geom.Vec, t, friction, dt float64) geom.Vec {
 	return p0.Add(v0.Scale(factor))
 }
 
+// ballSpeedAt returns the ball's speed t seconds from now: the launch speed decayed by the
+// per-tick drag multiplier (1 + friction*dt) over the elapsed ticks. Used to find the point
+// on a pass's path where the ball has slowed enough to receive cleanly.
+func ballSpeedAt(v0 geom.Vec, t, friction, dt float64) float64 {
+	s := geom.Norm(v0)
+	if t <= 0 || s == 0 {
+		return s
+	}
+	r := 1 + friction*dt
+	if r <= 0 {
+		return 0
+	}
+	return s * math.Pow(r, math.Round(t/dt))
+}
+
 // interceptTime estimates the earliest time (seconds) a mover starting at `from` with the
 // given top speed can reach the moving ball, searching forward in small steps. It returns
 // a value just past the horizon if the ball cannot be caught in time. reachSlack is added
