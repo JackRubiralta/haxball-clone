@@ -18,6 +18,13 @@ type frame struct {
 	cursor  geom.Vec
 	clicked bool
 	draw    bool
+
+	// Clip rectangle for a scroll pane. When clipped is set, draws go through a UI
+	// masked to [clipY, clipY+clipH] and hit-tests outside that band are culled, so
+	// off-pane rows neither draw nor respond to clicks. The X span is the full row width
+	// (panes only overflow vertically), so only the Y band gates the hit-test.
+	clipped      bool
+	clipY, clipH float64
 }
 
 func updateFrame() frame {
@@ -35,6 +42,12 @@ func drawFrame(screen *ebiten.Image) frame {
 }
 
 func (f frame) hit(x, y, w, h float64) bool {
+	// Cull the hit-test when the widget falls outside the active scroll-pane band, so an
+	// off-pane (scrolled-away) button is not clickable even though the cursor is over where
+	// it would draw. A widget straddling the edge stays hittable on its visible part.
+	if f.clipped && (y+h <= f.clipY || y >= f.clipY+f.clipH) {
+		return false
+	}
 	return f.cursor.X >= x && f.cursor.X <= x+w && f.cursor.Y >= y && f.cursor.Y <= y+h
 }
 
@@ -74,16 +87,23 @@ func (f frame) sectionHeader(label string, x, y, w float64) {
 	}
 }
 
-// rowStepper draws a labelled "< value >" row in [x, x+w] and returns the dec/inc click.
-// The value sits between two stepper buttons pinned to the right of the row.
+// rowStepper draws a labelled, compact "< value >" cluster in [x, x+w] and returns the
+// dec/inc click. The cluster is RIGHT-ALIGNED in the control band (so it lines up with
+// toggles/segments in the same column) and tightly grouped: the > button hugs the band's
+// right edge, the value is centred just left of it, and the < button hugs the value -- each
+// with a small fixed gap. The value width is measured (scale-independently, so both passes
+// agree) to size the cluster, and everything is vertically centred on the buttons' midline.
 func (f frame) rowStepper(label, value string, x, y, w float64) (dec, inc bool) {
 	bh := theme.RowH - 10
+	const gap = 8.0
+	midY := y + bh/2 // centre on the buttons, which start at y and are bh tall
+	valW := f.ui.MeasureUI(value, theme.Body)
 	incX := x + w - theme.StepBtnW
-	decX := incX - theme.ControlW + theme.StepBtnW
+	valCX := incX - gap - valW/2
+	decX := valCX - valW/2 - gap - theme.StepBtnW
 	if f.draw {
 		f.ui.TextS(label, x, y+theme.RowH/2, theme.Body, theme.Text)
-		valCX := (decX + theme.StepBtnW + incX) / 2
-		f.ui.TextCenteredS(value, valCX, y+theme.RowH/2, theme.Body, theme.Text)
+		f.ui.TextCenteredS(value, valCX, midY, theme.Body, theme.Text)
 	}
 	dec = f.button("<", decX, y, theme.StepBtnW, bh)
 	inc = f.button(">", incX, y, theme.StepBtnW, bh)
@@ -163,15 +183,16 @@ func (s *scrollState) MaxOffset() float64 {
 	return m
 }
 
-// beginScroll opens a scroll pane occupying [x, x+w] x [y, y+h] and returns the Y
-// at which the first row should be laid out: the pane's top minus the (clamped)
-// scroll offset. Lay rows out downward from there as usual; the offset shifts them
-// all together. (render.UI has no clip primitive, so the App keeps action bars and
-// headers OUTSIDE the pane and sizes the pane to the panel interior; content that
-// scrolls past the edges is expected to be short-lived.) Pair every beginScroll
-// with an endScroll passing the cursor Y reached, which records the content height
-// and draws the scrollbar.
-func (f frame) beginScroll(s *scrollState, x, y, w, h float64) float64 {
+// beginScroll opens a scroll pane occupying [x, x+w] x [y, y+h]. It returns the Y at
+// which the first row should be laid out (the pane's top minus the clamped scroll offset)
+// AND a clipped frame the caller draws the pane CONTENT through: that frame's UI is masked
+// to the pane rectangle (rows scrolled past the edges are not painted) and its hit-tests
+// are culled to the same band (off-pane buttons are not clickable). Lay rows out downward
+// from the returned top as usual; the offset shifts them all together. Draw the pane CHROME
+// (headers, action bar, scrollbar) through the ORIGINAL frame so it is never clipped. Pair
+// every beginScroll with an endScroll (on the original frame) passing the cursor Y reached,
+// which records the content height and draws the scrollbar.
+func (f frame) beginScroll(s *scrollState, x, y, w, h float64) (float64, frame) {
 	s.view = h
 	if s.offset < 0 {
 		s.offset = 0
@@ -179,7 +200,13 @@ func (f frame) beginScroll(s *scrollState, x, y, w, h float64) float64 {
 	if m := s.MaxOffset(); s.offset > m {
 		s.offset = m
 	}
-	return y - s.offset
+	cf := f
+	cf.clipped = true
+	cf.clipY, cf.clipH = y, h
+	if f.draw {
+		cf.ui = f.ui.PushClip(x, y, w, h)
+	}
+	return y - s.offset, cf
 }
 
 // endScroll closes a scroll pane. contentBottom is the Y the layout cursor reached

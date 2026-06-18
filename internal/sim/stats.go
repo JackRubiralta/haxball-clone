@@ -320,13 +320,13 @@ func DefaultStats(shootForce float64) PlayerStats {
 		Acceleration:    300,
 		TurnRate:        14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
 		TouchRange:      2,
-		PullRange:       5,                                             // base centre-pull reach (the dribble attraction; a held trap extends this)
-		PossessionRange: 5,                                             // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionRadius)
+		PullRange:       5,                                            // base centre-pull reach (the dribble attraction; a held trap extends this)
+		PossessionRange: 5,                                            // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionRadius)
 		Restitution:     CurveSpec{InverseQuadraticCurve, 0.23, 0.24}, // front 0.23: controlled front touch (still >0.20 so a hard pass deflects, not sticks); back 0.24: springier behind. Multipliers unchanged -> buffed ~0.19, debuffed ~0.43
-		CaptureSpeed:    CurveSpec{LinearCurve, 230, 30},               // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; capture improved via restitution+control instead
-		CenterPull:      CurveSpec{InverseQuadraticCurve, 800, 0},      // power reduced (950 -> 800)
-		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 30},     // front restored to 420; small baseline hold at the back (0 -> 30)
-		Control:         CurveSpec{LinearCurve, 1850, 340},             // roll-to-front speed raised further (1700->1850) to help capture
+		CaptureSpeed:    CurveSpec{LinearCurve, 230, 30},              // baseline front 230 (left as-is): the buff endpoint (~236) is barely above it, so raising baseline would invert the capture buff; capture improved via restitution+control instead
+		CenterPull:      CurveSpec{InverseQuadraticCurve, 800, 0},     // power reduced (950 -> 800)
+		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
+		Control:         CurveSpec{LinearCurve, 1850, 340},            // roll-to-front speed raised further (1700->1850) to help capture
 		Shoot:           CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping:  11,
 		OrbitStick:      8,

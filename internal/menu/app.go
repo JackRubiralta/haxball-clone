@@ -2,6 +2,7 @@ package menu
 
 import (
 	"context"
+	"image/color"
 	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -192,6 +193,18 @@ func (a *App) Draw(screen *ebiten.Image) {
 	}
 }
 
+// DebugRenderScreen renders a single screen to dst for offscreen screenshot tooling (not used
+// in normal play). state selects the screen, tab the Match Setup tab; m (if non-nil) backs the
+// in-match screens (Playing/Paused/Result). It runs only the draw pass.
+func (a *App) DebugRenderScreen(dst *ebiten.Image, state AppState, tab int, m *sim.Match) {
+	a.setupTab = tab
+	if m != nil {
+		a.match = m
+	}
+	a.state = state
+	a.Draw(dst)
+}
+
 func (a *App) startMatch(practice, human bool) {
 	a.practice, a.human = practice, human
 	a.match, a.controllers = a.settings.BuildMatch(practice, human)
@@ -273,17 +286,17 @@ func (a *App) screenMatchSetup(f frame) {
 		}
 	}
 	sc := &a.setupScroll[a.setupTab]
-	top := f.beginScroll(sc, paneX, paneY, paneW, paneH)
+	top, cf := f.beginScroll(sc, paneX, paneY, paneW, paneH)
 	col := newCol(paneX, top, paneW-12) // -12 leaves room for the scrollbar
 	switch a.setupTab {
 	case 0:
-		a.setupTeams(f, &col)
+		a.setupTeams(cf, &col)
 	case 1:
-		a.setupPitch(f, &col)
+		a.setupPitch(cf, &col)
 	case 2:
-		a.setupBoxes(f, &col)
+		a.setupBoxes(cf, &col)
 	case 3:
-		a.setupRules(f, &col)
+		a.setupRules(cf, &col)
 	}
 	f.endScroll(sc, paneX, paneY, paneW, paneH, col.cursorY())
 
@@ -578,37 +591,37 @@ func (a *App) screenSettings(f frame) {
 			a.settingsScroll.Scroll(wy)
 		}
 	}
-	top := f.beginScroll(&a.settingsScroll, paneX, paneY, paneW, paneH)
+	top, cf := f.beginScroll(&a.settingsScroll, paneX, paneY, paneW, paneH)
 	col := newCol(paneX, top, paneW-12)
 
-	f.sectionHeader("CAMERA", col.x, col.header(1), col.w)
-	if d, i := f.rowStepper("Mode", p.CameraMode, col.x, col.row(), col.w); d || i {
+	cf.sectionHeader("CAMERA", col.x, col.header(1), col.w)
+	if d, i := cf.rowStepper("Mode", p.CameraMode, col.x, col.row(), col.w); d || i {
 		p.CameraMode = cycle(cameraPresets, p.CameraMode, dir(i))
 		a.applyPrefs()
 	}
-	if d, i := f.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 1, 64), col.x, col.row(), col.w); d || i {
+	if d, i := cf.rowStepper("Zoom", strconv.FormatFloat(p.Zoom, 'f', 1, 64), col.x, col.row(), col.w); d || i {
 		p.Zoom = clampF(p.Zoom+float64(dir(i))*0.5, 1, 4)
 		a.applyPrefs()
 	}
 	col.gapRow(0.3)
-	f.sectionHeader("AUDIO", col.x, col.header(1), col.w)
-	if d, i := f.rowStepper("Volume", strconv.Itoa(int(p.Volume*100+0.5))+"%", col.x, col.row(), col.w); d || i {
+	cf.sectionHeader("AUDIO", col.x, col.header(1), col.w)
+	if d, i := cf.rowStepper("Volume", strconv.Itoa(int(p.Volume*100+0.5))+"%", col.x, col.row(), col.w); d || i {
 		p.Volume = clampF(p.Volume+float64(dir(i))*0.1, 0, 1)
 		a.applyPrefs()
 	}
-	if f.rowToggle("Mute", p.Muted, col.x, col.row(), col.w) {
+	if cf.rowToggle("Mute", p.Muted, col.x, col.row(), col.w) {
 		p.Muted = !p.Muted
 		a.applyPrefs()
 	}
 	col.gapRow(0.3)
-	f.sectionHeader("CONTROLS", col.x, col.header(1), col.w)
+	cf.sectionHeader("CONTROLS", col.x, col.header(1), col.w)
 	for _, line := range []string{
 		"WASD  move", "Mouse  aim", "Hold left-click  charge shot (release to fire)",
 		"Right-click  trap", "Middle-click  poke", "C  camera mode", "Esc / P  pause",
 	} {
 		y := col.row()
-		if f.draw {
-			f.ui.TextS(line, col.x, y+theme.RowH/2, theme.Body, theme.Text)
+		if cf.draw {
+			cf.ui.TextS(line, col.x, y+theme.RowH/2, theme.Body, theme.Text)
 		}
 	}
 	f.endScroll(&a.settingsScroll, paneX, paneY, paneW, paneH, col.cursorY())
@@ -648,15 +661,22 @@ func (a *App) screenPaused(f frame) {
 // resultScrollState persists the goal-timeline scroll offset across frames.
 var resultScroll scrollState
 
+// resultOverlay is the near-opaque backdrop behind the result panel: dark enough that the
+// in-match HUD card behind it does not bleed through above the panel (the bug where the
+// bright scoreboard showed over the top edge).
+var resultOverlay = color.RGBA{6, 12, 10, 245}
+
 func (a *App) screenResult(f frame) {
 	r := buildResult(a.match)
 
-	// Full-time panel over the dimmed final frame.
-	const px, py, pw, ph = 110.0, 40.0, 780.0, 600.0
+	// Full-time panel over the dimmed final frame. The overlay is drawn nearly opaque so the
+	// in-match HUD card behind it cannot bleed through above the panel, and the panel itself
+	// starts near the very top so the result reads cleanly over where the HUD sat.
+	const px, py, pw, ph = 110.0, 24.0, 780.0, 616.0
 	const barH = 52.0
 	pad := theme.PanelPad
 	if f.draw {
-		f.ui.FillRect(0, 0, render.UIWidth, render.UIHeight, theme.Overlay)
+		f.ui.FillRect(0, 0, render.UIWidth, render.UIHeight, resultOverlay)
 		f.ui.Panel(px, py, pw, ph, theme.Panel, theme.Edge)
 	}
 	innerX := px + pad
@@ -689,15 +709,15 @@ func (a *App) screenResult(f frame) {
 			resultScroll.Scroll(wy)
 		}
 	}
-	top := f.beginScroll(&resultScroll, innerX, bodyTop, innerW, paneH)
+	top, cf := f.beginScroll(&resultScroll, innerX, bodyTop, innerW, paneH)
 	col := newCol(innerX, top, innerW-12) // -12 leaves room for the scrollbar
-	a.drawResultTimeline(f, r, &col)
+	a.drawResultTimeline(cf, r, &col)
 	if r.HasShootout {
 		col.gapRow(0.4)
-		a.drawResultShootout(f, r, &col)
+		a.drawResultShootout(cf, r, &col)
 	}
 	col.gapRow(0.4)
-	a.drawResultStats(f, &col)
+	a.drawResultStats(cf, &col)
 	f.endScroll(&resultScroll, innerX, bodyTop, innerW, paneH, col.cursorY())
 }
 
@@ -709,20 +729,21 @@ func (a *App) drawResultHeader(f frame, r ResultModel, x, y, w float64) {
 	}
 	cx := x + w/2
 	chipW := 220.0
-	badgeR := 16.0
+	const swatch = 20.0
+	sr := swatch / 2
 
 	// Big centred scoreline.
 	score := strconv.Itoa(r.Teams[0].Score) + " - " + strconv.Itoa(r.Teams[1].Score)
 	f.ui.TextCenteredS(score, cx, y+30, 52, theme.Text)
 
-	// Left (home) chip: badge then name.
-	render.IconShield(f.screen, x+badgeR, y+24, badgeR*2, r.Teams[0].Color, theme.Edge)
-	f.ui.TextS(fitMenu(f, r.Teams[0].Name, chipW-2*badgeR-12, theme.Body), x+2*badgeR+8, y+24, theme.Body, r.Teams[0].Color)
+	// Left (home) chip: a team-colour swatch then the name (consistent with the HUD card).
+	render.TeamSwatch(f.screen, x+sr, y+24, swatch, r.Teams[0].Color)
+	f.ui.TextS(fitMenu(f, r.Teams[0].Name, chipW-swatch-12, theme.Body), x+swatch+10, y+24, theme.Body, r.Teams[0].Color)
 
-	// Right (away) chip: name then badge, mirrored.
+	// Right (away) chip: the name then a swatch, mirrored.
 	rxEnd := x + w
-	render.IconShield(f.screen, rxEnd-badgeR, y+24, badgeR*2, r.Teams[1].Color, theme.Edge)
-	f.ui.TextRightS(fitMenu(f, r.Teams[1].Name, chipW-2*badgeR-12, theme.Body), rxEnd-2*badgeR-8, y+24, theme.Body, r.Teams[1].Color)
+	render.TeamSwatch(f.screen, rxEnd-sr, y+24, swatch, r.Teams[1].Color)
+	f.ui.TextRightS(fitMenu(f, r.Teams[1].Name, chipW-swatch-12, theme.Body), rxEnd-swatch-10, y+24, theme.Body, r.Teams[1].Color)
 
 	// Winner line with a trophy (a trophy only for a decided result), then the context tag.
 	winY := y + 76

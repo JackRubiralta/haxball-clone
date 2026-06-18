@@ -205,6 +205,16 @@ func IconShield(screen *ebiten.Image, cx, cy, size float64, fill, edge color.Col
 	newHUDCanvas(screen).iconShield(cx, cy, size, fill, edge)
 }
 
+// TeamSwatch draws the small team-colour dot (the same mark the HUD card uses) centred at
+// (cx, cy) in UI units, so the result header and the HUD share one consistent shape -- not
+// a shield. col is the team colour; it gets a subtle dark outline so a light colour reads.
+func TeamSwatch(screen *ebiten.Image, cx, cy, size float64, col color.RGBA) {
+	c := newHUDCanvas(screen)
+	r := size / 2
+	c.fillCircle(cx, cy, r, col)
+	c.strokeCircle(cx, cy, r-0.75, 1.5, withAlpha(outlineColor, 200))
+}
+
 // IconClock draws the clock icon centred at (cx, cy) in UI units.
 func IconClock(screen *ebiten.Image, cx, cy, size float64, clr color.Color) {
 	newHUDCanvas(screen).iconClock(cx, cy, size, clr)

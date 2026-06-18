@@ -206,8 +206,11 @@ func (m *Match) enforceBoxCap(box ZoneRect, boxSide Side, team *Team, max int, p
 	}
 	occ := make([]occupant, 0, len(team.Players))
 	for _, p := range team.Players {
-		if !box.overlapsCircle(p.Position, p.Radius()) {
-			continue // body not in the box
+		// Count a player as occupying the box once its body reaches the keep-out surface (the
+		// outer edge of the line), the same surface boxKeepOut walls against -- one consistent
+		// barrier for counting and for pushing.
+		if !box.overlapsCircle(p.Position, p.Radius()+boxLineClearance) {
+			continue // body clear of the box
 		}
 		occ = append(occ, occupant{p, boxInsideness(p, box, leftSide), ownerKeeper && p.Role == RoleGoalkeeper})
 	}
@@ -243,12 +246,13 @@ func (m *Match) enforceBoxKeeperOnly(box ZoneRect, boxSide Side, team *Team, pen
 	leftSide := boxSide == SideLeft
 	owner := team.Side == boxSide
 	for _, p := range team.Players {
-		if !box.overlapsCircle(p.Position, p.Radius()) {
-			continue // body not in the box
-		}
 		if owner && p.Role == RoleGoalkeeper {
 			continue // the owner's keeper is the only admitted player
 		}
+		// boxKeepOut itself gates on contact with the keep-out surface (body within the line),
+		// so it is the single source of truth for "is this player touching the box" -- no
+		// separate overlap pre-test, which would gate at a different surface and reintroduce a
+		// band the player could creep into.
 		if push, ok := boxKeepOut(p, box, leftSide); ok {
 			pending[p.PlayerID] = push
 		}
@@ -260,68 +264,106 @@ func (m *Match) enforceBoxKeeperOnly(box ZoneRect, boxSide Side, team *Team, pen
 // settled inside; a player only just overlapping a face scores near zero. The cap keeps the
 // deepest occupants so a player merely poking in is the one walled out.
 func boxInsideness(p *Player, box ZoneRect, leftSide bool) float64 {
-	rad := p.Radius()
+	margin := p.Radius() + boxLineClearance
 	c := p.Position
-	upPen := c.Y - (box.Min.Y - rad)
-	downPen := (box.Max.Y + rad) - c.Y
+	upPen := c.Y - (box.Min.Y - margin)
+	downPen := (box.Max.Y + margin) - c.Y
 	var xPen float64
 	if leftSide {
-		xPen = (box.Max.X + rad) - c.X
+		xPen = (box.Max.X + margin) - c.X
 	} else {
-		xPen = c.X - (box.Min.X - rad)
+		xPen = c.X - (box.Min.X - margin)
 	}
 	return math.Min(xPen, math.Min(upPen, downPen))
 }
 
-// boxKeepOut keeps a player's circle outside the box, pushing it out the
-// least-penetration PITCH-FACING face (the goal-line face is the arena boundary, owned
-// by ConfinePlayer, and is never an exit). The chosen axis's into-wall velocity is ZEROED
-// (no bounce off the goal/penalty box), so the player stops dead at the line and slides
-// along the face; the along-face component is left untouched.
+// boxKeepOut keeps a player's circle outside the box, treating the box as a SOLID
+// obstacle exactly like a wall: the player is pushed out along the shortest path to the
+// surface (so a head-on approach stops straight back and a corner approach slides off the
+// corner diagonally -- never snapped sideways), and only the into-surface component of the
+// velocity is removed. Restitution is ZERO (no bounce off the goal/penalty box), so the
+// player stops dead at the line and slides freely along it; the along-surface component is
+// left untouched. This mirrors physics.resolveCircleSegment (closest-point circle vs. a
+// static body) but one-sided -- only the player moves -- and bounce-free.
+//
+// The keep-out surface is the box grown by margin = body radius + the line half-width, so
+// the walled-out player's body rests just outside the painted marking. Resolution is the
+// circle-vs-box test against that grown surface: contact when the player's CENTRE is
+// within margin of the box, the same surface used to gate and to clamp, so there is no
+// hysteresis band to jitter in. The goal-line (back) face is the arena boundary owned by
+// ConfinePlayer and is never an exit, so the rare deep-penetration fallback excludes it.
 func boxKeepOut(p *Player, box ZoneRect, leftSide bool) (pendingPush, bool) {
-	// margin clears the player's body PLUS the boundary line's half-width, so the walled-out
-	// player rests just outside the marking instead of overlapping it.
 	margin := p.Radius() + boxLineClearance
 	c := p.Position
-	// Fully outside the box expanded by the margin -> nothing to push.
-	if c.X <= box.Min.X-margin || c.X >= box.Max.X+margin || c.Y <= box.Min.Y-margin || c.Y >= box.Max.Y+margin {
-		return pendingPush{}, false
+
+	// Closest point on the box to the player's centre (centre clamped to the rect). When it
+	// differs from the centre, the centre is OUTSIDE the box and the vector from it gives the
+	// exact push-out direction -- pitch-facing on a face, diagonal at a corner.
+	q := geom.NewVec(clamp(c.X, box.Min.X, box.Max.X), clamp(c.Y, box.Min.Y, box.Max.Y))
+	delta := c.Sub(q)
+	dist := geom.Norm(delta)
+
+	if dist > 0 { // centre outside the box: shortest-path push along the contact normal
+		if dist >= margin {
+			return pendingPush{}, false // body already clear of the keep-out surface
+		}
+		normal := delta.Scale(1 / dist) // unit, points from the surface to the player
+		pos := q.Add(normal.Scale(margin))
+		return pendingPush{pos: pos, vel: killInto(p.Velocity, normal)}, true
 	}
 
-	// Candidate faces: top, bottom, and the single inner-X (pitch-facing) face.
-	upPen := c.Y - (box.Min.Y - margin)   // distance to clear out the top
-	downPen := (box.Max.Y + margin) - c.Y // distance to clear out the bottom
-	var xPen float64
-	var xTarget float64
+	// Centre INSIDE the box (deep penetration / tunnelling) -- there is no contact normal, so
+	// fall back to ejecting through the nearest PITCH-FACING face. The goal-line face is never
+	// an exit. Cost = distance the centre must travel to clear that face by the margin.
+	upCost := c.Y - (box.Min.Y - margin)   // exit the top
+	downCost := (box.Max.Y + margin) - c.Y // exit the bottom
+	var xTarget, xCost float64
 	if leftSide {
-		xTarget = box.Max.X + margin // push right, into the pitch
-		xPen = xTarget - c.X
+		xTarget = box.Max.X + margin // exit toward +X (the pitch)
+		xCost = xTarget - c.X
 	} else {
-		xTarget = box.Min.X - margin // push left, into the pitch
-		xPen = c.X - xTarget
+		xTarget = box.Min.X - margin // exit toward -X (the pitch)
+		xCost = c.X - xTarget
 	}
-
-	// Zero bounce: KILL the into-wall velocity component (set to 0) rather than reflecting it, so the
-	// player stops dead at the box line instead of rebounding off it. The other (along-the-face)
-	// component is left untouched, so the player still slides freely along the line.
-	vel := p.Velocity
 	switch {
-	case xPen <= upPen && xPen <= downPen:
-		if (leftSide && vel.X < 0) || (!leftSide && vel.X > 0) {
-			vel.X = 0
-		}
-		return pendingPush{pos: geom.NewVec(xTarget, c.Y), vel: vel}, true
-	case upPen <= downPen:
-		if vel.Y > 0 {
-			vel.Y = 0
-		}
-		return pendingPush{pos: geom.NewVec(c.X, box.Min.Y-margin), vel: vel}, true
+	case xCost <= upCost && xCost <= downCost:
+		return pendingPush{pos: geom.NewVec(xTarget, c.Y), vel: killInto(p.Velocity, xNormal(leftSide))}, true
+	case upCost <= downCost:
+		return pendingPush{pos: geom.NewVec(c.X, box.Min.Y-margin), vel: killInto(p.Velocity, geom.NewVec(0, -1))}, true
 	default:
-		if vel.Y < 0 {
-			vel.Y = 0
-		}
-		return pendingPush{pos: geom.NewVec(c.X, box.Max.Y+margin), vel: vel}, true
+		return pendingPush{pos: geom.NewVec(c.X, box.Max.Y+margin), vel: killInto(p.Velocity, geom.NewVec(0, 1))}, true
 	}
+}
+
+// killInto removes the component of v pointing INTO the surface (opposite the outward unit
+// normal), leaving the along-surface component untouched. This is a zero-restitution stop:
+// the player neither bounces nor keeps any speed driving it into the wall, but slides freely
+// along it. A velocity already moving away from the surface is unchanged.
+func killInto(v, normal geom.Vec) geom.Vec {
+	into := geom.Dot(v, normal)
+	if into >= 0 {
+		return v // moving along or away from the surface
+	}
+	return v.Sub(normal.Scale(into))
+}
+
+// xNormal is the outward (pitch-facing) unit normal of a box's inner vertical face.
+func xNormal(leftSide bool) geom.Vec {
+	if leftSide {
+		return geom.NewVec(1, 0)
+	}
+	return geom.NewVec(-1, 0)
+}
+
+// clamp constrains x to [lo, hi].
+func clamp(x, lo, hi float64) float64 {
+	if x < lo {
+		return lo
+	}
+	if x > hi {
+		return hi
+	}
+	return x
 }
 
 // ballCarrier returns the player currently in firm possession of the ball, or nil.

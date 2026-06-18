@@ -5,6 +5,7 @@
 package render
 
 import (
+	"image"
 	"image/color"
 	"math"
 	"time"
@@ -279,13 +280,59 @@ const (
 // UI is an immediate-mode drawing surface for menus, laid out in fixed UI coordinates
 // and scaled to the window. Menus draw through it so they never touch Ebiten or the
 // vector package directly, keeping the transform single-sourced.
-type UI struct{ c canvas }
+//
+// full holds the unclipped framebuffer so PopClip can restore it after a clipped scroll
+// pane. c.dst may be a SubImage of full while a clip is active; either way the canvas
+// transform (scale/origin) is unchanged, so clipped content keeps the SAME coordinate
+// system -- it is merely masked to the pane rectangle.
+type UI struct {
+	c    canvas
+	full *ebiten.Image
+}
 
 // BeginUI prepares a UI surface for this frame. It sets the transform that
 // ScreenToWorld inverts, so a menu can map the cursor into UI coordinates.
 func BeginUI(screen *ebiten.Image) UI {
 	worldW, worldH = UIWidth, UIHeight
-	return UI{c: newCanvas(screen)}
+	return UI{c: newCanvas(screen), full: screen}
+}
+
+// PushClip restricts subsequent drawing to the UI-coordinate rectangle [x,y,w,h],
+// returning a UI whose canvas targets a SubImage of the framebuffer with the SAME
+// transform -- so content drawn through it uses identical coordinates but is masked to
+// the rectangle (anything outside is not painted). Pair with the returned UI's PopClip
+// (or just stop using it) to resume unclipped drawing. The rectangle is mapped to
+// framebuffer pixels via the current canvas transform. A zero/degenerate rect (e.g. the
+// update pass's empty UI) returns the UI unchanged, so layout-only passes are unaffected.
+func (u UI) PushClip(x, y, w, h float64) UI {
+	if u.full == nil || u.c.dst == nil {
+		return u
+	}
+	// Map the UI rect to framebuffer pixels, clamped to the framebuffer bounds.
+	px0 := int(math.Floor(float64(u.c.px(x))))
+	py0 := int(math.Floor(float64(u.c.py(y))))
+	px1 := int(math.Ceil(float64(u.c.px(x + w))))
+	py1 := int(math.Ceil(float64(u.c.py(y + h))))
+	b := u.full.Bounds()
+	if px0 < b.Min.X {
+		px0 = b.Min.X
+	}
+	if py0 < b.Min.Y {
+		py0 = b.Min.Y
+	}
+	if px1 > b.Max.X {
+		px1 = b.Max.X
+	}
+	if py1 > b.Max.Y {
+		py1 = b.Max.Y
+	}
+	if px1 <= px0 || py1 <= py0 {
+		return u
+	}
+	sub := u.full.SubImage(image.Rect(px0, py0, px1, py1)).(*ebiten.Image)
+	nc := u.c
+	nc.dst = sub
+	return UI{c: nc, full: u.full}
 }
 
 // Fill clears the whole surface to a colour.
@@ -913,91 +960,102 @@ func HUDFromSnapshot(leftName, rightName string, leftColor, rightColor color.RGB
 
 // HUD layout constants (UI/world units, scaled by the canvas).
 const (
-	hudBarH   = 44.0
-	hudChipW  = 188.0
-	hudGap    = 14.0
-	hudScoreS = 30.0 // big vector score size
-	hudNameS  = 16.0
-	hudClockS = 17.0
-	hudPhaseS = 13.0
+	hudCardTop  = 8.0   // margin above the floating card
+	hudCardH    = 52.0  // card height
+	hudScoreS   = 26.0  // big vector score size
+	hudNameS    = 14.0  // team name
+	hudClockS   = 14.0  // clock
+	hudPhaseS   = 12.0  // phase label
+	hudSwatchW  = 16.0  // team-colour swatch (rounded square / dot)
+	hudCardPad  = 16.0  // inner horizontal padding
+	hudColGap   = 10.0  // gap between swatch / name / score blocks
+	hudSideSpan = 132.0 // width reserved for each team's (swatch + name) block
 )
 
+// hudPanel/hudEdge mirror the menu's panel + edge so the card reads as the same UI family.
 var (
-	hudPanel  = color.RGBA{16, 22, 28, 180}
+	hudPanel  = color.RGBA{22, 30, 38, 225} // dark rounded panel fill (matches menu Panel feel)
+	hudEdge   = color.RGBA{96, 140, 130, 200}
 	hudScored = color.RGBA{96, 220, 110, 255} // shootout scored dot
 	hudMissed = color.RGBA{210, 78, 78, 255}  // shootout missed dot
 	hudEmpty  = color.RGBA{210, 218, 210, 80} // untaken dot
 )
 
-// DrawHUD draws the in-game top tally: two team chips (colour block + name + procedural
-// badge), the big vector score between them, the clock on the left and the phase on the
-// right, plus a shootout sub-row of scored/missed dots. It is fit-to-window (never pans
-// or zooms) so it stays put under the camera.
+// DrawHUD draws the in-game scoreboard as a CONDENSED FLOATING CARD centred at the top: a
+// small dark rounded panel (styled like the menu) holding, per side, a team-colour SWATCH
+// and the team name, the big vector score "L - R" in the middle, and the clock + phase
+// label compactly below the score. It is client-only and fit-to-window (never pans or
+// zooms), so it stays put under the camera. The same card serves the local and network
+// paths (HUDModel is built identically), with a shootout dot sub-row appended when active.
 func DrawHUD(screen *ebiten.Image, h HUDModel) {
 	c := newHUDCanvas(screen)
 	w := worldW
 
-	// Top bar background.
-	c.fillRect(0, 0, w, hudBarH, hudPanel)
-
+	// Card geometry: width sized to the score plus the two team blocks, centred at the top.
+	score := itoa(h.LeftScore) + " - " + itoa(h.RightScore)
+	scoreW := measureUI(score, hudScoreS)
+	cardW := 2*hudSideSpan + scoreW + 2*hudCardPad + 2*hudColGap
+	if min := 360.0; cardW < min {
+		cardW = min
+	}
+	cardX := (w - cardW) / 2
+	cardY := hudCardTop
 	cx := w / 2
-	// Big central score "L - R".
-	score := itoa(h.LeftScore) + "  -  " + itoa(h.RightScore)
-	c.textSized(score, cx, hudBarH/2, hudScoreS, AlignCenter, hudText)
-	scoreHalf := measureUI(score, hudScoreS) / 2
 
-	// Left team chip, right-anchored against the score.
-	chipPad := 12.0
-	leftChipR := cx - scoreHalf - hudGap
-	drawTeamChip(c, h.LeftName, h.LeftColor, leftChipR-hudChipW, 4, hudChipW, hudBarH-8, false)
-	// Right team chip, left-anchored against the score.
-	rightChipL := cx + scoreHalf + hudGap
-	drawTeamChip(c, h.RightName, h.RightColor, rightChipL, 4, hudChipW, hudBarH-8, true)
+	// Panel fill + edge (the menu look).
+	c.fillRect(cardX, cardY, cardW, hudCardH, hudPanel)
+	c.strokeRect(cardX, cardY, cardW, hudCardH, 1.5, hudEdge)
 
-	// Clock (left) with a small clock icon, and the phase label (right).
-	c.iconClock(chipPad+9, hudBarH/2, 18, hudDim)
-	c.textSized(formatClock(h.ClockSeconds), chipPad+24, hudBarH/2, hudClockS, AlignLeft, hudText)
+	scoreMidY := cardY + hudCardH*0.38 // score sits in the upper portion; clock/phase below
+	c.textSized(score, cx, scoreMidY, hudScoreS, AlignCenter, hudText)
+
+	// Left team block: swatch then name, growing inward from the card's left padding.
+	lx := cardX + hudCardPad
+	drawTeamSwatch(c, lx, scoreMidY, hudSwatchW, h.LeftColor)
+	c.textSized(fitText(h.LeftName, hudSideSpan-hudSwatchW-hudColGap, hudNameS),
+		lx+hudSwatchW+hudColGap, scoreMidY, hudNameS, AlignLeft, hudText)
+
+	// Right team block: name then swatch, mirrored against the card's right padding.
+	rx := cardX + cardW - hudCardPad
+	drawTeamSwatch(c, rx-hudSwatchW, scoreMidY, hudSwatchW, h.RightColor)
+	c.textSized(fitText(h.RightName, hudSideSpan-hudSwatchW-hudColGap, hudNameS),
+		rx-hudSwatchW-hudColGap, scoreMidY, hudNameS, AlignRight, hudText)
+
+	// Clock + phase below the score, compact and centred.
+	subY := cardY + hudCardH*0.76
+	clock := formatClock(h.ClockSeconds)
 	if h.Phase != "" {
-		c.textSized(h.Phase, w-chipPad, hudBarH/2, hudPhaseS, AlignRight, hudColorForPhase(h.Phase))
+		// Clock on the left of centre, phase on the right, with a thin separator.
+		c.textSized(clock, cx-6, subY, hudClockS, AlignRight, hudDim)
+		c.textSized(h.Phase, cx+6, subY, hudPhaseS, AlignLeft, hudColorForPhase(h.Phase))
+	} else {
+		c.textSized(clock, cx, subY, hudClockS, AlignCenter, hudDim)
 	}
 
 	if h.InShootout {
-		drawShootoutRow(c, h, w)
+		drawShootoutRow(c, h, cardX, cardY+hudCardH, cardW)
 	}
-
-	// Controls hint along the bottom.
-	c.textSized("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap  -  Esc pause",
-		10, worldH-14, 12, AlignLeft, hudDim)
 }
 
-// drawTeamChip draws a colour block, the team name, and a procedural shield badge. When
-// mirror is set the badge sits on the right (for the right-hand team) so the two chips
-// face inward toward the score.
-func drawTeamChip(c canvas, name string, col color.RGBA, x, y, w, h float64, mirror bool) {
-	c.fillRect(x, y, w, h, withAlpha(col, 60))
-	c.strokeRect(x, y, w, h, 1.5, withAlpha(col, 200))
-	badgeR := h * 0.8
-	pad := 8.0
-	badgeX := x + pad + badgeR/2
-	nameX := x + pad*2 + badgeR
-	nameAlign := AlignLeft
-	if mirror {
-		badgeX = x + w - pad - badgeR/2
-		nameX = x + w - pad*2 - badgeR
-		nameAlign = AlignRight
-	}
-	c.iconShield(badgeX, y+h/2, badgeR, col, outlineColor)
-	// Clip the name to the chip with a simple width budget.
-	c.textSized(fitText(name, w-badgeR-pad*3, hudNameS), nameX, y+h/2, hudNameS, nameAlign, hudText)
+// drawTeamSwatch draws a small filled rounded square (a colour dot) at (x, midY) for a team,
+// with a subtle dark outline so a light team colour still reads against the panel. This is
+// the single team-colour mark shared by the HUD and the result header -- not a shield shape
+// and not a wide colour bar.
+func drawTeamSwatch(c canvas, x, midY, size float64, col color.RGBA) {
+	r := size / 2
+	c.fillCircle(x+r, midY, r, col)
+	c.strokeCircle(x+r, midY, r-0.75, 1.5, withAlpha(outlineColor, 200))
 }
 
-// drawShootoutRow draws the penalties sub-bar: a "PENALTIES" tag and a row of result dots
-// per side (scored = green, missed = red, untaken slots = faint).
-func drawShootoutRow(c canvas, h HUDModel, w float64) {
-	const rowY = hudBarH
-	const rowH = 22.0
-	c.fillRect(0, rowY, w, rowH, hudPanel)
-	c.textSized("PENALTIES", w/2, rowY+rowH/2, 12, AlignCenter, hudDim)
+// drawShootoutRow draws the penalties sub-card directly under the score card: a "PENALTIES"
+// tag and a row of result dots per side (scored = green, missed = red). cardX/rowY/cardW
+// place it flush below the floating card so the two read as one stacked panel.
+func drawShootoutRow(c canvas, h HUDModel, cardX, rowY, cardW float64) {
+	const rowH = 20.0
+	cx := cardX + cardW/2
+	c.fillRect(cardX, rowY, cardW, rowH, hudPanel)
+	c.strokeRect(cardX, rowY, cardW, rowH, 1.5, hudEdge)
+	c.textSized("PENALTIES", cx, rowY+rowH/2, 11, AlignCenter, hudDim)
 
 	dotR := 4.0
 	gap := 11.0
@@ -1005,11 +1063,11 @@ func drawShootoutRow(c canvas, h HUDModel, w float64) {
 	// Left dots grow leftward from centre-left; right dots grow rightward from centre-right.
 	left := dotsFor(h.LeftDots, h.LeftPenGoals, h.LeftPenTaken)
 	right := dotsFor(h.RightDots, h.RightPenGoals, h.RightPenTaken)
-	startL := w/2 - 70
+	startL := cx - 64
 	for i, scored := range left {
 		c.fillCircle(startL-float64(i)*gap, cy, dotR, dotColor(scored))
 	}
-	startR := w/2 + 70
+	startR := cx + 64
 	for i, scored := range right {
 		c.fillCircle(startR+float64(i)*gap, cy, dotR, dotColor(scored))
 	}
