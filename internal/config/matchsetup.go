@@ -45,9 +45,10 @@ type MatchSetup struct {
 	WinScore      int     // goals needed to win when WinByGoals
 	WinByTime     bool    // end when the regulation clock expires
 	Minutes       float64 // regulation length in minutes when WinByTime
-	ExtraTime     bool    // if drawn at regulation, play extra time
-	ExtraMinutes  float64 // length of extra time in minutes (ignored when GoldenGoal)
-	GoldenGoal    bool    // modifier: when ExtraTime is on, extra time is sudden death (next goal wins)
+	ExtraTime        bool    // if drawn at regulation, play extra time
+	ExtraMinutes     float64 // length of extra time in minutes (also the golden-goal cap when GoldenGoalCapped)
+	GoldenGoal       bool    // modifier: when ExtraTime is on, extra time is sudden death (next goal wins)
+	GoldenGoalCapped bool    // modifier: when GoldenGoal is on, cap sudden death at ExtraMinutes (else it runs until a goal)
 	Penalties     bool    // if still drawn, decide on a shootout (DIRECT pens when ExtraTime is off)
 	PenaltyBestOf int     // kicks per side in a shootout (0 = the default of 5)
 
@@ -108,8 +109,8 @@ func (s MatchSetup) Validate() error {
 	if s.WinByTime && s.Minutes <= 0 {
 		return fmt.Errorf("minutes must be positive when winning by time")
 	}
-	if s.ExtraTime && !s.GoldenGoal && s.ExtraMinutes <= 0 {
-		return fmt.Errorf("extra minutes must be positive when extra time is fixed-length")
+	if s.ExtraTime && (!s.GoldenGoal || s.GoldenGoalCapped) && s.ExtraMinutes <= 0 {
+		return fmt.Errorf("extra minutes must be positive when extra time is fixed-length or golden goal is capped")
 	}
 	if s.Penalties && s.PenaltyBestOf < 1 {
 		return fmt.Errorf("penalty best-of must be at least 1 when penalties are enabled")
@@ -186,7 +187,11 @@ func (s MatchSetup) Ruleset() (Ruleset, error) {
 	if s.ExtraTime {
 		if s.GoldenGoal {
 			r.OnDraw = append(r.OnDraw, ContinueGoldenGoal)
-			r.GoldenGoalSeconds = 0 // until a goal is scored
+			if s.GoldenGoalCapped {
+				r.GoldenGoalSeconds = s.ExtraMinutes * 60 // sudden death, but the stage ends at the cap
+			} else {
+				r.GoldenGoalSeconds = 0 // pure sudden death: until a goal is scored
+			}
 		} else {
 			r.OnDraw = append(r.OnDraw, ContinueExtraTime)
 			r.ExtraTimeSeconds = s.ExtraMinutes * 60

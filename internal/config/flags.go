@@ -113,6 +113,7 @@ type ruleFlags struct {
 	extraTime      bool
 	extraMinutes   float64
 	goldenGoal     bool
+	goldenCapped   bool
 	penalties      bool
 	penBestOf      int
 	offsideFrac    float64
@@ -134,6 +135,7 @@ func bindRules(fs *flag.FlagSet) *ruleFlags {
 	fs.BoolVar(&rf.extraTime, "extra-time", false, "if drawn at regulation, play extra time")
 	fs.Float64Var(&rf.extraMinutes, "extra-minutes", 1, "length of extra time in minutes (ignored with -golden-goal)")
 	fs.BoolVar(&rf.goldenGoal, "golden-goal", false, "make extra time sudden death: the next goal wins")
+	fs.BoolVar(&rf.goldenCapped, "golden-goal-capped", false, "cap golden-goal sudden death at -extra-minutes (with -golden-goal)")
 	fs.BoolVar(&rf.penalties, "penalties", false, "if still drawn, decide on a penalty shootout (direct when -extra-time is off)")
 	fs.IntVar(&rf.penBestOf, "penalties-best-of", 0, "kicks per side in a shootout (0 = the default of 5)")
 	fs.Float64Var(&rf.offsideFrac, "offside-frac", 0, "anti-camp line as a fraction of the pitch from a team's own goal (0 = off, e.g. 0.667)")
@@ -155,8 +157,8 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 	if rf.winByTime && rf.minutes <= 0 {
 		return usagef("minutes must be positive with -time-limit")
 	}
-	if rf.extraTime && !rf.goldenGoal && rf.extraMinutes <= 0 {
-		return usagef("extra-minutes must be positive with -extra-time")
+	if rf.extraTime && (!rf.goldenGoal || rf.goldenCapped) && rf.extraMinutes <= 0 {
+		return usagef("extra-minutes must be positive with -extra-time (or a capped -golden-goal)")
 	}
 	if rf.offsideFrac < 0 || rf.offsideFrac > 1 {
 		return usagef("offside-frac must be between 0 and 1")
@@ -179,7 +181,8 @@ func (rf *ruleFlags) fill(s *MatchSetup) error {
 	s.WinByGoals, s.WinScore = rf.winByGoals, rf.winScore
 	s.WinByTime, s.Minutes = rf.winByTime, rf.minutes
 	s.ExtraTime, s.ExtraMinutes = rf.extraTime, rf.extraMinutes
-	s.GoldenGoal, s.Penalties, s.PenaltyBestOf = rf.goldenGoal, rf.penalties, rf.penBestOf
+	s.GoldenGoal, s.GoldenGoalCapped = rf.goldenGoal, rf.goldenCapped
+	s.Penalties, s.PenaltyBestOf = rf.penalties, rf.penBestOf
 	if rf.offsideFrac > 0 {
 		s.Offside, s.OffsideFrac = true, rf.offsideFrac
 	}

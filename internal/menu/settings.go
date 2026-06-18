@@ -159,6 +159,9 @@ func (s *Settings) ClampDependents() {
 	if !s.ExtraTime {
 		s.GoldenGoal = false
 	}
+	if !s.GoldenGoal {
+		s.GoldenGoalCapped = false
+	}
 }
 
 // SeedCLI seeds the per-team control from the legacy command-line flags: both teams take
