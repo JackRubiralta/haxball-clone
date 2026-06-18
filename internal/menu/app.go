@@ -205,6 +205,22 @@ func (a *App) DebugRenderScreen(dst *ebiten.Image, state AppState, tab int, m *s
 	a.Draw(dst)
 }
 
+// DebugScrollSetup pre-sets a Match Setup tab's scroll offset (screenshot tooling only).
+func (a *App) DebugScrollSetup(tab int, offset float64) { a.setupScroll[tab].offset = offset }
+
+// DebugSetRules forces draw-resolution settings (screenshot tooling only) so the rules summary
+// can be captured for a given combo.
+func (a *App) DebugSetRules(winByTime, extraTime, golden, goldenCapped, penalties bool, extraMin float64) {
+	a.settings.WinByTime = winByTime
+	a.settings.ExtraTime = extraTime
+	a.settings.GoldenGoal = golden
+	a.settings.GoldenGoalCapped = goldenCapped
+	a.settings.Penalties = penalties
+	a.settings.ExtraMinutes = extraMin
+	a.settings.PenaltyBestOf = 5
+	a.settings.ClampDependents()
+}
+
 func (a *App) startMatch(practice, human bool) {
 	a.practice, a.human = practice, human
 	a.match, a.controllers = a.settings.BuildMatch(practice, human)
@@ -542,15 +558,10 @@ func (a *App) setupRules(f frame, col *colLayout) {
 			s.PenaltyBestOf = clampInt(s.PenaltyBestOf+dir(i), 1, 11)
 		}
 	}
-	// "A draw stands" is the explicit third outcome: selected (ON) only when neither extra
-	// time nor penalties is enabled. Clicking it when it is off turns both off, choosing it.
-	drawStands := !s.ExtraTime && !s.Penalties
-	if f.rowToggle("A draw stands", drawStands, col.x, col.row(), col.w) {
-		if !drawStands {
-			s.ExtraTime, s.Penalties = false, false
-			s.ClampDependents()
-		}
-	}
+	// Derived one-line summary of how a level match resolves (mirrors MatchSetup.Ruleset's
+	// OnDraw chain). With neither extra time nor penalties enabled it simply reads "A draw
+	// stands." -- so the old explicit toggle for that was redundant and is gone.
+	f.disabledRow(drawSummary(s), col.x, col.row(), col.w)
 }
 
 // winSummary describes the configured win condition in a single line for the Match Rules
@@ -565,6 +576,36 @@ func winSummary(s *Settings) string {
 		return "Whoever leads after " + strconv.Itoa(int(s.Minutes)) + " min wins."
 	default:
 		return "Friendly: the match never ends."
+	}
+}
+
+// drawSummary describes, in one well-phrased line, how a level match is resolved -- mirroring
+// MatchSetup.Ruleset's OnDraw chain (extra time / golden goal, then a shootout, else the draw
+// stands). Only a timed match can finish level, so it says so otherwise.
+func drawSummary(s *Settings) string {
+	if !s.WinByTime {
+		return "Only a timed match can end in a draw."
+	}
+	// First stage: extra time (fixed) or golden goal (uncapped = decides it; capped = may end level).
+	seg := ""
+	switch {
+	case s.ExtraTime && s.GoldenGoal && !s.GoldenGoalCapped:
+		return "Golden goal: first goal wins."
+	case s.ExtraTime && s.GoldenGoal:
+		seg = strconv.Itoa(int(s.ExtraMinutes)) + " min golden goal"
+	case s.ExtraTime:
+		seg = strconv.Itoa(int(s.ExtraMinutes)) + " min extra time"
+	}
+	// Terminal outcome after that stage.
+	switch {
+	case seg != "" && s.Penalties:
+		return seg + ", then penalties."
+	case seg != "":
+		return seg + ", then a draw stands."
+	case s.Penalties:
+		return "Straight to penalties."
+	default:
+		return "A draw stands."
 	}
 }
 

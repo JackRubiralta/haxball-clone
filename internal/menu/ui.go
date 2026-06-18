@@ -252,7 +252,20 @@ func (f frame) segmented(label string, opts []string, sel int, x, y, w float64) 
 	if len(opts) == 0 {
 		return out
 	}
-	bandW := theme.ControlW
+	// Size the band so the WIDEST option gets comfortable padding (a 3-way "easy/normal/hard"
+	// needs more room than the stepper control band, or the long word crowds its neighbours and
+	// the short ones read as off-centre). Never narrower than the control band; right-aligned
+	// like the steppers/toggles. MeasureUI is scale-independent, so both passes agree.
+	widest := 0.0
+	for _, o := range opts {
+		if ow := f.ui.MeasureUI(o, theme.Small); ow > widest {
+			widest = ow
+		}
+	}
+	bandW := (widest + 20) * float64(len(opts))
+	if bandW < theme.ControlW {
+		bandW = theme.ControlW
+	}
 	if bandW > w {
 		bandW = w
 	}
