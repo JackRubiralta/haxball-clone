@@ -24,10 +24,10 @@ func fieldPlayerTuning() PlayerTuning {
 	s.Acceleration = 300                                         // [gk 340 | mid 300 | attack 320]
 	s.Shoot = CurveSpec{LinearCurve, 575, 172.5}                 // +15% power at max (was 500/150)
 	s.Restitution = CurveSpec{InverseQuadraticCurve, 0.23, 0.24} // front 0.23: controlled front touch (still >0.20, so a full pass deflects off rather than sticking); back 0.24: springier behind. Buff/debuff multipliers unchanged -> buffed ~0.19, debuffed ~0.43, still tamed
-	s.CaptureSpeed = CurveSpec{LinearCurve, 235, 30}             // baseline front 235 (nudged up from 230); the team buff is multiplicative (CaptureBest), so the buffed endpoint scales with it and stays above baseline
+	s.CaptureSpeed = CurveSpec{LinearCurve, 276.125, 30}         // baseline front 276.125 (whole band shifted +17.5% from 235); the team buff is multiplicative (CaptureBest), so buffed (~283) and debuffed (~173) shift up with it and the buff stays above baseline
 	s.CenterPull = CurveSpec{InverseQuadraticCurve, 770, 0}      // baseline pull trimmed a touch (was 800)
 	s.Stickiness = CurveSpec{InverseQuadraticCurve, 420, 30}     // front restored to 420; small baseline hold at the back (was 0)
-	s.Control = CurveSpec{LinearCurve, 1820, 340}                // baseline roll-to-front trimmed a touch (was 1850); TrapControlBonus keeps full-trap control unchanged
+	s.Control = CurveSpec{LinearCurve, 1160.25, 340}             // baseline roll-to-front front lowered in two steps (-25% then -15%) from 1820 -> 1160.25; TrapControlBonus is re-bumped to keep the FULL-TRAP control unchanged
 	s.CaptureConeRadians = 0.5235987755982988                    // 30deg reliable-capture cone (CaptureConeSoft/control-cone/trap-bonus inherit DefaultPlayerTuning)
 	s.TrapPullBonus = 1.0                                        // reduced (was 1.5)
 	s.TrapRangeBonus = 6                                         // reduced (was 10)

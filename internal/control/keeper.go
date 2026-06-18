@@ -31,6 +31,13 @@ func (a *AI) keeper(p perception, plan teamPlan) sim.Intent {
 		in := sim.Intent{}
 		reach := p.me.Radius() + p.ballRadius
 		ip := interceptPoint(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+		// Receiving a back-pass: a teammate's ball rolled back to us is an in-flight pass our side
+		// is collecting uncontested -- don't charge it head-on at the first touchable point, run ONTO
+		// its trajectory and meet it where it has slowed for a clean pickup (the same rule the
+		// outfield receiver uses in press). A genuine 50/50 still takes the earliest intercept.
+		if a.receivingPass(p) {
+			ip = a.receivePoint(p)
+		}
 		mv, th := a.steer(p, ip, false)
 		in.Move, in.Throttle, in.Aim = mv, th, a.aimToward(p, p.ball)
 		if a.wantTrapReceive(p) {

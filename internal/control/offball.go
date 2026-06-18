@@ -81,7 +81,17 @@ func (a *AI) receivingPass(p perception) bool {
 // pass: the SOONEST point it can reach where the ball has also slowed to a controllable speed,
 // so it runs onto the trajectory and takes a clean touch instead of charging the fast ball.
 // Falls back to the earliest reachable point if the ball never slows enough within the horizon.
+// receiveControlSpeed is the ball speed at/under which the receiver can take a clean first touch:
+// a fraction (receiveControlFrac) of its own CaptureSpeed -- the impact speed below which the ball
+// sticks instead of bouncing. Deriving it from the LIVE capture means it tracks any tuning of the
+// capture physics automatically, so the receiver always meets a pass where the ball will actually
+// stick rather than at a stale hard-coded constant.
+func (a *AI) receiveControlSpeed(p perception) float64 {
+	return p.me.Tuning().CaptureSpeed.Front * a.tune.receiveControlFrac
+}
+
 func (a *AI) receivePoint(p perception) geom.Vec {
+	controlSpeed := a.receiveControlSpeed(p)
 	reach := p.me.Radius() + p.ballRadius
 	from := p.me.Position()
 	maxSpeed := p.me.Tuning().MaxSpeed
@@ -106,7 +116,7 @@ func (a *AI) receivePoint(p perception) geom.Vec {
 		if !haveEarliest {
 			earliest, haveEarliest = target, true
 		}
-		if ballSpeedAt(p.ballVel, t, p.friction, p.dt) <= a.tune.receiveControlSpeed {
+		if ballSpeedAt(p.ballVel, t, p.friction, p.dt) <= controlSpeed {
 			return target // soonest reachable point where the ball is controllable
 		}
 	}

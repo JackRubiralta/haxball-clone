@@ -70,6 +70,10 @@ func interceptCost(p perception, q sim.ObservedView, tune aiTuning) float64 {
 	reach := q.Radius() + p.ballRadius
 	// q is an observed player (self appears here too, only as an ObservedView): its hidden
 	// speed/turn-rate are not readable, so assume nominal; use its visible facing as heading.
+	// interceptTime already accounts for ball motion -- a player the ball is fleeing (the passer
+	// behind a played pass) gets a high cost, so the man AHEAD of the ball naturally wins the
+	// election and runs onto its path; an explicit ahead-of-ball bias here proved redundant and
+	// destabilised the election (it flickered the presser), so the natural cost is used as-is.
 	t := interceptTime(q.Position(), tune.assumedOppSpeed, tune.assumedOppTurn, q.Facing(), reach, p.ball, p.ballVel, p.friction, p.dt, tune)
 	if tune.interceptQuantum > 0 {
 		t = math.Round(t/tune.interceptQuantum) * tune.interceptQuantum

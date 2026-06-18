@@ -75,8 +75,12 @@ func TestKeeperPassesSafeOutletInsteadOfClearing(t *testing.T) {
 	}
 	keeper.Position = geom.NewVec(f.Min.X+50, f.CenterSpot.Y)
 	m.Ball.Position = keeper.Position.Add(geom.NewVec(keeper.Radius()+m.Ball.Radius(), 0))
-	// Open mate just square/short of the ball (not progressive enough for bestPass).
-	mate.Position = geom.NewVec(f.Min.X+75, f.CenterSpot.Y+60)
+	// Open mate just square/short of the ball (not progressive enough for bestPass). Kept a SHORT
+	// hop from the ball so the outlet lane has a comfortable laneSafe margin at any reasonable pass
+	// pace -- the keeper must play it out regardless of how soft passes are tuned (the scenario used
+	// to sit right on the safety threshold, so a softer pass tipped it into a clear; that was test
+	// fragility, not a behaviour bug).
+	mate.Position = geom.NewVec(f.Min.X+72, f.CenterSpot.Y+45)
 	for _, pl := range m.Teams[0].Players {
 		if pl != keeper && pl != mate {
 			pl.Position = geom.NewVec(f.Max.X-60, f.Max.Y-60)

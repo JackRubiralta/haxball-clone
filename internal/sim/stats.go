@@ -349,6 +349,24 @@ func (s PlayerTuning) ShootDirection(radial, facing geom.Vec) geom.Vec {
 	return radial
 }
 
+// ShootLaunchVelocity returns the velocity a left-click shot ADDS to the ball for a ball sitting
+// along unit `radial` (player centre -> ball) with the player facing unit `facing`, at the given
+// 0..1 charge: the aim-assisted launch direction (ShootDirection) scaled by the charge- and
+// angle-scaled power -- MinShootFactor..1 of front power (Shoot.Eval(0)), tapered off the front
+// cone by frontShotFalloff. Returns the zero vector for a ball at/behind the +-90deg fire edge (no
+// shot fires there). This is the SINGLE SOURCE OF TRUTH for a shot's launch: the sim fires with it
+// (see shoot) and the AI predicts from it (see control.launchAligned), so the AI's aim can never
+// drift from the shot physics when the curves/cones/aim-assist change.
+func (s PlayerTuning) ShootLaunchVelocity(radial, facing geom.Vec, charge float64) geom.Vec {
+	angle := ballAngle(radial, facing)
+	if angle >= fireConeHalfAngle {
+		return geom.Vec{}
+	}
+	factor := s.MinShootFactor + (1-s.MinShootFactor)*charge
+	power := s.Shoot.Eval(0) * factor * frontShotFalloff(angle)
+	return s.ShootDirection(radial, facing).Scale(power)
+}
+
 // DefaultPlayerTuning returns the baseline player tuning.
 func DefaultPlayerTuning(shootForce float64) PlayerTuning {
 	return PlayerTuning{
@@ -362,10 +380,10 @@ func DefaultPlayerTuning(shootForce float64) PlayerTuning {
 		PullRange:       5,                                            // base centre-pull reach (the dribble attraction; a held trap extends this)
 		PossessionRange: 5,                                            // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionReach)
 		Restitution:     CurveSpec{InverseQuadraticCurve, 0.23, 0.24}, // front 0.23: controlled front touch (still >0.20 so a hard pass deflects, not sticks); back 0.24: springier behind. Multipliers unchanged -> buffed ~0.19, debuffed ~0.43
-		CaptureSpeed:    CurveSpec{LinearCurve, 235, 30},              // baseline front 235 (nudged up a touch from 230); the team buff is multiplicative (CaptureBest), so the buffed endpoint scales with it and stays above baseline
+		CaptureSpeed:    CurveSpec{LinearCurve, 276.125, 30},          // baseline front 276.125 (whole band shifted +17.5% from 235); the team buff is multiplicative (CaptureBest), so the buffed endpoint scales with it and stays above baseline
 		CenterPull:      CurveSpec{InverseQuadraticCurve, 770, 0},     // baseline pull trimmed a touch (800 -> 770)
 		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
-		Control:         CurveSpec{LinearCurve, 1820, 340},            // baseline roll-to-front trimmed a touch (1850 -> 1820); TrapControlBonus is bumped to keep the FULL-TRAP control unchanged
+		Control:         CurveSpec{LinearCurve, 1160.25, 340},         // baseline roll-to-front front lowered in two steps (-25% then -15%) from 1820 -> 1160.25; TrapControlBonus is re-bumped to keep the FULL-TRAP control unchanged
 		Shoot:           CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
 		ControlDamping:  11,
 		OrbitStick:      8,
@@ -403,7 +421,7 @@ func DefaultPlayerTuning(shootForce float64) PlayerTuning {
 
 		TrapPullBonus:         1.0,
 		TrapRangeBonus:        6,
-		TrapControlBonus:      1.2870879, // bumped from 1.25 so full-trap control front = 1820*(1+1.2870879) = 4162.5 (= the old 1850*2.25): the trap's control is unchanged after the baseline drop
+		TrapControlBonus:      2.5875888817, // re-bumped so full-trap control front = 1160.25*(1+2.5875888817) = 4162.5 (= the old 1820*2.2870879): the FULL-TRAP ("buffed") control is unchanged after the baseline drops (-25% then -15%)
 		TrapStickinessBonus:   0.5,       // a held trap stiffens the sticky hold (up to +50% at full trap)
 		TrapAccelFactor:       0.55,
 		TrapSpeedFactor:       0.5,
@@ -414,8 +432,8 @@ func DefaultPlayerTuning(shootForce float64) PlayerTuning {
 		TouchQuality: TouchQuality{
 			OwnTeamMax:        1.0,                 // owning team at full charge -> the cleanest touch
 			OtherTeam:         -1.0,                // other team at the owner's full charge -> worst-case touch (ball flies off)
-			CaptureWorst:      0.628,               // debuffed front capture ~144 (230*0.628): a conceding opponent absorbs even less, so the ball bounces off it sooner
-			CaptureBest:       1.025,               // buffed front capture ~236 (230*1.025): a buffed teammate captures slightly firmer balls than baseline (still far below a full shot, so it also bounces a point-blank blast)
+			CaptureWorst:      0.628,               // debuffed front capture ~173 (276.125*0.628): a conceding opponent absorbs even less, so the ball bounces off it sooner
+			CaptureBest:       1.025,               // buffed front capture ~283 (276.125*1.025): a buffed teammate captures slightly firmer balls than baseline (still far below a full shot, so it also bounces a point-blank blast)
 			RestitutionWorst:  1.875,               // debuffed front bounce ~0.45 (0.24*1.875): HELD at the prior value, springier than neutral so a conceding team still deflects the ball off
 			RestitutionBest:   0.844,               // buffed front bounce ~0.20 (0.24*0.844): HELD at the prior value, a buffed teammate deflects gentler than neutral (still bounces a blast)
 			ConeBonusRadians:  0.05235987755982988, // ~3deg: a slight cone widening at full team buff (biggest cone)

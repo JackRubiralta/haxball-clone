@@ -105,8 +105,9 @@ func (c canvas) iconGoalNet(cx, cy, size float64, clr color.Color) {
 	c.line(cx-w, top, cx+w, top, lw, clr) // crossbar
 	c.line(cx-w, top, cx-w, bot, lw, clr) // left post
 	c.line(cx+w, top, cx+w, bot, lw, clr) // right post
-	// Faint net lattice.
-	net := withAlpha(clr, 120)
+	// Faint net lattice (premultiplied so a bright clr fades instead of glowing additively).
+	nr, ng, nb, _ := clr.RGBA()
+	net := fadeU8(color.RGBA{uint8(nr >> 8), uint8(ng >> 8), uint8(nb >> 8), 255}, 120)
 	c.line(cx-w*0.33, top, cx-w*0.33, bot, math.Max(1, size*0.04), net)
 	c.line(cx+w*0.33, top, cx+w*0.33, bot, math.Max(1, size*0.04), net)
 	c.line(cx-w, cy, cx+w, cy, math.Max(1, size*0.04), net)
@@ -186,11 +187,47 @@ func (c canvas) strokePolygon(pts []geom.Vec, w float64, clr color.Color) {
 	}
 }
 
-// withAlpha returns clr with its alpha replaced (preserving RGB).
+// withAlpha returns clr with its alpha replaced (RGB preserved). This is only valid when clr is
+// already DARK -- every channel <= a -- so the result stays a valid alpha-premultiplied colour
+// (e.g. a near-black outline). To fade a BRIGHT colour (a team tint, an accent), use fade/fadeU8
+// instead, which also scale the RGB; replacing only the alpha on a bright colour produces an
+// invalid premultiplied value that renders additively (bright, non-fading, hue-shifted).
 func withAlpha(clr color.Color, a uint8) color.RGBA {
 	r, g, b, _ := clr.RGBA()
 	return color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), a}
 }
+
+// fade premultiplies base by a STRAIGHT alpha a in [0,1], returning a VALID alpha-premultiplied
+// color.RGBA. color.RGBA is premultiplied, so making a colour translucent means scaling the RGB
+// channels by alpha too -- not just lowering A. Lowering only A on a bright colour yields an
+// invalid premultiplied value that Ebiten renders additively (bright, non-fading, skewed toward
+// cyan). This is the one correct way to fade a colour in this package (see drawPushPulse).
+func fade(base color.RGBA, a float64) color.RGBA {
+	if a <= 0 {
+		return color.RGBA{}
+	}
+	if a > 1 {
+		a = 1
+	}
+	return color.RGBA{
+		uint8(float64(base.R) * a),
+		uint8(float64(base.G) * a),
+		uint8(float64(base.B) * a),
+		uint8(255 * a),
+	}
+}
+
+// fadeU8 is fade with the alpha given as a 0..255 byte (a/255 straight alpha), for call sites whose
+// opacity is already expressed in 0..255 steps (e.g. a gradient between uint8 endpoints).
+func fadeU8(base color.RGBA, a uint8) color.RGBA { return fade(base, float64(a)/255) }
+
+// additiveGlow returns base's FULL rgb with a low alpha -- deliberately NOT a valid premultiplied
+// colour, so Ebiten blends it additively: the full base colour is added on top of the background
+// (brightening/tinting it) while the alpha only dims the background a little. This is INTENTIONAL
+// for the shoot-charge gauge, whose classic look is an additive team-coloured glow that intensifies
+// toward full charge (at a=255 it lands on the solid team colour). For a normal translucent colour
+// that should genuinely fade, use fade/fadeU8 instead -- those premultiply correctly.
+func additiveGlow(base color.RGBA, a uint8) color.RGBA { return color.RGBA{base.R, base.G, base.B, a} }
 
 // Exported UI-coordinate icon wrappers for the menu and post-match screens. They build a
 // fixed-overlay-box canvas (it never touches the aim transform, and -- like the rest of the

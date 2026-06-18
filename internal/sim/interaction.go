@@ -441,18 +441,14 @@ func shoot(player *Player, ball *Ball) bool {
 		return false
 	}
 
+	// Add the shot impulse via the single source of truth (also used by the AI to predict its
+	// aim): the aim-assisted launch direction (radial nudged toward facing) scaled by the charge-
+	// and angle-scaled power -- full within the inner +-30deg cone, tapering to 0 by the +-90deg
+	// edge. So a centred shot goes where the player aims and an edge-of-hemisphere shot is weak but
+	// still on-aim. (dir is the unit radial here; the fire-cone guard above already rejected
+	// at/behind +-90deg.)
 	charge := NormShootCharge(player.shootCharge)
-	factor := player.Tuning.MinShootFactor + (1-player.Tuning.MinShootFactor)*charge
-	// Power is full within the inner +-30deg cone and tapers (linearly) to 0 toward the +-90deg
-	// edges (frontShotFalloff). The LAUNCH DIRECTION is the radial nudged toward the
-	// facing by the aim assist (uniform across the hemisphere), so a centred shot goes
-	// where the player aims and an edge-of-hemisphere shot is weak but still on-aim.
-	power := player.Tuning.Shoot.Eval(0) * factor * frontShotFalloff(angle)
-	if distance > 0 {
-		dir = player.Tuning.ShootDirection(dir, player.Facing)
-	}
-
-	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
+	ball.Velocity = ball.Velocity.Add(player.Tuning.ShootLaunchVelocity(dir, player.Facing, charge))
 	player.possession = 0
 	return true
 }

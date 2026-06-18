@@ -65,8 +65,10 @@ func TestDribbleTurnExact(t *testing.T) {
 	if gapMax > 0.1 {
 		t.Errorf("ball flung out while turning: max gap %.4f (TouchRange %.1f)", gapMax, fieldPlayerTuning().TouchRange)
 	}
-	wantPos := geom.NewVec(23.6108291948, 9.4762062654)
-	wantVel := geom.NewVec(-13.7091291718, 25.3651780362)
+	// Baseline re-captured after the roll-to-front Control front was lowered (-25% then -15%;
+	// full-trap "buffed" control unchanged); the ball still stays glued (gapMax << 0.1, checked above).
+	wantPos := geom.NewVec(24.9334854766, 5.3627252172)
+	wantVel := geom.NewVec(-5.0312473364, 25.4903454651)
 	if geom.Dist(pos, wantPos) > 1e-3 || geom.Dist(vel, wantVel) > 1e-3 {
 		t.Errorf("turn output drifted from the pre-change baseline:\n pos %v want %v\n vel %v want %v", pos, wantPos, vel, wantVel)
 	}
@@ -80,8 +82,9 @@ func TestStopTurnSettleNoFling(t *testing.T) {
 	if gapMax > 0.1 {
 		t.Errorf("ball flung out around the stop-turn: max gap %.4f", gapMax)
 	}
-	wantPos := geom.NewVec(4.6108953069, -25.1011280653)
-	wantVel := geom.NewVec(-60.7339704691, -13.7307422750)
+	// Baseline re-captured after the Control front was lowered (-25% then -15%; full-trap unchanged).
+	wantPos := geom.NewVec(10.7017742823, -23.1626975510)
+	wantVel := geom.NewVec(-47.5596734879, -24.0164051277)
 	if geom.Dist(pos, wantPos) > 5e-2 || geom.Dist(vel, wantVel) > 5e-2 {
 		t.Errorf("stop-turn output drifted materially from the pre-change baseline:\n pos %v want %v\n vel %v want %v", pos, wantPos, vel, wantVel)
 	}

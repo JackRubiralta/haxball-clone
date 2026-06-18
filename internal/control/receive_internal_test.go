@@ -39,8 +39,8 @@ func TestReceivePointOnTrajectory(t *testing.T) {
 	// slowed), unless the path never slowed enough in range (then it is the earliest reachable).
 	along := geom.Norm(rel)
 	tMeet := ballTravelTime(along, geom.Norm(p.ballVel), p.friction)
-	if speed := ballSpeedAt(p.ballVel, tMeet, p.friction, p.dt); speed > ai.tune.receiveControlSpeed+5 {
-		t.Errorf("met the ball at speed %.0f > control speed %.0f -- not a clean reception", speed, ai.tune.receiveControlSpeed)
+	if cs := ai.receiveControlSpeed(p); ballSpeedAt(p.ballVel, tMeet, p.friction, p.dt) > cs+5 {
+		t.Errorf("met the ball at speed %.0f > control speed %.0f -- not a clean reception", ballSpeedAt(p.ballVel, tMeet, p.friction, p.dt), cs)
 	}
 
 	// It must still be reachable: we don't run to a point farther than the earliest interceptable

@@ -37,7 +37,7 @@ var (
 	stripeB      = color.RGBA{52, 150, 60, 255}   // alternate band
 	lineColor    = color.RGBA{235, 240, 235, 255} // pitch markings
 	netFill      = color.RGBA{14, 18, 24, 150}    // dark goal interior
-	netLine      = color.RGBA{120, 132, 140, 130} // off-colour (cool grey) net mesh, not white
+	netLine      = fade(color.RGBA{120, 132, 140, 255}, 130.0/255) // off-colour (cool grey) net mesh, premultiplied
 	ballWhite    = color.RGBA{248, 248, 248, 255}
 	ballOutline  = color.RGBA{60, 60, 66, 255}
 	seamColor    = color.RGBA{44, 44, 52, 255}
@@ -48,7 +48,7 @@ var (
 	bannerColor  = color.RGBA{0, 0, 0, 165}
 	hudText      = color.RGBA{226, 234, 226, 255} // legible HUD text (matches the menu Text)
 	hudDim       = color.RGBA{170, 188, 172, 235} // secondary HUD text (matches the menu TextDim)
-	offsideLine  = color.RGBA{235, 240, 235, 105} // translucent white anti-camp line
+	offsideLine  = fade(color.RGBA{235, 240, 235, 255}, 105.0/255) // translucent white anti-camp line, premultiplied
 )
 
 // Line widths (world units). EVERY painted pitch line -- the boundary, the goal line that closes
@@ -786,6 +786,26 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
 }
 
+// pitchGlowAdd is the grass tint baked into a team colour by glowColor. Tuned so the corrected
+// (alpha-blended) glow lands on the same vivid cyan (blue team) / peach (red team) the old additive
+// bug produced over the pitch.
+var pitchGlowAdd = color.RGBA{50, 120, 50, 0}
+
+// glowColor reproduces how the player ability glows (trap aura, push ring, shoot charge) LOOKED
+// under the old premultiplied-alpha bug: that bug ADDED the team colour over the pitch, so a blue
+// glow read cyan and a red one read peach. We bake that additive-over-grass look into a proper
+// OPAQUE base colour here, so fade()/fadeU8() can then make it correctly translucent (RGB scaled by
+// alpha) -- the same vivid colour as before, but it now actually fades instead of glowing additively.
+func glowColor(body color.RGBA) color.RGBA {
+	add := func(a, b uint8) uint8 {
+		if v := int(a) + int(b); v < 255 {
+			return uint8(v)
+		}
+		return 255
+	}
+	return color.RGBA{add(body.R, pitchGlowAdd.R), add(body.G, pitchGlowAdd.G), add(body.B, pitchGlowAdd.B), 255}
+}
+
 // drawPushPulses draws the middle-click push effect. For each player whose push just fired
 // (PushFlash > 0, set on every attempt -- even a whiff with no ball in reach), it paints an
 // expanding ring centred on the PLAYER that travels outward as the press fades, so it reads as a
@@ -821,14 +841,15 @@ func drawPushPulse(c canvas, center geom.Vec, innerRadius, pullRange, flash floa
 	}
 	const thickness = 2.5   // CONSTANT, THIN ring (world units) -- independent of how far it has expanded
 	const peakAlpha = 235.0 // a bright pulse while the ring is still small at the player...
-	// ...that fades on an easeOut curve (alpha ~ flash^2): brightest when small, dropping FAST as the
-	// ring grows so the bigger it gets the FAINTER it is. By the time it reaches full extent it is
-	// already ~invisible -- so it dissolves rather than popping out or appearing to brighten.
-	a := uint8(peakAlpha * flash * flash)
-	if a == 0 {
+	// ...that fades on an easeOut curve (flash^2): brightest when small, dropping FAST as the ring
+	// grows so the bigger it gets the FAINTER it is, ~invisible by full extent -- a dissipating
+	// shockwave that never pops out or appears to brighten. fade() handles the premultiply (RGB
+	// scaled by alpha); glowColor gives it the SAME tint as the trap aura.
+	alpha := (peakAlpha / 255.0) * flash * flash // straight alpha, 0..1
+	if alpha <= 0.003 {
 		return
 	}
-	c.strokeCircle(center.X, center.Y, radius, thickness, color.RGBA{body.R, body.G, body.B, a})
+	c.strokeCircle(center.X, center.Y, radius, thickness, fade(glowColor(body), alpha))
 }
 
 // drawTrapAura draws a soft glow ring around a player while it traps. `level` is the trap's
@@ -840,23 +861,25 @@ func drawTrapAura(c canvas, pos geom.Vec, radius, level float64, body color.RGBA
 	if level <= 0 {
 		return
 	}
-	// A glow drawn as a stack of thin concentric bands whose opacity RISES along the disc: faint
-	// at the body (inner edge) and brightest at the outer rim. The opacity gradient is fixed and
-	// SIZE-INDEPENDENT -- only the reach scales with the aura level, so a small disc and a big one
-	// look identical in opacity (one is just bigger), and the bright rim reads as an expanding ring.
-	const bands = 24
-	const innerAlpha = 8.0                  // opacity at the body (inner edge)
-	const outerAlpha = 70.0                 // opacity at the outer rim (brightest -- opacity rises outward)
-	reach := 4 + 16*level                   // SIZE tracks the aura level (grows then shrinks); opacity does NOT
-	width := reach / float64(bands-1) * 1.1 // thin bands with a hair of overlap so they meet seamlessly
+	// A glow drawn as a stack of thin concentric bands in the cyan/peach glowColor: opacity is
+	// FULLEST at the body (most opaque, right at the player) and FADES OUT toward the outer rim, so
+	// the halo is strongest at its source and dissolves the farther away it gets. The profile is
+	// fixed and SIZE-INDEPENDENT -- only the reach scales with the aura level. fade() makes each band
+	// correctly translucent.
+	const bands = 28
+	const innerA = 0.93                     // straight alpha at the body (inner edge) -- fullest near the player
+	const outerA = 0.22                     // straight alpha at the outer rim -- faded but still PRESENT (not gone)
+	reach := 4 + 18*level                   // SIZE tracks the aura level (grows then shrinks); opacity does NOT
+	width := reach / float64(bands-1) * 1.2 // thin bands with a hair of overlap so they meet seamlessly
+	glow := glowColor(body)
 	for i := 0; i < bands; i++ {
-		t := float64(i) / float64(bands-1)                 // 0 at the body, 1 at the outer rim
-		r := radius + reach*t                              //
-		a := uint8(innerAlpha + (outerAlpha-innerAlpha)*t) // rises 8 -> 70 outward; independent of disc size
-		if a == 0 {
+		t := float64(i) / float64(bands-1) // 0 at the body, 1 at the outer rim
+		r := radius + reach*t
+		af := innerA + (outerA-innerA)*t // falls: fullest at the body, fading out toward the rim
+		if af <= 0 {
 			continue
 		}
-		c.strokeCircle(pos.X, pos.Y, r, width, color.RGBA{body.R, body.G, body.B, a})
+		c.strokeCircle(pos.X, pos.Y, r, width, fade(glow, af))
 	}
 }
 
@@ -900,7 +923,7 @@ func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, coef float64
 	bg := color.RGBA{0, 0, 0, 130}
 
 	c.fillRect(x, y, w, h, bg)
-	c.fillRect(x, y, w*clamp01(playerPoss), h, color.RGBA{240, 240, 240, 225})
+	c.fillRect(x, y, w*clamp01(playerPoss), h, fade(color.RGBA{240, 240, 240, 255}, 225.0/255))
 
 	y2 := y + h + gap
 	c.fillRect(x, y2, w, h, bg)
@@ -928,10 +951,12 @@ func drawShootCharge(c canvas, pos, facing geom.Vec, radius, charge float64, bod
 	if geom.Norm(facing) > 0 {
 		f = math.Atan2(facing.Y, facing.X)
 	}
-	// Faint outline of the front 180deg hemisphere (centred on the facing direction).
-	strokeArc(c, pos, r, f-math.Pi/2, f+math.Pi/2, 2, color.RGBA{body.R, body.G, body.B, 70})
+	// Faint outline of the front 180deg hemisphere (centred on the facing direction). additiveGlow
+	// reproduces the classic additive team-coloured look EXACTLY (full rgb + low alpha) -- this gauge
+	// is meant to read as an additive glow, so it deliberately does NOT use the premultiplied fade.
+	strokeArc(c, pos, r, f-math.Pi/2, f+math.Pi/2, 2, additiveGlow(body, 70))
 	// Two fill arcs grow inward from the +-90deg edges, meeting at the middle (f) at full charge.
-	arc := color.RGBA{body.R, body.G, body.B, uint8(150 + 105*charge)}
+	arc := additiveGlow(body, uint8(150+105*charge))
 	sweep := (math.Pi / 2) * charge
 	strokeArc(c, pos, r, f-math.Pi/2, f-math.Pi/2+sweep, 3, arc) // from the -90deg edge toward front
 	strokeArc(c, pos, r, f+math.Pi/2, f+math.Pi/2-sweep, 3, arc) // from the +90deg edge toward front
@@ -1304,7 +1329,7 @@ func drawGoalOverlay(screen *ebiten.Image, message string, tint color.RGBA, ball
 		if a == 0 {
 			continue
 		}
-		wc.strokeCircle(ballPos.X, ballPos.Y, r, 3, color.RGBA{tint.R, tint.G, tint.B, a})
+		wc.strokeCircle(ballPos.X, ballPos.Y, r, 3, fadeU8(tint, a)) // the team's normal colour (fades correctly)
 	}
 
 	// Scale-in / fade banner, centred. Fades out over the back third of the lifetime. The
@@ -1323,10 +1348,10 @@ func drawGoalOverlay(screen *ebiten.Image, message string, tint color.RGBA, ball
 	cx, cy := overlayW/2, overlayH*0.34
 	bw := measureUI(message, size) + 48
 	bh := size + 22
-	c.fillRect(cx-bw/2, cy-bh/2, bw, bh, color.RGBA{0, 0, 0, uint8(165 * bannerAlpha)})
-	c.fillRect(cx-bw/2, cy-bh/2, 6, bh, color.RGBA{tint.R, tint.G, tint.B, uint8(255 * bannerAlpha)})
-	c.fillRect(cx+bw/2-6, cy-bh/2, 6, bh, color.RGBA{tint.R, tint.G, tint.B, uint8(255 * bannerAlpha)})
-	c.textSized(message, cx, cy, size, AlignCenter, color.RGBA{240, 244, 240, uint8(255 * bannerAlpha)})
+	c.fillRect(cx-bw/2, cy-bh/2, bw, bh, color.RGBA{0, 0, 0, uint8(165 * bannerAlpha)}) // black (valid premult)
+	c.fillRect(cx-bw/2, cy-bh/2, 6, bh, fade(tint, bannerAlpha))                         // team accent bar
+	c.fillRect(cx+bw/2-6, cy-bh/2, 6, bh, fade(tint, bannerAlpha))
+	c.textSized(message, cx, cy, size, AlignCenter, fade(color.RGBA{240, 244, 240, 255}, bannerAlpha))
 }
 
 // drawStageCard draws the brief full-screen transition card ("EXTRA TIME", etc.) keyed
@@ -1352,9 +1377,9 @@ func drawStageCard(screen *ebiten.Image, _ sim.Phase) {
 	bandH := 96.0
 	cy := overlayH / 2
 	c.fillRect(0, cy-bandH/2, overlayW, bandH, color.RGBA{12, 18, 24, uint8(210 * alpha)})
-	c.fillRect(0, cy-bandH/2, overlayW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
-	c.fillRect(0, cy+bandH/2-3, overlayW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
-	c.textSized(fx.phaseLabel, overlayW/2, cy, 30, AlignCenter, color.RGBA{245, 240, 230, uint8(255 * alpha)})
+	c.fillRect(0, cy-bandH/2, overlayW, 3, fadeU8(color.RGBA{255, 196, 90, 255}, uint8(220*alpha)))
+	c.fillRect(0, cy+bandH/2-3, overlayW, 3, fadeU8(color.RGBA{255, 196, 90, 255}, uint8(220*alpha)))
+	c.textSized(fx.phaseLabel, overlayW/2, cy, 30, AlignCenter, fade(color.RGBA{245, 240, 230, 255}, alpha))
 }
 
 // DrawClientOverlays drives the goal overlay and stage-card transitions for the network

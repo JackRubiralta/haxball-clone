@@ -221,7 +221,7 @@ Previous values for knobs that were changed, kept here so they can be restored:
 
 - `PullRange`: `8` (now `5`)
 - `TrapRangeBonus`: `14` (now `6`)
-- `Restitution` (front / back): `0.08 / 0.35` (now `0.10 / 0.20` — front raised so head-on shots deflect)
+- `Restitution` (front / back): `0.08 / 0.35` (now `0.23 / 0.24` — front raised so head-on shots deflect)
 
 ## Physics & player variables
 
@@ -258,8 +258,8 @@ speed → apply friction → move position.
   `AimFromCursor` intent flag) so the disk can't instantly snap around. **moveHeading** —
   actual steering direction, which *rotates toward* `Move` at `TurnRate` (turning is
   non-instant). **possession** (0–1), **control** (0–1), **touchCoef** (−1..1, this tick),
-  **shootCharge** (sec), **trapCharge** (0–1) — see below. Charge timing: full shot at `shootChargeMax = 1.0s`; full trap at
-  `trapChargeTime = 1.0s`; trap decays at `trapChargeDecay = 4.0/s`.
+  **shootCharge** (sec), **trapCharge** (0–1) — see below. Charge timing: full shot at `shootChargeMax = 0.75s`; full trap at
+  `trapChargeTime = 1.25s`; trap decays at `trapChargeDecay = 3.2/s`.
 
 ### `PlayerStats` — body / motion
 
@@ -280,18 +280,21 @@ Each is evaluated from the ball dead-in-front (0°) to directly-behind (180°). 
 (`curves.go`): Linear, Quadratic (eases in), InverseQuadratic (eases out), Smoothstep,
 Exponential.
 
-- **Restitution** `0.10 / 0.20` (InvQuad) — bounciness on a *hard* contact; front raised to
-  0.10 so a head-on hard shot deflects off a player rather than dying at their feet.
-- **CaptureSpeed** `260 / 30` (Linear) — impact speed *below which the ball sticks*
-  (restitution 0) instead of bouncing. Front lowered to 260 (the ball clears capture more
-  easily); back 30, so off-front hits stick much less. A full-power shot (~500) easily clears
-  it, so an opponent never captures it — it deflects off.
-- **CenterPull** `800 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
-  make contact (power reduced from 950).
+- **Restitution** `0.23 / 0.24` (InvQuad) — bounciness on a *hard* contact; front `0.23` (kept
+  > the buffed ~0.19) so a head-on hard shot deflects off a player rather than dying at their feet;
+  back `0.24`, springier behind.
+- **CaptureSpeed** `276 / 30` (Linear) — impact speed *below which the ball sticks*
+  (restitution 0) instead of bouncing. Front raised to ~276 (the whole capture band shifted
+  **+17.5%** from 235, so a player sticks firmer balls); back 30, so off-front hits stick much
+  less. A full-power shot still easily clears it, so an opponent never captures it — it deflects off.
+- **CenterPull** `770 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
+  make contact.
 - **Stickiness** `420 / 30` (InvQuad) — capped adhesion holding a touching ball until a
   shot/bump overcomes it; a small baseline hold even at the back (`30`).
-- **Control** `1500 / 300` (Linear) — tangential pull rolling a touching ball to the front.
-- **Shoot** `shootForce / shootForce·0.3` (Linear, e.g. `500 / 150`) — shot power by angle.
+- **Control** `1160.25 / 340` (Linear) — tangential pull rolling a touching ball to the front. Front
+  lowered in two steps (**−25% then −15%**) from 1820 → 1160.25; `TrapControlBonus` is re-bumped each
+  time so the **full-trap ("buffed") control stays pinned** (full-trap front = 1160.25 × (1 + 2.5875888817) ≈ 4162.5).
+- **Shoot** `shootForce / shootForce·0.3` (Linear; in-game `575 / 172.5`, +15% power) — shot power by angle.
 
 ### `PlayerStats` — scalar hold / damping
 
@@ -312,7 +315,7 @@ strength inside its half-angle, then fades** toward the back. Cones are written 
 its "behind" value — see *angle curves* above for the endpoints):
 
 - **Capture cone — ±30° (`CaptureConeRadians`) + a 55° soft band (`CaptureConeSoft`).** Inside ±30°
-  the ball reliably sticks (the capture-speed threshold is at its front peak, **260**); across the
+  the ball reliably sticks (the capture-speed threshold is at its front peak, **276**); across the
   next 55° (out to ~85°) that threshold decays to the side/back floor (**30**), so off-front touches
   bounce off instead of sticking. Off-front hits also **bounce livelier** (restitution
   ×`(1+(1-cone))`, up to 2×). Widened by a team **buff +3°** (`ConeBonusRadians`) and a held **trap
@@ -321,12 +324,12 @@ its "behind" value — see *angle curves* above for the endpoints):
   but is off by default — `uniformImpulseScale = true`.)*
 - **Control cone — ±22° (`ControlConeRadians`, 44° total).** Full strength here for **two** forces
   that then taper to the back: the **sticky hold** (Stickiness `420→30`, resists the ball
-  separating) and the **roll-to-front control** (Control `1500→300`, steers the ball onto the
+  separating) and the **roll-to-front control** (Control `1160.25→340`, steers the ball onto the
   front). Widened by your **own possession +5°** (`ControlConePossessionBonus`) and a **trap +2°**
   (`ControlConeTrapBonus`); not team-buff scaled. The roll-to-front *magnitude* additionally gets a
   trap bonus (`TrapControlBonus`) and a possession bonus (`PossessionControlBonus`, +9% at full).
 - **Centre-pull cone — ±5° (`CenterPullConeRadians`, 10° total).** Full-strength centre-pull spring
-  (CenterPull `800→0`) that drags a near, not-yet-touching ball into contact. Widened by **own
+  (CenterPull `770→0`) that drags a near, not-yet-touching ball into contact. Widened by **own
   possession +1°/side** (`CenterPullConePossessionBonus`) and a **trap +2°/side**
   (`CenterPullConeTrapBonus`).
 **Shot cones** (measured the instant you shoot — full detail under *the fire cone, aim assist & power*):
@@ -496,22 +499,23 @@ which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQua
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
   sticky touches that scale up as the charge builds (full-charge capture ≈ front × `CaptureBest`,
-  290 × 1.025 ≈ 297), so a fully-built possession receives firmly.
+  276 × 1.025 ≈ 283), so a fully-built possession receives firmly.
 - **Other team** → `OtherTeam·strength` (down to **−1.0**): capture down, bounce up (up to
-  ×3) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
+  ×1.875) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
 - **Capture cone** → scales ASYMMETRICALLY with the coefficient (see `captureConeRadians`):
   the buff WIDENS the owning team's reliable cone a little (`ConeBonusRadians` ≈3° at full
   charge — biggest cone), while the debuff NARROWS the conceding team's more (`ConeDebuffRadians`
-  ≈12° at full enemy charge — cone shrinks to ~10°, still well under the ~22° baseline). So a
+  ≈12° at full enemy charge — capture cone shrinks to ~18°, well under the ~30° baseline). So a
   debuffed opponent catches less off the dead-on line. Dead-on (angle 0) is always inside
   the cone, so straight-on shots/captures are unchanged — only off-axis catching shrinks.
 
 *Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−1.0`, and the multiplier endpoints
 (anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.025`,
-**RestitutionWorst/Best** `3.0 / 0.675`. These are scaled against the lowered baselines
-(CaptureSpeed front `290`, Restitution front `0.08`) so the buffed/debuffed *absolute* touches
-are preserved (buffed capture ≈ 297, debuffed bounce ≈ 0.24).
+**RestitutionWorst/Best** `1.875 / 0.844`. The capture multipliers are unchanged; the capture
+band was shifted up **+17.5%** (CaptureSpeed front `235 → 276`), so the buffed/debuffed *absolute*
+captures scale up with it — buffed capture ≈ **283** (276 × 1.025), debuffed capture ≈ **173**
+(276 × 0.628).
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding
@@ -587,7 +591,9 @@ A left-click shot is governed by **one cone** (where it fires and aims) and **on
 
 - **TrapPullBonus** `1.0` — up to ×2 stronger centre-pull (trap/steal a loose ball); reduced from 1.5.
 - **TrapRangeBonus** `6` — extends pull range by up to +6 (reduced from 10).
-- **TrapControlBonus** `1.25` — stronger roll-to-front (snaps the ball to the front).
+- **TrapControlBonus** `2.5875888817` — stronger roll-to-front (snaps the ball to the front);
+  re-bumped so full-trap front control = 1160.25 × (1 + 2.5875888817) = **4162.5**, unchanged by the
+  baseline drops (−25% then −15%).
 - **TrapStickinessBonus** `0.5` — stiffens the sticky hold while trapping (`Stickiness ×
   (1 + TrapStickinessBonus·trapCharge)`, up to +50% at full trap).
 - **TrapCaptureBonus** `60` — small capture-speed bump (+60 at full trap); the trap now relies

@@ -45,12 +45,15 @@ func (a *AI) aimToward(p perception, target geom.Vec) geom.Vec {
 }
 
 // launchAligned reports whether firing NOW would send the ball at target. The sim adds the
-// kick impulse along the radial (ball - player_centre) to the ball's CURRENT velocity, both
-// from the ball's own position -- so the true launch direction is (ballVel + radial*power),
-// and it must point from the BALL toward the target (target - ball), NOT (target - me).
-// Accounting for the ball's existing motion AND measuring from the ball (not the player
-// centre) is what makes passes land on target instead of releasing early and slightly off
-// angle. power is estimated from the current charge so the prediction matches what will fire.
+// kick impulse to the ball's CURRENT velocity from the ball's own position, so the true launch
+// is (ballVel + shotImpulse) and it must point from the BALL toward the target (target - ball),
+// NOT (target - me). The impulse is predicted from the SAME function the sim fires with --
+// sim.ShootLaunchVelocity -- so the prediction includes the aim-assist blend AND the off-front
+// power falloff exactly: a ball sitting off the front cone fires weaker (so ballVel pulls the
+// shot more), and accounting for that here stops the AI from releasing a shot it thinks is lined
+// up but the reduced-power launch sends wide. Accounting for the ball's existing motion AND
+// measuring from the ball (not the player centre) is what makes shots/passes land on target
+// instead of releasing early and slightly off angle.
 func (a *AI) launchAligned(p perception, target geom.Vec, charge, tolRad float64) bool {
 	d := p.ball.Sub(p.me.Position())
 	dist := geom.Norm(d)
@@ -58,13 +61,7 @@ func (a *AI) launchAligned(p perception, target geom.Vec, charge, tolRad float64
 		return false
 	}
 	dir := d.Scale(1 / dist)
-	factor := p.me.Tuning().MinShootFactor + (1-p.me.Tuning().MinShootFactor)*charge
-	power := p.me.Tuning().Shoot.Eval(0) * factor // front power (we aim the ball at the front)
-	// Predict the TRUE launch direction: the radial nudged toward our facing by the aim
-	// assist (same rule the sim fires with), so the lineup check matches the real shot and
-	// the assist's forgiveness is exploited rather than fought.
-	launchDir := p.me.Tuning().ShootDirection(dir, p.me.Facing())
-	launch := p.ballVel.Add(launchDir.Scale(power))
+	launch := p.ballVel.Add(p.me.Tuning().ShootLaunchVelocity(dir, p.me.Facing(), charge))
 	return geom.AngleBetween(launch, target.Sub(p.ball)) < tolRad
 }
 

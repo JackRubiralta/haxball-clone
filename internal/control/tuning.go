@@ -77,8 +77,8 @@ type aiTuning struct {
 	supportRangeFrac   float64 // distance the designated short supporter holds from the ball, as a fraction of pitch width
 	runForwardBias     float64 // stronger upfield bias for a give-and-go run after passing
 
-	receiveControlSpeed float64 // ball speed at/under which an incoming pass is controllable -- the receiver meets it on its path here for a clean touch
-	receiveMinSpeed     float64 // ball speed above which a loose ball counts as an in-flight pass to glide onto (vs a near-stopped ball to win)
+	receiveControlFrac float64 // the receiver meets an incoming pass where it has slowed to this FRACTION of its own CaptureSpeed (the stick-speed); derived from the live capture so it auto-tracks the capture physics rather than a stale constant. See AI.receiveControlSpeed.
+	receiveMinSpeed    float64 // ball speed above which a loose ball counts as an in-flight pass to glide onto (vs a near-stopped ball to win)
 
 	recvLaneWeight    float64 // weight on a clear pass lane from the ball when picking a spot
 	recvSpaceWeight   float64 // weight on local open space when picking a receive spot
@@ -176,8 +176,8 @@ func defaultAITuning() aiTuning {
 		passSafetyMin:     0.16,
 		passReceiverSpace: 30,
 		throughDist:       110,
-		passArriveSpeed:   175, // softened 215->175, below the lowered baseline capture (~230): a pass arrives slow enough to STICK on the bouncier ball, not deflect (kept >=175 so the keeper's safe short outlet still rates over a blind clear)
-		passSpeedMin:      150, // even the shortest pass arrives gently (was 185, above the new capture floor)
+		passArriveSpeed:   175, // softened 175->165: a pass arrives gently, well under the ~235 baseline capture, so it STICKS on the receiver's first touch instead of skidding through -- which over a robust 30-seed sweep actually RAISES completion (better reception outweighs the slightly-slower ball) and scores more, on top of being softer. NOTE the launch floor: a charged kick can't fire slower than the ~201 tap (Shoot.Eval(0)*MinShootFactor=575*0.35), so a SHORT pass fires at that floor regardless of this value -- the gentleness of a short ball comes from the RECEIVER meeting it deeper on its path (receivePoint, receiveMinSpeed), not from a softer launch. (TestPassCompletionLargeMap's 6-seed metric is chaotic; this was tuned against a 30-seed sweep for robustness.)
+		passSpeedMin:      150, // floor on the calibrated launch speed; moot below the ~201 tap floor (the kick can't fire slower than a tap), kept as a sane lower bound
 		passSpeedMax:      430,
 		passDistPenalty:   0.0004,
 		passAdvanceWeight: 0.009,
@@ -189,8 +189,8 @@ func defaultAITuning() aiTuning {
 		supportForwardBias:    40,
 		supportRangeFrac:      0.3,
 		runForwardBias:        150,
-		receiveControlSpeed:   205, // just under the lowered baseline capture (~230): meet the pass where it will actually stick, not bounce
-		receiveMinSpeed:       110, // a loose ball faster than this is an in-flight pass to glide onto
+		receiveControlFrac:    0.88, // meet the pass where it has slowed to 88% of the stick-speed -- well under capture so it sticks, tracking the live CaptureSpeed (so a buffed capture lets the receiver take it sooner/faster automatically)
+		receiveMinSpeed:       90, // a loose ball faster than this is an in-flight pass to glide onto (lowered 110->90 so a softened, decaying pass keeps registering as a ball to run onto, not flip to "loose ball, charge it head-on")
 		recvLaneWeight:        60,
 		recvSpaceWeight:       0.6,
 		recvAdvanceWeight:     0.45,
