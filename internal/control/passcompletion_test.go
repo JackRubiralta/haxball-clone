@@ -161,8 +161,10 @@ func TestPassCompletionLargeMap(t *testing.T) {
 	}
 	t.Logf("large 6v6 HARD: passes=%d reached=%d (%.0f%%) | shots=%d onTarget=%d scored=%d | clears=%d",
 		agg.passes, agg.passDone, agg.passPct(), agg.shots, agg.onTarget, agg.scored, agg.clears)
-	// Guardrail lowered 75% -> 70%: the faster, stronger shot (shootChargeMax 0.75, +15% power)
-	// makes AI play more shot-dominant, so pass completion settles a little lower by design.
+	// Guardrail lowered 75% -> 70% to accommodate the faster/stronger shot (shootChargeMax 0.75, +15%
+	// power) making AI play more shot-dominant. (It was briefly 65% while the team-debuff-relief LATCH
+	// over-strengthened defenders; that was replaced by the drain/regenerate/freeze tug-of-war, which
+	// restores completion to ~72%, so the gate is back at 70%.) This still catches a passing regression.
 	if agg.passPct() < 70 {
 		t.Errorf("pass accuracy %.0f%% < 70%% target", agg.passPct())
 	}

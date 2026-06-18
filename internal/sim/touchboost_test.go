@@ -552,6 +552,64 @@ func TestTeamDebuffDrainedByDefenderOnBall(t *testing.T) {
 	}
 }
 
+// TestDebuffReliefDrainsRegeneratesFreezes pins the debuff tug-of-war with the contest latch: a
+// defender contesting the ball DRAINS both the conceding debuff and the owner's buff (a bare touch
+// is enough, no possession); a LOOSE ball after a defender touched it (a deflection) KEEPS draining
+// both (latched); the owning team regaining clean control REGENERATES the debuff (and recovers the
+// buff), clearing the latch; and a CLEAN release the defender never touched FREEZES it.
+func TestDebuffReliefDrainsRegeneratesFreezes(t *testing.T) {
+	m := BuildMatchFromConfig(NewStandardField(), 3, config.Default())
+	const dt = 1.0 / 60
+	atk, def := firstOn(m, SideLeft), firstOn(m, SideRight) // atk = owner/attacking, def = conceding
+	m.possSide, m.possProgress, m.possBuffDrain, m.possDebuffDrain = SideLeft, 1, 0, 0
+
+	// DRAIN: a defender contesting the ball drains the conceding debuff AND the owner's buff together
+	// -- on a bare touch, no possession required (the "first touch drains both" rule).
+	for i := 0; i < 8; i++ {
+		onlyToucher(m, def)
+		m.advanceTeamPossession(dt)
+	}
+	if !(m.possDebuffDrain > 0 && m.possBuffDrain > 0) {
+		t.Fatalf("a defender touch should drain BOTH debuff (%.4f) and buff (%.4f)", m.possDebuffDrain, m.possBuffDrain)
+	}
+
+	// LATCHED LOOSE (the deflection case): the ball flies loose after the defender touched it -- both
+	// the debuff and the buff KEEP draining, with nobody on the ball.
+	dbDrain, bfDrain := m.possDebuffDrain, m.possBuffDrain
+	for i := 0; i < 6; i++ {
+		onlyToucher(m, nil) // ball in flight, nobody in reach
+		m.advanceTeamPossession(dt)
+	}
+	if !(m.possDebuffDrain > dbDrain && m.possBuffDrain > bfDrain) {
+		t.Errorf("after a defender touch, a loose (deflected) ball should KEEP draining both: debuff %.4f->%.4f buff %.4f->%.4f", dbDrain, m.possDebuffDrain, bfDrain, m.possBuffDrain)
+	}
+
+	// REGENERATE: the owning team regains clean control -- the debuff climbs back toward full and the
+	// latch clears.
+	dbPeak := m.possDebuffDrain
+	for i := 0; i < 5; i++ {
+		onlyToucher(m, atk)
+		m.advanceTeamPossession(dt)
+	}
+	if !(m.possDebuffDrain < dbPeak) {
+		t.Errorf("with the owner in clean control, the debuff should REGENERATE: was %.4f, now %.4f", dbPeak, m.possDebuffDrain)
+	}
+	if m.possSide != SideLeft {
+		t.Fatalf("ownership should stay with the attacking team while it holds the ball, got %v", m.possSide)
+	}
+
+	// FREEZE on a CLEAN release: the latch is now cleared (the owner just had clean control and no
+	// defender has touched since), so a loose ball neither drains nor regenerates.
+	held := m.possDebuffDrain
+	for i := 0; i < 10; i++ {
+		onlyToucher(m, nil)
+		m.advanceTeamPossession(dt)
+	}
+	if math.Abs(m.possDebuffDrain-held) > 1e-9 {
+		t.Errorf("a clean release (latch cleared, defender never touched) should FREEZE the debuff: was %.4f, now %.4f", held, m.possDebuffDrain)
+	}
+}
+
 // TestReleasedCarrierMarkedDrainsOnlyOwnBoost pins refinement P1: a player that has RELEASED the
 // ball (a stale m.possessor whose ball is no longer in its own pull reach) and is then marked by an
 // opponent drains ONLY its own per-player boost (boostDrain), NOT the whole team buff. The carrier

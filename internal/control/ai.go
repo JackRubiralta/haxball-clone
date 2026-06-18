@@ -40,6 +40,7 @@ type AI struct {
 	lastOnBall     onBallKind     // last on-ball action, for decision hysteresis
 	runUntil       uint64         // tick until which, having just passed, the player makes a give-and-go run
 	recovering     bool           // hysteretic: facing the ball to scoop it back to the front (anti-jitter)
+	recoverTrap    bool           // previous tick we were trapping to scoop the ball home mid-commit (for the cancel/release sequencing)
 }
 
 // NewAI creates an AI controller for the given player at the default skill tier.
@@ -56,6 +57,27 @@ func NewAISkill(id int, skill Skill) *AI {
 }
 
 // Intent decides this player's action for the tick.
+// enforceAbilityExclusivity clamps an intent so at most ONE of Trap > Poke > Shoot is active,
+// exactly as the human controller does -- a player has three mouse buttons and cannot use more than
+// one ability at a time (the ai-capability-boundary rule: the AI may do only what a human can input).
+// When a trap or poke takes over a charging shot, the shot is CANCELLED rather than fired: ShootHeld
+// is kept asserted with CancelCharge set, because the sim only honours a cancel while shoot reads
+// held (a bare release would instead fire the charged shot -- see Match.applyIntent).
+func enforceAbilityExclusivity(in sim.Intent) sim.Intent {
+	switch {
+	case in.Trap: // trap takes precedence over both poke and shoot
+		in.Poke = false
+		if in.ShootHeld {
+			in.CancelCharge = true
+		}
+	case in.Poke: // poke takes precedence over shoot
+		if in.ShootHeld {
+			in.CancelCharge = true
+		}
+	}
+	return in
+}
+
 func (a *AI) Intent(view sim.View) sim.Intent {
 	me, ok := view.Me(a.ID)
 	if !ok {
@@ -82,6 +104,12 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 	default:
 		in = a.offBall(p, plan)
 	}
+
+	// Capability boundary: a human uses three mutually-exclusive mouse buttons, so it can do only ONE
+	// of {trap, poke, shoot} at a time (see input.Human and the ai-capability-boundary rule). Enforce
+	// the same precedence (Trap > Poke > Shoot) on the AI -- it must never trap-while-charging or
+	// poke-while-charging. A higher-priority ability CANCELS a live shot charge (dropped, not fired).
+	in = enforceAbilityExclusivity(in)
 
 	in = a.applyMoveJitter(p, in)
 	// Cap how fast the AI re-orients while it is AWAY from the ball (where it uses instant aimToward

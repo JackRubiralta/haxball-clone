@@ -190,17 +190,28 @@ func (f *Field) GoalOn(side Side) *Goal {
 // AddObstacle places a fixed obstacle (such as a cone) on the field.
 func (f *Field) AddObstacle(o *Obstacle) { f.Obstacles = append(f.Obstacles, o) }
 
-// CheckGoal reports which goal the ball has fully crossed the line of (the whole
-// ball is past the goal line, between the posts), or SideNone.
+// PitchLineWidth is the world-space width of every painted pitch line -- the perimeter, the goal
+// line, the penalty/goal boxes and the centre markings all share it, so the pitch lines are
+// uniform. It lives here, in the simulation, because goal detection depends on it: a goal counts
+// only once the whole ball has fully cleared the DRAWN goal line (not merely the mouth), and the
+// renderer reads this same value so the white line the player sees is exactly the line the ball
+// must visibly cross.
+const PitchLineWidth = 3.0
+
+// CheckGoal reports which goal the ball has fully crossed the line of -- the whole ball is past the
+// FAR edge of the drawn goal line (so it is visibly entirely over the white line), between the
+// posts -- or SideNone. The goal line is painted just inside each mouth (its inner edge on the goal
+// line at Min.X / Max.X, extending PitchLineWidth into the net), so the ball must clear that full
+// width to score.
 func (f *Field) CheckGoal(ball *Ball) Side {
 	top, bot := f.goalMouthRange()
 	if ball.Position.Y <= top || ball.Position.Y >= bot {
 		return SideNone
 	}
-	if ball.Right() < f.Min.X {
+	if ball.Right() < f.Min.X-PitchLineWidth {
 		return SideLeft
 	}
-	if ball.Left() > f.Max.X {
+	if ball.Left() > f.Max.X+PitchLineWidth {
 		return SideRight
 	}
 	return SideNone

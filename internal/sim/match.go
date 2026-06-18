@@ -68,11 +68,14 @@ type Match struct {
 	possBuffDrain float64 // 0..1 suppression of ONLY the owning team's buff while its carrier is
 	// contested by an opponent; scales the owners' published coefficient toward 0 but leaves the
 	// conceding team's debuff (OtherTeam*strength) untouched. Recovers when the pressure ends.
-	possDebuffDrain float64 // 0..1 team-wide RELIEF of the CONCEDING team's debuff while that
-	// (defending) team has the ball within a player's pull reach or touching it; scales every
-	// conceding player's coefficient toward 0 (neutral, never a buff). So getting a defender onto
-	// the ball lifts the whole defending team's debuff GRADUALLY, instead of it only clearing
-	// abruptly at handover. Recovers when they are off the ball; reset alongside possBuffDrain.
+	possDebuffDrain float64 // 0..1 team-wide RELIEF of the CONCEDING team's debuff: scales every
+	// conceding player's coefficient toward 0 (neutral, never a buff). A tug-of-war: DRAINS while a
+	// defender contests the ball OR the ball is loose after a defender touched it (see
+	// possContestLatched), REGENERATES while the owning team has clean control, FREEZES on a clean
+	// release. Mirrors the owner's buff suppression; resets to 0 on handover/claim/reset.
+	possContestLatched bool // a defender has touched/reached the ball and the owning team has not yet
+	// regained clean control; while set, both the buff and debuff keep draining through a LOOSE phase
+	// (e.g. a shot deflecting off a defender). Set on defenderNearBall, cleared when ownerNearBall.
 
 	// possessor is the player currently recognised as holding the ball (nil = nobody yet). It
 	// stays the holder while they remain in contact -- so when the ball changes hands, the new
@@ -365,6 +368,7 @@ func (m *Match) resetTeamPossession() {
 	m.possCoast = 0
 	m.possBuffDrain = 0
 	m.possDebuffDrain = 0
+	m.possContestLatched = false
 	for _, p := range m.Players {
 		p.touchCoef = 0
 	}
@@ -596,26 +600,37 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 		}
 	}
 
-	// Buff suppression: the OWNING team's buff drains while contested. It only RECOVERS while the
-	// owning team still has the ball within reach (ownerNearBall) -- so if the carrier was marked
-	// (fading the whole team's buff) and then RELEASED the ball, the team's buff stays faded while
-	// the ball is loose/in-flight and only heals once a team-mate regains it. This scales only the
-	// owner's published buff (see the publish above), never the conceding debuff.
-	if contested {
+	// Contest latch: a defender touching/reaching the ball sets it; the owning team regaining clean
+	// control clears it. While latched, both the buff (here) and the debuff (below) KEEP draining
+	// through a LOOSE phase after the touch -- e.g. a shot that deflects off a defender keeps eroding
+	// both even as it flies away -- so a contest's effect persists past the instant of contact.
+	if defenderNearBall {
+		m.possContestLatched = true
+	} else if ownerNearBall {
+		m.possContestLatched = false
+	}
+
+	// Buff suppression: the OWNING team's buff DRAINS while the carrier is contested OR the ball is
+	// loose after a defender touched it (latched). It only RECOVERS while the owning team has clean
+	// control (ownerNearBall, no contest) -- so a carrier marked then RELEASING the ball stays faded
+	// while it is loose and only heals once a team-mate regains it -- and FREEZES on a clean release
+	// the defender never touched. This scales only the owner's published buff, never the debuff.
+	if contested || (m.possContestLatched && !ownerNearBall) {
 		m.possBuffDrain = clampUnit(m.possBuffDrain + teamDrainPerSecond*deltaTime)
 	} else if ownerNearBall {
 		m.possBuffDrain = clampUnit(m.possBuffDrain - teamDrainPerSecond*deltaTime)
 	}
 
-	// Debuff relief: whenever the defending team has the ball within reach (touching or pull range),
-	// the conceding team's debuff drains GRADUALLY team-wide (possDebuffDrain), lifting every
-	// conceding coefficient toward neutral (never into a buff). It drains the SAME way whether or not
-	// the former owner is still contesting -- so when the defender takes the ball the debuff keeps
-	// draining smoothly instead of snapping to cleared (no instant reset); ownership only hands over
-	// once it has fully drained (below). It recovers (debuff returns) when the defender leaves the ball.
-	if defenderNearBall {
+	// Debuff relief mirrors the buff: it DRAINS while a defender contests the ball OR the ball is
+	// loose after a defender touched it (latched) -- so a deflection off a defender keeps relieving
+	// the whole conceding team's debuff even as the ball flies away. It REGENERATES (climbs back
+	// toward full) only while the owning team has clean control (ownerNearBall, no defender), and
+	// FREEZES on a clean release the defender never touched -- it never increases while the defending
+	// team is contesting or chasing a loose touched ball. Ownership hands over once it has fully
+	// drained with a defender alone on the ball (below).
+	if defenderNearBall || (m.possContestLatched && !ownerNearBall) {
 		m.possDebuffDrain = clampUnit(m.possDebuffDrain + teamDrainPerSecond*deltaTime)
-	} else {
+	} else if ownerNearBall {
 		m.possDebuffDrain = clampUnit(m.possDebuffDrain - teamDrainPerSecond*deltaTime)
 	}
 
@@ -633,6 +648,7 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 			m.possCoast = 0
 			m.possBuffDrain = 0
 			m.possDebuffDrain = 0
+			m.possContestLatched = false
 		}
 	case defenderNearBall && !ownerNearBall && m.possDebuffDrain >= 1:
 		// The defending team has the ball ALONE and its debuff has now drained FULLY (gradually, via
@@ -645,6 +661,7 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 		m.possCoast = 0
 		m.possBuffDrain = 0
 		m.possDebuffDrain = 0
+		m.possContestLatched = false
 	case contested:
 		// Both teams still contesting (the owner is on the ball too, or its carrier is being marked):
 		// the buff and (when the defender is on the ball) the debuff only DRAIN over time -- there is

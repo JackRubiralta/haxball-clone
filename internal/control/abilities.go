@@ -155,6 +155,37 @@ func (a *AI) shootAt(p perception, in sim.Intent, target geom.Vec, desired, base
 	// waiting for it), then lines up the shot -- the same recover-then-turn rule as dribbling.
 	in.Aim = a.aimKeepingBall(p, a.shotTarget)
 
+	// Capability boundary: a human cannot trap and charge a kick in the same tick (the three mouse
+	// buttons are mutually exclusive). SEQUENCE the two instead of combining them: if the ball has
+	// drifted off the front arc (recovering), TRAP this tick to scoop it back to the front, do NOT
+	// hold the charge, and KEEP the commitment so charging resumes the instant the ball is settled.
+	// The block below then charges, lines up and releases WITHOUT ever trapping -- so the AI never
+	// requests trap-while-charging and the exclusivity clamp stays a no-op (the decision is already
+	// exclusive). This is the human motion of right-clicking to settle a ball that has got away,
+	// then winding up the kick once it is back under control -- trap first, charge second.
+	if a.recovering { // set by aimKeepingBall above (hysteretic)
+		mv, th := a.steer(p, a.shotTarget, false)
+		in.Move, in.Throttle, in.Trap = mv, th*0.6, true
+		switch {
+		case !a.recoverTrap && sim.NormShootCharge(p.myCharge) > 0:
+			// Just entered recovery with a charge already wound up: abandon it WITHOUT firing.
+			// A bare release would fire the half-charged shot, so cancel it explicitly (cancel is
+			// only honoured while shoot reads held). The clamp will also assert CancelCharge from
+			// the trap above; setting it here makes the intent self-consistent. Next recovery tick
+			// takes the release branch below, which clears the sim's cancel latch.
+			in.ShootHeld = true
+			in.CancelCharge = true
+		default:
+			// No charge to abandon (or already cancelled): release the shoot button so the charge
+			// stays at zero and the cancel latch clears. With charge 0 and the latch handling, this
+			// never fires a stray kick.
+			in.ShootHeld = false
+		}
+		a.recoverTrap = true
+		return in
+	}
+	a.recoverTrap = false
+
 	cur := sim.NormShootCharge(p.myCharge)
 	charged := cur+a.params.chargeSlack >= a.shotDesired
 	if charged && a.chargedAt == 0 {
@@ -195,14 +226,10 @@ func (a *AI) shootAt(p perception, in sim.Intent, target geom.Vec, desired, base
 		in.ShootHeld = true // keep charging and lining up
 	}
 
-	// Drive at the target to keep the ball in front and on the shooting line; ease off while
-	// recovering a back-positioned ball so it can catch up to the front, and trap to glue it
-	// to the foot while scooping it round (only while recovering -- not a constant trap).
+	// Drive at the target to keep the ball in front and on the shooting line. (Recovery -- when
+	// the ball is off the front arc -- is handled above by trapping WITHOUT charging, so here the
+	// ball is settled on the front and we never trap while holding the charge.)
 	mv, th := a.steer(p, a.shotTarget, false)
-	if a.recovering { // set by aimKeepingBall above (hysteretic)
-		th *= 0.6
-		in.Trap = true
-	}
 	in.Move, in.Throttle = mv, th
 	return in
 }

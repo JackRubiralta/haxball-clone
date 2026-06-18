@@ -48,14 +48,16 @@ var (
 	boxLimitFill = color.RGBA{40, 10, 10, 50}     // faint RED keep-out wash over a player-capped box (premultiplied ~rgb(204,51,51)@0.2)
 )
 
-// Line widths (world units). The perimeter -- the boundary plus the goal line that
-// closes it across each mouth -- shares one width so the pitch edge is uniform;
-// interior markings are a touch thinner. Perimeter lines are offset outward by half
+// Line widths (world units). EVERY painted pitch line -- the boundary, the goal line that closes
+// each mouth, the penalty/goal boxes and the centre markings -- shares ONE width so all the pitch
+// lines are uniform. The width is sourced from sim.PitchLineWidth because goal detection depends on
+// it (a goal counts only once the ball has fully cleared the drawn goal line), so the white line
+// drawn here is exactly the line the ball must cross. Perimeter lines are offset outward by half
 // their width so the inner edge lands exactly on the physics wall.
 const (
-	fieldLineWidth  = 4.0
+	fieldLineWidth  = sim.PitchLineWidth
 	fieldLineOffset = fieldLineWidth / 2
-	markingWidth    = 3.0
+	markingWidth    = fieldLineWidth
 )
 
 // jerseyFontSource is a parsed bold outline font, so jersey numbers render as smooth
@@ -174,18 +176,23 @@ func (c canvas) strokeRect(x, y, w, h, sw float64, clr color.Color) {
 	vector.StrokeRect(c.dst, c.px(x), c.py(y), c.ln(w), c.ln(h), c.ln(sw), clr, true)
 }
 
-// openBox draws a penalty/goal box that opens onto the goal line: only the three
-// inner sides, omitting the side on the goal line so it never doubles the boundary.
-// originX is the goal-line edge; depth points into the pitch (signed).
-func (c canvas) openBox(originX, cy, depth, height, w float64, clr color.Color) {
-	top, bot := cy-height/2, cy+height/2
-	far := originX + depth
-	c.line(originX, top, far, top, w, clr)
-	c.line(originX, bot, far, bot, w, clr)
-	c.line(far, top, far, bot, w, clr)
+// openBox draws a penalty/goal box -- a config.Rect taken straight from the field geometry
+// (f.PenaltyArea/f.GoalArea, the SAME source the simulation uses) -- that opens onto the goal
+// line on the given side: only the three inner sides, omitting the goal-line edge so it never
+// doubles the boundary. Sourcing the rect (not raw depth/width params) keeps the markings and
+// the logical box from ever drifting, exactly as the pitch boundary is drawn from f.Min/f.Max.
+func (c canvas) openBox(r config.Rect, side sim.Side, w float64, clr color.Color) {
+	top, bot := r.Min.Y, r.Max.Y
+	openX, farX := r.Min.X, r.Max.X // left box: opens on Min.X (the goal line), far edge is Max.X
+	if side == sim.SideRight {
+		openX, farX = r.Max.X, r.Min.X // right box: opens on Max.X
+	}
+	c.line(openX, top, farX, top, w, clr)
+	c.line(openX, bot, farX, bot, w, clr)
+	c.line(farX, top, farX, bot, w, clr)
 	// Fill the two far corners so the round joins are not left notched.
-	c.fillCircle(far, top, w/2, clr)
-	c.fillCircle(far, bot, w/2, clr)
+	c.fillCircle(farX, top, w/2, clr)
+	c.fillCircle(farX, bot, w/2, clr)
 }
 
 // text draws debug-font text near a world position. The bitmap font itself is not
@@ -264,12 +271,12 @@ func (u UI) Title(s string, cx, y, sizeWorld float64, clr color.Color) {
 // Match draws a complete local match.
 func Match(screen *ebiten.Image, m *sim.Match) {
 	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
+	drawPokePulses(screen, m) // under the ball and players, so the burst wells up from beneath the player instead of covering it
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
 			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
-	drawPokePulses(screen, m)
 	drawPossessionBarsAll(screen, m)
 	ScoreboardWithClock(screen, m.Teams[0].Name, m.Teams[0].Score, m.Teams[1].Name, m.Teams[1].Score,
 		m.ClockSeconds(), m.PhaseLabel())
@@ -332,12 +339,12 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) {
 
 	camActive, camCenter, camZoom = true, cam.center, cam.Zoom
 	Field(screen, m.Field, m.Teams[0].Color, m.Teams[1].Color)
+	drawPokePulses(screen, m) // under the ball and players, so the burst wells up from beneath the player instead of covering it
 	BallAt(screen, m.Ball.Position, m.Ball.Radius())
 	for _, p := range m.Players {
 		PlayerAt(screen, p.Position, p.Facing, p.Radius(), p.Team.Color, p.Number,
 			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
-	drawPokePulses(screen, m)
 	drawPossessionBarsAll(screen, m)
 	drawZoneIndicators(newCanvas(screen), m.Field, m.Rules)
 	camActive = false
@@ -468,19 +475,17 @@ func Field(screen *ebiten.Image, f *sim.Field, leftColor, rightColor color.RGBA)
 	// come from the geometry -- the single source of truth the simulation uses too -- so
 	// the markings always match the pitch. A box toggled off in the geometry is not drawn
 	// (and the simulation does not enforce it either).
-	penaltyD := f.Geo.PenaltyDepth
-	areaD := f.Geo.GoalAreaDepth
 	if f.Geo.HasPenaltyArea {
-		c.openBox(x, cy, penaltyD, f.Geo.PenaltyWidth, markingWidth, lineColor)
-		c.openBox(x+w, cy, -penaltyD, f.Geo.PenaltyWidth, markingWidth, lineColor)
-		// Penalty spot: midway between the goal-area edge and the penalty-area edge.
-		spotD := (areaD + penaltyD) / 2
-		c.fillCircle(x+spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
-		c.fillCircle(x+w-spotD, cy, f.Geo.PenaltySpotMarkRadius, lineColor)
+		c.openBox(f.PenaltyArea(sim.SideLeft), sim.SideLeft, markingWidth, lineColor)
+		c.openBox(f.PenaltyArea(sim.SideRight), sim.SideRight, markingWidth, lineColor)
+		// Penalty spots, taken from the geometry's own spot positions (same source the sim uses).
+		ls, rs := f.PenaltySpot(sim.SideLeft), f.PenaltySpot(sim.SideRight)
+		c.fillCircle(ls.X, ls.Y, f.Geo.PenaltySpotMarkRadius, lineColor)
+		c.fillCircle(rs.X, rs.Y, f.Geo.PenaltySpotMarkRadius, lineColor)
 	}
 	if f.Geo.HasGoalArea {
-		c.openBox(x, cy, areaD, f.Geo.GoalAreaWidth, markingWidth, lineColor)
-		c.openBox(x+w, cy, -areaD, f.Geo.GoalAreaWidth, markingWidth, lineColor)
+		c.openBox(f.GoalArea(sim.SideLeft), sim.SideLeft, markingWidth, lineColor)
+		c.openBox(f.GoalArea(sim.SideRight), sim.SideRight, markingWidth, lineColor)
 	}
 
 	drawGoal(c, f.LeftGoal, f.GoalWidth, leftColor)
@@ -542,8 +547,11 @@ func drawGoal(c canvas, goal *sim.Goal, goalWidth float64, col color.RGBA) {
 	c.fillCircle(bx, ty, fo, col)
 	c.fillCircle(bx, by, fo, col)
 
-	// Goal line closing the mouth, drawn on the post line itself.
-	c.line(top.X, top.Y, bot.X, bot.Y, fieldLineWidth, lineColor)
+	// Goal line closing the mouth: offset OUTWARD (into the net) by half its width -- the same
+	// offset as the boundary side segments -- so it sits collinear with the arena edge (its inner
+	// edge flush on the goal line) instead of stepping inward. The ball must fully clear it to score.
+	gx := top.X + dir*fo
+	c.line(gx, top.Y, gx, bot.Y, fieldLineWidth, lineColor)
 
 	// Posts (no outline): the team-coloured caps at the mouth corners. Offset outward by
 	// half the frame width (the same offset as the net frame) so each cap is centred on
@@ -609,11 +617,12 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
 }
 
-// drawPokePulses draws the middle-click poke effect over an already-drawn match. For each player
-// whose poke just connected (PokeFlash > 0), it paints a soft burst centred on the PLAYER that
-// expands outward in all directions as the press fades -- the original player-anchored poke ping
-// (rather than the ball-anchored variant), so it reads as a shockwave radiating from the jabbing
-// player. Drawn after the players so the burst reads as welling up off the player.
+// drawPokePulses draws the middle-click poke effect. For each player whose poke just fired
+// (PokeFlash > 0, set on every attempt -- even a whiff with no ball in reach), it paints a soft
+// burst centred on the PLAYER that expands outward in all directions as the press fades -- the
+// original player-anchored poke ping (rather than the ball-anchored variant), so it reads as a
+// shockwave radiating from the jabbing player. Drawn BEFORE the ball and players (see Match/Frame)
+// so the burst renders UNDER them -- it wells up from beneath the player instead of covering it.
 func drawPokePulses(screen *ebiten.Image, m *sim.Match) {
 	c := newCanvas(screen)
 	for _, p := range m.Players {
