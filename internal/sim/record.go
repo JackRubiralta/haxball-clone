@@ -209,14 +209,27 @@ func (r *Recorder) emit(ev Event) {
 }
 
 // DrainNewEvents returns the events appended since the last drain and advances the cursor, so
-// netcode can ship only this tick's delta rather than the whole log every frame.
+// netcode can ship only this tick's delta rather than the whole log every frame. It returns a
+// COPY: the result must not alias the live Events backing array, because netcode encodes the
+// snapshot on a separate goroutine while the next Step appends more events.
 func (r *Recorder) DrainNewEvents() []Event {
 	if r == nil || r.drainIdx >= len(r.Events) {
 		return nil
 	}
-	out := r.Events[r.drainIdx:]
+	out := append([]Event(nil), r.Events[r.drainIdx:]...)
 	r.drainIdx = len(r.Events)
 	return out
+}
+
+// resetDerivation clears the pass/shot/save derivation latches without emitting an event or
+// touching distance/possession state. The shootout start uses it (it bypasses resetKickoff),
+// so a still-live on-target shot from regulation cannot credit a phantom save in penalties.
+func (r *Recorder) resetDerivation() {
+	if r == nil {
+		return
+	}
+	r.lastKick = kickInfo{id: -1}
+	r.keyCand = keyPass{passer: -1, receiver: -1}
 }
 
 // Snapshot returns a deep, stable-ordered copy of the aggregates and the full event log. It
@@ -478,7 +491,7 @@ func assistOrNone(ev ScoreEvent) int {
 // positions only and never mutates the simulation.
 //
 // Possession is decided by the possession RADIUS, not firm carry: a team "has" the ball when
-// at least one of its players has the ball within its possession reach (Player.possessionRadius
+// at least one of its players has the ball within its possession reach (Player.possessionReach
 // via Match.inPullRange). If exactly ONE team is in reach the ball is that team's (credited to
 // its nearest in-reach player); if NEITHER is in reach the ball is loose; if BOTH are in reach
 // it is contested. Loose and contested ticks count toward no team -- only clean single-team
@@ -528,7 +541,12 @@ func (r *Recorder) sample(m *Match, dt float64) {
 		if ps == nil {
 			continue
 		}
-		ps.DistanceCovered += geom.Dist(p.Position, r.prevPos[p.PlayerID])
+		// Only accrue distance once we have a previous position for this player; a player with
+		// no prior sample (one never seeded at construction) seeds it this tick instead of
+		// spiking DistanceCovered by its distance from the origin.
+		if prev, ok := r.prevPos[p.PlayerID]; ok {
+			ps.DistanceCovered += geom.Dist(p.Position, prev)
+		}
 		ps.ThirdSeconds[positionThird(m.Field, p.Position, p.Team.Side)] += dt
 		r.prevPos[p.PlayerID] = p.Position
 	}

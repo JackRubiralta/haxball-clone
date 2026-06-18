@@ -193,23 +193,24 @@ func withAlpha(clr color.Color, a uint8) color.RGBA {
 }
 
 // Exported UI-coordinate icon wrappers for the menu and post-match screens. They build a
-// fit-to-window HUD canvas (it never touches the aim transform) and draw in UI units.
+// fixed-overlay-box canvas (it never touches the aim transform, and -- like the rest of the
+// screen-space UI -- it is sized in the pitch-independent overlay box) and draw in UI units.
 
 // IconPlay draws the play-triangle icon centred at (cx, cy) in UI units.
 func IconPlay(screen *ebiten.Image, cx, cy, size float64, clr color.Color) {
-	newHUDCanvas(screen).iconPlay(cx, cy, size, clr)
+	newOverlayCanvas(screen).iconPlay(cx, cy, size, clr)
 }
 
 // IconShield draws the team-badge crest centred at (cx, cy) in UI units.
 func IconShield(screen *ebiten.Image, cx, cy, size float64, fill, edge color.Color) {
-	newHUDCanvas(screen).iconShield(cx, cy, size, fill, edge)
+	newOverlayCanvas(screen).iconShield(cx, cy, size, fill, edge)
 }
 
 // TeamSwatch draws the small team-colour dot (the same mark the HUD card uses) centred at
 // (cx, cy) in UI units, so the result header and the HUD share one consistent shape -- not
 // a shield. col is the team colour; it gets a subtle dark outline so a light colour reads.
 func TeamSwatch(screen *ebiten.Image, cx, cy, size float64, col color.RGBA) {
-	c := newHUDCanvas(screen)
+	c := newOverlayCanvas(screen)
 	r := size / 2
 	c.fillCircle(cx, cy, r, col)
 	c.strokeCircle(cx, cy, r-0.75, 1.5, withAlpha(outlineColor, 200))
@@ -217,25 +218,25 @@ func TeamSwatch(screen *ebiten.Image, cx, cy, size float64, col color.RGBA) {
 
 // IconClock draws the clock icon centred at (cx, cy) in UI units.
 func IconClock(screen *ebiten.Image, cx, cy, size float64, clr color.Color) {
-	newHUDCanvas(screen).iconClock(cx, cy, size, clr)
+	newOverlayCanvas(screen).iconClock(cx, cy, size, clr)
 }
 
 // IconWhistle draws the whistle icon centred at (cx, cy) in UI units.
 func IconWhistle(screen *ebiten.Image, cx, cy, size float64, clr color.Color) {
-	newHUDCanvas(screen).iconWhistle(cx, cy, size, clr)
+	newOverlayCanvas(screen).iconWhistle(cx, cy, size, clr)
 }
 
 // IconTrophy draws the trophy icon centred at (cx, cy) in UI units.
 func IconTrophy(screen *ebiten.Image, cx, cy, size float64, clr color.Color) {
-	newHUDCanvas(screen).iconTrophy(cx, cy, size, clr)
+	newOverlayCanvas(screen).iconTrophy(cx, cy, size, clr)
 }
 
 // IconGoalNet draws the goal-net icon centred at (cx, cy) in UI units.
 func IconGoalNet(screen *ebiten.Image, cx, cy, size float64, clr color.Color) {
-	newHUDCanvas(screen).iconGoalNet(cx, cy, size, clr)
+	newOverlayCanvas(screen).iconGoalNet(cx, cy, size, clr)
 }
 
 // IconGear draws the settings cog centred at (cx, cy) in UI units.
 func IconGear(screen *ebiten.Image, cx, cy, size float64, clr color.Color) {
-	newHUDCanvas(screen).iconGear(cx, cy, size, clr)
+	newOverlayCanvas(screen).iconGear(cx, cy, size, clr)
 }

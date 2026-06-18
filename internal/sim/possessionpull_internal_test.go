@@ -108,17 +108,17 @@ func TestPossessionRangeDecoupledFromPull(t *testing.T) {
 	if p.Tuning.PossessionRange != p.Tuning.PullRange {
 		t.Fatalf("default PossessionRange (%.2f) should equal PullRange (%.2f)", p.Tuning.PossessionRange, p.Tuning.PullRange)
 	}
-	if got := p.possessionRadius(); got != p.Tuning.PullRange {
-		t.Errorf("possessionRadius should default to PullRange: got %.2f want %.2f", got, p.Tuning.PullRange)
+	if got := p.possessionReach(); got != p.Tuning.PullRange {
+		t.Errorf("possessionReach should default to PullRange: got %.2f want %.2f", got, p.Tuning.PullRange)
 	}
 
 	// A full trap must NOT extend the possession reach, but MUST still extend the attraction reach.
 	p.trapAura = 1
-	if got := p.possessionRadius(); got != p.Tuning.PossessionRange {
-		t.Errorf("a full trap must not change possessionRadius: got %.2f want %.2f", got, p.Tuning.PossessionRange)
+	if got := p.possessionReach(); got != p.Tuning.PossessionRange {
+		t.Errorf("a full trap must not change possessionReach: got %.2f want %.2f", got, p.Tuning.PossessionRange)
 	}
-	if !(p.pullRadius() > p.possessionRadius()) {
-		t.Errorf("a full trap should extend the ATTRACTION pullRadius (%.2f) beyond the possession reach (%.2f)", p.pullRadius(), p.possessionRadius())
+	if !(p.pullRadius() > p.possessionReach()) {
+		t.Errorf("a full trap should extend the ATTRACTION pullRadius (%.2f) beyond the possession reach (%.2f)", p.pullRadius(), p.possessionReach())
 	}
 	p.trapAura = 0
 
@@ -137,7 +137,7 @@ func TestPossessionRangeDecoupledFromPull(t *testing.T) {
 
 	// Fallback: PossessionRange <= 0 means "use PullRange".
 	p.Tuning.PossessionRange = 0
-	if got := p.possessionRadius(); got != p.Tuning.PullRange {
+	if got := p.possessionReach(); got != p.Tuning.PullRange {
 		t.Errorf("PossessionRange<=0 should fall back to PullRange: got %.2f want %.2f", got, p.Tuning.PullRange)
 	}
 }

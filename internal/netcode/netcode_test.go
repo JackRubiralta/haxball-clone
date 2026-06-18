@@ -144,6 +144,115 @@ func TestClientSendCloseNoRace(t *testing.T) {
 	}
 }
 
+// freePort returns a currently-free 127.0.0.1 address (with a small race window acceptable in
+// a test) so a server can be started on a known address and dialled.
+func freePort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	return addr
+}
+
+func dialRetry(t *testing.T, addr string) *Client {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, err := Dial(addr); err == nil {
+			return c
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("could not dial %s", addr)
+	return nil
+}
+
+// TestHelloHandshakeAndSnapshots is the end-to-end check: a client learns its assigned slot
+// from the Hello handshake (previously impossible) and then receives snapshots through the
+// per-conn sender.
+func TestHelloHandshakeAndSnapshots(t *testing.T) {
+	m := sim.BuildMatchFromConfig(sim.NewStandardField(), 2, config.Default())
+	addr := freePort(t)
+	s := NewServer(addr, m, nil, []int{1}) // slot 1 is claimable
+	s.SetTickRate(120)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	c := dialRetry(t, addr)
+	defer c.Close()
+
+	// The handshake delivers the assigned slot.
+	var id int
+	ok := false
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if id, ok = c.AssignedID(); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatal("client never received its Hello/assigned id")
+	}
+	if id != 1 {
+		t.Errorf("assigned id = %d, want 1", id)
+	}
+
+	// Sending keeps the client live; snapshots should arrive.
+	if err := c.Send(sim.Intent{}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if _, has := c.Snapshot(); has {
+			return // success
+		}
+		_ = c.Send(sim.Intent{})
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("client never received a snapshot")
+}
+
+// TestVersionMismatchRejected: a client announcing the wrong protocol version is dropped by
+// the server (after it has sent its Hello), so an incompatible client cannot feed intents in.
+func TestVersionMismatchRejected(t *testing.T) {
+	m := sim.BuildMatchFromConfig(sim.NewStandardField(), 2, config.Default())
+	addr := freePort(t)
+	s := NewServer(addr, m, nil, []int{1})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	var nc net.Conn
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if conn, err := net.Dial("tcp", addr); err == nil {
+			nc = conn
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if nc == nil {
+		t.Fatal("could not dial")
+	}
+	defer nc.Close()
+
+	dec := gob.NewDecoder(nc)
+	var hello Envelope
+	if err := dec.Decode(&hello); err != nil || hello.Kind != MsgHello {
+		t.Fatalf("expected a Hello first, got %+v err=%v", hello, err)
+	}
+	// Announce a bad version; the server must drop us.
+	if err := gob.NewEncoder(nc).Encode(ClientMsg{ProtoVersion: ProtoVersion + 99}); err != nil {
+		t.Fatalf("encode bad msg: %v", err)
+	}
+	nc.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := dec.Decode(&hello); err == nil {
+		t.Error("server should have closed the connection after a version mismatch")
+	}
+}
+
 func TestRunCancels(t *testing.T) {
 	m := sim.BuildMatchFromConfig(sim.NewStandardField(), 2, config.Default())
 	s := NewServer("127.0.0.1:0", m, nil, nil)

@@ -60,6 +60,11 @@ type App struct {
 	human    bool
 	quit     bool
 
+	// Stats: statsHUD toggles the live in-match stats panel (Tab); recordWritten guards the
+	// one-shot JSON persist on the transition to the result screen.
+	statsHUD      bool
+	recordWritten bool
+
 	// Duo testing mode: one human switches between two players with 1 and 2.
 	duo      bool
 	duoHuman *input.Human
@@ -76,12 +81,14 @@ func NewApp(ctx context.Context, s Settings) *App {
 func NewPlayingApp(ctx context.Context, m *sim.Match, controllers map[int]control.Controller, human bool) *App {
 	a := &App{ctx: ctx, state: StatePlaying, match: m, controllers: controllers, human: human,
 		settings: DefaultSettings(), prefs: DefaultAppPrefs(), camera: render.NewCamera()}
+	m.EnableRecording() // so the Tab stats panel works in the fast-path (-solo/-ai-both) modes too
 	a.camera.FocusID = a.humanFocusID()
 	return a
 }
 
 // NewDuoApp starts the two-player switching tester.
 func NewDuoApp(ctx context.Context, m *sim.Match) *App {
+	m.EnableRecording() // so the Tab stats panel works in -duo too
 	return &App{ctx: ctx, state: StatePlaying, match: m, duo: true, duoHuman: input.NewHuman(),
 		settings: DefaultSettings(), prefs: DefaultAppPrefs(), camera: render.NewCamera()}
 }
@@ -113,12 +120,17 @@ func (a *App) applyPrefs() {
 	}
 }
 
-// afterStep plays this tick's sounds and checks for a finished match.
+// afterStep plays this tick's sounds and checks for a finished match. On the transition to
+// the result screen it persists the match's stats/play-by-play JSON exactly once.
 func (a *App) afterStep() {
 	if a.audio != nil {
 		a.audio.Dispatch(a.match.DrainEvents())
 	}
 	if a.match.Finished() {
+		if !a.recordWritten {
+			writeMatchRecord(a.match)
+			a.recordWritten = true
+		}
 		a.state = StateResult
 	}
 }
@@ -160,6 +172,10 @@ func (a *App) updatePlaying() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyC) {
 		a.camera.ToggleFollow()
 	}
+	// Tab toggles the live stats panel (built from the match recorder).
+	if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
+		a.statsHUD = !a.statsHUD
+	}
 	if a.duo {
 		if inpututil.IsKeyJustPressed(ebiten.KeyDigit1) {
 			a.activeID = 0
@@ -192,6 +208,9 @@ func (a *App) Draw(screen *ebiten.Image) {
 	switch a.state {
 	case StatePlaying:
 		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
+		if a.statsHUD {
+			render.StatsPanel(screen, render.StatsModelFromMatch(a.match))
+		}
 	case StatePaused:
 		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
 		a.screenPaused(a.drawFrame(screen))
@@ -219,9 +238,21 @@ func (a *App) DebugRenderScreen(dst *ebiten.Image, state AppState, tab int, m *s
 	a.Draw(dst)
 }
 
+// quitToMenu tears down the current match and returns to the main menu, clearing BOTH the
+// match and its controllers so no stale controller map survives into the next match.
+func (a *App) quitToMenu() {
+	a.match = nil
+	a.controllers = nil
+	a.statsHUD = false
+	a.state = StateMenu
+}
+
 func (a *App) startMatch(practice, human bool) {
 	a.practice, a.human = practice, human
 	a.match, a.controllers = a.settings.BuildMatch(practice, human)
+	a.match.EnableRecording() // capture stats + play-by-play for the live HUD and the result JSON
+	a.recordWritten = false
+	a.statsHUD = false
 	a.camera.Reset()
 	a.camera.FocusID = a.humanFocusID()
 	a.state = StatePlaying
@@ -698,8 +729,7 @@ func (a *App) screenPaused(f frame) {
 	}
 	y += bh + 16
 	if f.button("Quit to Menu", bx, y, bw, bh) {
-		a.match = nil
-		a.state = StateMenu
+		a.quitToMenu()
 	}
 }
 
@@ -740,8 +770,7 @@ func (a *App) screenResult(f frame) {
 		a.startMatch(a.practice, a.human)
 	}
 	if f.button("Quit to Menu", bx+bw+gap, barY, bw, barH) {
-		a.match = nil
-		a.state = StateMenu
+		a.quitToMenu()
 	}
 
 	// --- Body: a scroll pane holding the goal timeline, shootout block, and stats. ---
@@ -860,27 +889,45 @@ func (a *App) drawResultShootout(f frame, r ResultModel, col *colLayout) {
 	}
 }
 
-// drawResultStats renders the scaffolded stats table (no recorder yet): every cell shows
-// "—" with a footnote, the deliberate placeholder.
+// drawResultStats renders the final team stat sheet from the match recorder (home = Blue/left,
+// away = Red/right).
 func (a *App) drawResultStats(f frame, col *colLayout) {
 	f.sectionHeader("STATS", col.x, col.header(1), col.w)
-	rows := []string{"Shots", "Possession", "Passes"}
 	homeX := col.x + col.w*0.62
 	awayX := col.x + col.w
-	for _, label := range rows {
+	if a.match == nil {
+		return
+	}
+	sm := render.StatsModelFromMatch(a.match)
+	rows := []struct{ label, home, away string }{
+		{"Possession", resPct(sm.Left.PossessionPct), resPct(sm.Right.PossessionPct)},
+		{"Shots (on tgt)", resShots(sm.Left.Shots, sm.Left.OnTarget), resShots(sm.Right.Shots, sm.Right.OnTarget)},
+		{"Passes", resPasses(sm.Left.PassesDone, sm.Left.Passes), resPasses(sm.Right.PassesDone, sm.Right.Passes)},
+		{"Interceptions", strconv.Itoa(sm.Left.Interceptions), strconv.Itoa(sm.Right.Interceptions)},
+		{"Saves", strconv.Itoa(sm.Left.Saves), strconv.Itoa(sm.Right.Saves)},
+	}
+	for _, r := range rows {
 		y := col.row()
 		if !f.draw {
 			continue
 		}
 		midY := y + theme.RowH/2
-		f.ui.TextS(label, col.x, midY, theme.Body, theme.Text)
-		f.ui.TextCenteredS("—", homeX, midY, theme.Body, theme.TextDim)
-		f.ui.TextRightS("—", awayX, midY, theme.Body, theme.TextDim)
+		f.ui.TextS(r.label, col.x, midY, theme.Body, theme.Text)
+		f.ui.TextCenteredS(r.home, homeX, midY, theme.Body, theme.Text)
+		f.ui.TextRightS(r.away, awayX, midY, theme.Body, theme.Text)
 	}
-	y := col.row()
-	if f.draw {
-		f.ui.TextS("Detailed stats coming soon.", col.x, y+theme.RowH/2, theme.Small, theme.TextDim)
+}
+
+func resPct(v float64) string { return strconv.Itoa(int(v+0.5)) + "%" }
+func resShots(shots, onTarget int) string {
+	return strconv.Itoa(shots) + " (" + strconv.Itoa(onTarget) + ")"
+}
+func resPasses(done, total int) string {
+	s := strconv.Itoa(done) + "/" + strconv.Itoa(total)
+	if total > 0 {
+		s += " (" + strconv.Itoa(int(100*float64(done)/float64(total)+0.5)) + "%)"
 	}
+	return s
 }
 
 // fitMenu truncates s with an ellipsis so its measured width fits within maxW at sizeUI.

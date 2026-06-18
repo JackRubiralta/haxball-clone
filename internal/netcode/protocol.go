@@ -83,9 +83,39 @@ type Snapshot struct {
 	Events []sim.Event
 }
 
-// ClientMsg is what a client sends the server each tick.
+// ProtoVersion is the wire-protocol version. The client stamps it on its first message and
+// the server rejects a mismatch, so an old client cannot silently desync a new server.
+const ProtoVersion = 1
+
+// MsgKind tags an Envelope (the server->client message) as exactly one of its variants.
+type MsgKind uint8
+
+const (
+	MsgHello    MsgKind = iota // the once-per-connection handshake
+	MsgSnapshot                // a per-tick state broadcast
+)
+
+// Hello is the server's handshake: it tells a freshly connected client the protocol version
+// and which player slot the server assigned it (so the client knows which entity is "me" --
+// previously impossible).
+type Hello struct {
+	ProtoVersion     int
+	AssignedPlayerID int
+}
+
+// Envelope is the server->client message: a tagged union with exactly one of Hello/Snapshot
+// set per Kind. Wrapping lets the same stream carry the handshake and the per-tick snapshots.
+type Envelope struct {
+	Kind     MsgKind
+	Hello    *Hello    `json:",omitempty"`
+	Snapshot *Snapshot `json:",omitempty"`
+}
+
+// ClientMsg is what a client sends the server each tick. ProtoVersion is stamped on every
+// message; the server validates it on the first one and rejects a version mismatch.
 type ClientMsg struct {
-	Intent sim.Intent
+	ProtoVersion int
+	Intent       sim.Intent
 }
 
 // SnapshotOf projects a match into a wire snapshot.
@@ -111,7 +141,10 @@ func SnapshotOf(m *sim.Match) Snapshot {
 		WinnerText:   winnerText(m),
 		GoalText:     goalText(m),
 		InShootout:   m.InShootout(),
-		Sounds:       m.Sounds(),
+		// COPY the live sound buffer: the snapshot is encoded on a separate sender goroutine,
+		// while the next Step reuses (truncates + appends to) m.sounds -- aliasing it would be a
+		// data race and could ship a half-overwritten batch.
+		Sounds: append([]sim.SoundEvent(nil), m.Sounds()...),
 
 		OffsideEnabled:       m.Rules.OffsideEnabled,
 		OffsideFrac:          m.Rules.OffsideFrac,

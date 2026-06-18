@@ -44,6 +44,7 @@ func run(ctx context.Context, name string, args []string, stderr io.Writer) erro
 
 	field := sim.NewFieldFromGeometry(opts.Config.Geometry)
 	match := sim.BuildMatchFromConfig(field, opts.TeamSize, opts.Config)
+	match.EnableRecording() // so each snapshot carries live stats for the client HUD
 
 	// One claimable human slot per team (an outfielder if there is one); every player
 	// also has an AI fallback that runs until a client claims its slot.

@@ -92,6 +92,10 @@ func (m *Match) beginShootout() {
 	// player's published per-tick coefficient). Clear the holder of record too.
 	m.resetTeamPossession()
 	m.possessor = nil
+	// The penalties chain skips resetKickoff, so the recorder's pass/shot/save latches are never
+	// cleared on entry. Reset them here so a still-live on-target shot from regulation cannot
+	// credit a phantom save to the first penalty keeper.
+	m.rec.resetDerivation()
 	m.setupKick()
 	if m.shootout != nil {
 		m.shootout.kickState = kickReady

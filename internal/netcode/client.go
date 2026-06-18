@@ -21,9 +21,11 @@ type Client struct {
 	sendMu sync.Mutex
 	closed bool
 
-	mu      sync.Mutex // guards latest/hasSnap only
-	latest  Snapshot
-	hasSnap bool
+	mu         sync.Mutex // guards latest/hasSnap/assignedID/haveID only
+	latest     Snapshot
+	hasSnap    bool
+	assignedID int
+	haveID     bool
 }
 
 // Dial connects to a server and starts receiving snapshots in the background.
@@ -40,27 +42,37 @@ func Dial(addr string) (*Client, error) {
 func (c *Client) readLoop() {
 	dec := gob.NewDecoder(c.conn)
 	for {
-		var snap Snapshot
-		if err := dec.Decode(&snap); err != nil {
+		var env Envelope
+		if err := dec.Decode(&env); err != nil {
 			return
 		}
-		c.mu.Lock()
-		c.latest = snap
-		c.hasSnap = true
-		c.mu.Unlock()
+		switch env.Kind {
+		case MsgHello:
+			if env.Hello != nil {
+				c.mu.Lock()
+				c.assignedID, c.haveID = env.Hello.AssignedPlayerID, true
+				c.mu.Unlock()
+			}
+		case MsgSnapshot:
+			if env.Snapshot != nil {
+				c.mu.Lock()
+				c.latest, c.hasSnap = *env.Snapshot, true
+				c.mu.Unlock()
+			}
+		}
 	}
 }
 
-// Send transmits the local player's intent for this tick. It is safe to call from
-// multiple goroutines and after Close (which returns net.ErrClosed rather than writing
-// to a closed connection).
+// Send transmits the local player's intent for this tick (stamped with the protocol version,
+// which the server validates). It is safe to call from multiple goroutines and after Close
+// (which returns net.ErrClosed rather than writing to a closed connection).
 func (c *Client) Send(in sim.Intent) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	if c.closed {
 		return net.ErrClosed
 	}
-	return c.enc.Encode(ClientMsg{Intent: in})
+	return c.enc.Encode(ClientMsg{ProtoVersion: ProtoVersion, Intent: in})
 }
 
 // Snapshot returns the latest authoritative snapshot and whether one has arrived.
@@ -68,6 +80,14 @@ func (c *Client) Snapshot() (Snapshot, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.latest, c.hasSnap
+}
+
+// AssignedID returns the player slot the server assigned this client in the Hello handshake,
+// and whether that handshake has arrived yet. It lets the client know which entity is "me".
+func (c *Client) AssignedID() (int, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.assignedID, c.haveID
 }
 
 // Close ends the connection. It is idempotent and serialized against Send so the two can

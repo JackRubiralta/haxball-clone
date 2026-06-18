@@ -63,10 +63,10 @@ func TestParseGameVersionAndHelp(t *testing.T) {
 
 func TestParseGameUsageErrors(t *testing.T) {
 	cases := [][]string{
-		{"-team-size", "0"},                  // out of range
-		{"-volume", "5"},                      // out of [0,1]
-		{"-camera", "spinny"},                 // unknown camera
-		{"-zone-enforce", "nope"},             // unknown enforcement
+		{"-team-size", "0"},       // out of range
+		{"-volume", "5"},          // out of [0,1]
+		{"-camera", "spinny"},     // unknown camera
+		{"-zone-enforce", "nope"}, // unknown enforcement
 	}
 	for _, args := range cases {
 		if _, err := ParseGame("game", args, io.Discard); !errors.Is(err, ErrUsage) {

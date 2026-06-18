@@ -42,7 +42,7 @@ type perception struct {
 	teamControls    bool    // our side has or is winning the ball (looser than firm possession)
 	ballRadius      float64
 	friction        float64
-	seed            uint64 // match seed, mixed into AI noise so different seeds play differently
+	seed            uint64 // per-(match, self) NoiseSalt, mixed into AI noise so variety survives run-to-run without exposing the raw seed
 }
 
 // perceive builds the per-tick perception for player me from the match view.

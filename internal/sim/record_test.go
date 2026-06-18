@@ -194,6 +194,27 @@ func TestRecorderSave(t *testing.T) {
 	}
 }
 
+// TestResetDerivationSuppressesPhantomSave pins the fix for the stale-latch bug: when the
+// shootout begins (bypassing resetKickoff) the derivation latches are cleared, so a still-live
+// on-target shot from regulation does not credit a phantom save to the first penalty keeper.
+func TestResetDerivationSuppressesPhantomSave(t *testing.T) {
+	lt := &Team{Side: SideLeft}
+	rt := &Team{Side: SideRight}
+	shooter := NewPlayer(0, geom.NewVec(880, 340), DefaultPlayerTuning(500), lt)
+	keeper := NewPlayer(1, geom.NewVec(925, 340), DefaultPlayerTuning(500), rt)
+	keeper.Role = RoleGoalkeeper
+	m := customMatch([]*Player{shooter}, []*Player{keeper})
+	m.Ball.Position = geom.NewVec(900, 340)
+
+	pushBy(m, 0)                   // on-target shot -> arms the save latch
+	m.Recorder().resetDerivation() // the shootout begins here (it skips resetKickoff)
+	idle(m, 12)                    // keeper contacts the ball
+
+	if pk := statFor(m.Stats(), 1); pk.Saves != 0 {
+		t.Errorf("keeper Saves=%d after resetDerivation, want 0 (the latch must be cleared)", pk.Saves)
+	}
+}
+
 func statFor(st MatchStats, id int) PlayerStat {
 	for _, p := range st.Players {
 		if p.PlayerID == id {

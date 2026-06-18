@@ -44,7 +44,7 @@ type PlayerTuning struct {
 	// player- and team-possession -- see Match.inPullRange / playerReach). It is a SEPARATE knob
 	// from PullRange so possession reach can be tuned independently of the attraction base, and --
 	// crucially -- it is NEVER trap-extended: a trap may pull the ball in from further, but it must
-	// not widen who owns possession (see possessionRadius). A value <= 0 means "use PullRange", so
+	// not widen who owns possession (see possessionReach). A value <= 0 means "use PullRange", so
 	// it defaults to the attraction base and any PlayerTuning that omits it behaves as before.
 	PossessionRange float64
 
@@ -92,11 +92,8 @@ type PlayerTuning struct {
 	// Ball seating: per-second rate a touching ball is drawn flush to the surface.
 	SeatStrength float64
 
-	// Possession / control build-up: possession grows to 1 over PossessionBuildSeconds
-	// while the ball is touching ANYWHERE (and decays over PossessionReleaseSeconds
-	// otherwise); control uses the same timing but builds only while the ball is touching
-	// within PossessionArcRadians of the front. PossessionArcRadians now gates only the
-	// (currently unused) control state, not possession.
+	// Possession build-up: possession grows to 1 over PossessionBuildSeconds while the ball is
+	// touching ANYWHERE (and decays over PossessionReleaseSeconds otherwise).
 	//
 	// Possession modulates the two hold forces only MILDLY and in OPPOSITE directions:
 	//   - CenterPullGripFloor sets the centre-pull's grip at possession 0; it rises to 1 at
@@ -106,7 +103,6 @@ type PlayerTuning struct {
 	//     fully settled.
 	PossessionBuildSeconds     float64
 	PossessionReleaseSeconds   float64
-	PossessionArcRadians       float64
 	CenterPullGripFloor        float64
 	StickinessPossessionDebuff float64
 
@@ -141,12 +137,12 @@ type PlayerTuning struct {
 	ShootAccelFactor float64
 
 	// Aim assist: a shot is fired radially (player centre -> ball), but when the ball sits in the
-	// front hemisphere the launch direction is blended toward where the player is FACING so the
-	// shot goes where the player aims even when the ball isn't centred. ShootAimAssist is the
-	// blend weight (0 = pure radial / raw physics; 1 = fire exactly along the facing). It applies
-	// UNIFORMLY across the whole front hemisphere -- there is no angular falloff -- and a shot
-	// can't reach behind +-90deg. So at e.g. 0.97 the launch lands 97% of the way from the ball's
-	// radial toward the facing, for any ball in front.
+	// fire cone the launch direction is blended toward where the player is FACING so the shot goes
+	// where the player aims even when the ball isn't centred. ShootAimAssist is the blend weight
+	// (0 = pure radial / raw physics; 1 = fire exactly along the facing). It applies UNIFORMLY across
+	// the whole fire cone -- there is no angular falloff -- and a shot can't reach at or behind the
+	// +-90deg edge. So at e.g. 0.97 the launch lands 97% of the way from the ball's radial toward the
+	// facing, for any ball in front.
 	ShootAimAssist float64
 
 	// Trap ("good touch"): a 0..1 trap charge (built while the trap button is held)
@@ -295,28 +291,42 @@ func (s PlayerTuning) centerPullConeRadians(possession, trapAura float64) float6
 	return s.CenterPullConeRadians + s.CenterPullConePossessionBonus*clampUnit(possession) + s.CenterPullConeTrapBonus*clampUnit(trapAura)
 }
 
-// shotFalloffExp shapes how a shot's power and aim assist fall off across the front 180deg
-// hemisphere: > 1 keeps them near full for most of the front and then drops MUCH faster toward
-// the +-90deg edges (and to nothing behind). So a left-click shot "works for the whole front
-// but gets much worse at the ends" -- both weaker and less accurately aimed near the sides.
-const shotFalloffExp = 3.0
+// shotFalloffExp shapes how shot power tapers across the falloff band -- from the full-power cone
+// edge out to the fire edge. At 1.0 the taper is LINEAR: power falls steadily from full to 0 across
+// the band; > 1 would hold it high for most of the band and drop faster only near the +-90deg edge.
+const shotFalloffExp = 1.0
 
-// frontShotFalloff is 1 at dead front (angle 0), falls to 0 at the front-hemisphere edge
-// (pi/2), and is 0 beyond (a shot can't reach behind), dropping much faster toward the edge.
+// fireConeHalfAngle is the half-angle of the FIRE CONE: the left-click shot fires -- and the aim
+// assist applies -- only within +-90deg of the facing, a 180deg total cone (the full front
+// hemisphere). A ball at or behind +-90deg can't be shot (poke it with the middle-click push). The
+// aim assist covers exactly this same fire cone, uniformly -- it is not a separate region.
+const fireConeHalfAngle = 90 * math.Pi / 180
+
+// fullPowerHalfAngle is the half-angle of the inner FULL-POWER cone: a shot anywhere within +-30deg
+// of the facing fires at full power. Past it the power tapers (see shotFalloffExp) to exactly 0 at
+// the +-90deg fire edge, so power is flat-max inside the cone, then fades to nothing by the arc edge.
+const fullPowerHalfAngle = 30 * math.Pi / 180
+
+// frontShotFalloff scales shot power by how far off-front the ball sits: 1 (full power) anywhere
+// within the +-30deg full-power cone, then tapering linearly to 0 by the +-90deg fire edge, and 0
+// at or behind that edge (a shot can't reach the sides or behind).
 func frontShotFalloff(angle float64) float64 {
-	x := angle / (math.Pi / 2)
-	if x >= 1 {
+	if angle <= fullPowerHalfAngle {
+		return 1
+	}
+	if angle >= fireConeHalfAngle {
 		return 0
 	}
+	x := (angle - fullPowerHalfAngle) / (fireConeHalfAngle - fullPowerHalfAngle) // 0 at the cone edge -> 1 at the fire edge
 	return 1 - math.Pow(x, shotFalloffExp)
 }
 
 // aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle` radians off
-// the facing direction: the full ShootAimAssist anywhere in the front hemisphere (UNIFORM -- no
-// angular degradation), and 0 at or behind +-90deg (the shot is front-180 only) or when the
+// the facing direction: the full ShootAimAssist anywhere in the fire cone (UNIFORM -- no angular
+// degradation), and 0 at or behind the +-90deg arc edge (the shot is front-180 only) or when the
 // assist is disabled (ShootAimAssist <= 0).
 func (s PlayerTuning) aimAssistWeight(angle float64) float64 {
-	if s.ShootAimAssist <= 0 || angle >= math.Pi/2 {
+	if s.ShootAimAssist <= 0 || angle >= fireConeHalfAngle {
 		return 0
 	}
 	return s.ShootAimAssist
@@ -324,7 +334,7 @@ func (s PlayerTuning) aimAssistWeight(angle float64) float64 {
 
 // ShootDirection returns the actual launch direction of a shot: the radial direction (player
 // centre -> ball, the raw kick direction) blended toward `facing` by the aim assist
-// (ShootAimAssist), uniformly for any ball in the front hemisphere. Both inputs must be unit
+// (ShootAimAssist), uniformly for any ball in the fire cone. Both inputs must be unit
 // vectors. This is the single source of truth for the shot direction, used by the sim to fire and
 // by the AI to predict the launch so its aim matches the physics.
 func (s PlayerTuning) ShootDirection(radial, facing geom.Vec) geom.Vec {
@@ -350,7 +360,7 @@ func DefaultPlayerTuning(shootForce float64) PlayerTuning {
 		TurnRate:        14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
 		TouchRange:      2,
 		PullRange:       5,                                            // base centre-pull reach (the dribble attraction; a held trap extends this)
-		PossessionRange: 5,                                            // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionRadius)
+		PossessionRange: 5,                                            // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionReach)
 		Restitution:     CurveSpec{InverseQuadraticCurve, 0.23, 0.24}, // front 0.23: controlled front touch (still >0.20 so a hard pass deflects, not sticks); back 0.24: springier behind. Multipliers unchanged -> buffed ~0.19, debuffed ~0.43
 		CaptureSpeed:    CurveSpec{LinearCurve, 235, 30},              // baseline front 235 (nudged up a touch from 230); the team buff is multiplicative (CaptureBest), so the buffed endpoint scales with it and stays above baseline
 		CenterPull:      CurveSpec{InverseQuadraticCurve, 770, 0},     // baseline pull trimmed a touch (800 -> 770)
@@ -376,9 +386,8 @@ func DefaultPlayerTuning(shootForce float64) PlayerTuning {
 
 		PossessionBuildSeconds:     1.5,
 		PossessionReleaseSeconds:   0.4,
-		PossessionArcRadians:       0.8726646259971648, // ~50deg
-		CenterPullGripFloor:        0.65,               // possession changes the centre-pull much less than before (0.65 -> 1.0, vs the old 0.3 -> 1.0)
-		StickinessPossessionDebuff: 0.03,               // possession trims stickiness a hair (down to 0.97 at full)
+		CenterPullGripFloor:        0.65, // possession changes the centre-pull much less than before (0.65 -> 1.0, vs the old 0.3 -> 1.0)
+		StickinessPossessionDebuff: 0.03, // possession trims stickiness a hair (down to 0.97 at full)
 
 		PossessionSpeedFactor: 0.925, // ~7.5% slower top speed while carrying the ball
 		PossessionAccelFactor: 0.925, // ~7.5% slower acceleration while carrying the ball

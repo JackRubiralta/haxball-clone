@@ -111,13 +111,14 @@ type aiTuning struct {
 	turnTrapRad         float64 // dribble heading change above which the player traps and eases the turn
 	maxTurnRad          float64 // max facing change per decision with a settled ball (anti-fling)
 	minTurnRad          float64 // max facing change per decision with a loose ball (it lags more, turn gentler)
+	recoverConeRad      float64 // front half-angle the ball must stay within; past it the AI scoops it back to the front (recovery state + dribble turn cap)
 	dribbleWallAvoid    float64 // penalty weight steering a dribble heading away from carrying the ball into a wall
 
 	// Trap usage.
 	trapReceiveFactor float64 // trap to receive once an incoming ball's closing speed exceeds capture*this
-	trapReceiveRange   float64 // surface gap within which the receiver sets trap for a clean touch
-	stealRange         float64 // trap to steal when within this gap of an enemy fresh-touch ball
-	prechargeETA       float64 // seconds-to-ball under which the presser pre-charges a clearance
+	trapReceiveRange  float64 // surface gap within which the receiver sets trap for a clean touch
+	stealRange        float64 // trap to steal when within this gap of an enemy fresh-touch ball
+	prechargeETA      float64 // seconds-to-ball under which the presser pre-charges a clearance
 
 	// Goalkeeper.
 	keeperDepthMin    float64 // closest the keeper sits to its own goal line (world units)
@@ -141,7 +142,7 @@ func defaultAITuning() aiTuning {
 		interceptStep:    0.05,
 		assumedOppSpeed:  140, // = shared DefaultPlayerTuning MaxSpeed (was read directly before)
 		assumedOppTurn:   14,  // = shared DefaultPlayerTuning TurnRate
-		leadGain:         0, // no lead: a mate's velocity is hidden, so aim at where it IS (set >0 to lead along its visible facing)
+		leadGain:         0,   // no lead: a mate's velocity is hidden, so aim at where it IS (set >0 to lead along its visible facing)
 		interceptHorizon: 2.5,
 		interceptQuantum: 0.05,
 		turnPenaltyGain:  0.40,
@@ -218,12 +219,13 @@ func defaultAITuning() aiTuning {
 		turnTrapRad:         0.4363323129985824,
 		maxTurnRad:          0.22689280275926285,
 		minTurnRad:          0.08726646259971647,
+		recoverConeRad:      0.8726646259971648, // ~50deg: ball past this off-front -> scoop it back
 		dribbleWallAvoid:    3.0,
 
 		trapReceiveFactor: 0.4,
-		trapReceiveRange:   44,
-		stealRange:         10,
-		prechargeETA:       0.33,
+		trapReceiveRange:  44,
+		stealRange:        10,
+		prechargeETA:      0.33,
 
 		keeperDepthMin:    24,
 		keeperDepthMax:    60,

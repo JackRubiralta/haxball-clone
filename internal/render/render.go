@@ -120,8 +120,9 @@ var worldW, worldH float64 = ScreenWidth, ScreenHeight
 
 // Camera state. When camActive is set (during Frame's world pass), newCanvas applies a
 // pan/zoom transform centred on camCenter; otherwise it fits the world to the window
-// (the original look, used for the HUD and the network client). Either way it refreshes
-// view, so ScreenToWorld inverts whichever transform is current and aim stays correct.
+// (the original look, used for the HUD and the network client). The resolved transform is
+// returned as a Viewport (by Frame/Field), which is what ScreenToWorld inverts for aim --
+// there is no package-global transform.
 var (
 	camActive bool
 	camCenter geom.Vec
@@ -138,40 +139,64 @@ type canvas struct {
 	ox, oy float64
 }
 
+// fitBox computes the letterbox transform that fits a logical box (boxW x boxH) into a
+// destination of dstW x dstH: a single uniform scale (the limiting axis) and the origin that
+// centres the scaled box, so the box keeps its aspect ratio with equal margins on the slack
+// axis. It is the ONE formula behind every fit-to-window canvas -- the camera world pass, the
+// world-fit decoration pass, and the fixed overlay pass -- each of which just passes a
+// different box. A degenerate destination clamps the scale to 1 rather than vanishing.
+func fitBox(dstW, dstH, boxW, boxH float64) (scale, ox, oy float64) {
+	scale = math.Min(dstW/boxW, dstH/boxH)
+	if scale <= 0 {
+		scale = 1
+	}
+	return scale, (dstW - boxW*scale) / 2, (dstH - boxH*scale) / 2
+}
+
 func newCanvas(dst *ebiten.Image) canvas {
 	w := float64(dst.Bounds().Dx())
 	h := float64(dst.Bounds().Dy())
-	base := math.Min(w/worldW, h/worldH)
-	if base <= 0 {
-		base = 1
-	}
-	var c canvas
+	base, ox, oy := fitBox(w, h, worldW, worldH)
 	if camActive {
 		// Pan/zoom: scale by zoom and centre the view on camCenter. At zoom 1 with
 		// camCenter at the world centre this is identical to the fit transform below.
 		scale := base * camZoom
-		c = canvas{dst: dst, scale: scale, ox: w/2 - camCenter.X*scale, oy: h/2 - camCenter.Y*scale}
-	} else {
-		c = canvas{dst: dst, scale: base, ox: (w - worldW*base) / 2, oy: (h - worldH*base) / 2}
+		return canvas{dst: dst, scale: scale, ox: w/2 - camCenter.X*scale, oy: h/2 - camCenter.Y*scale}
 	}
-	return c
+	return canvas{dst: dst, scale: base, ox: ox, oy: oy}
 }
 
 // viewport returns the cursor-inversion transform for this canvas (its scale and origin,
 // without the destination image).
 func (c canvas) viewport() Viewport { return Viewport{scale: c.scale, ox: c.ox, oy: c.oy} }
 
-// newHUDCanvas builds a fit-to-window canvas for the HUD. It never pans or zooms and,
-// crucially, does NOT touch view -- so a HUD drawn after the world leaves view holding
-// the world (camera) transform that ScreenToWorld inverts for aim.
-func newHUDCanvas(dst *ebiten.Image) canvas {
+// newWorldFitCanvas builds a fit-to-window canvas for the CURRENT world box (worldW/worldH)
+// WITHOUT the camera pan/zoom. It does not affect the world Viewport that Frame returns for
+// aim (that is captured from the camera pass), so it is safe to use after it. It is for world-anchored
+// decoration drawn after the world pass (the goal-celebration ring, which sits at the ball's
+// world position): such marks should scale with the pitch like the ball does. SCREEN-SPACE UI
+// must NOT use it -- its scale tracks the pitch, so a bigger pitch would shrink it. Anything
+// that should stay a constant on-screen size uses newOverlayCanvas instead.
+func newWorldFitCanvas(dst *ebiten.Image) canvas {
 	w := float64(dst.Bounds().Dx())
 	h := float64(dst.Bounds().Dy())
-	base := math.Min(w/worldW, h/worldH)
-	if base <= 0 {
-		base = 1
-	}
-	return canvas{dst: dst, scale: base, ox: (w - worldW*base) / 2, oy: (h - worldH*base) / 2}
+	scale, ox, oy := fitBox(w, h, worldW, worldH)
+	return canvas{dst: dst, scale: scale, ox: ox, oy: oy}
+}
+
+// newOverlayCanvas builds a fit-to-window canvas for SCREEN-SPACE overlays -- the scoreboard
+// card, the "GOAL!" banner, the pause/result banners, the stage cards, and the menu icons. It
+// lays out in the FIXED overlay box (overlayW x overlayH, the same logical box the menus use),
+// which is deliberately INDEPENDENT of the pitch geometry. So these elements are a CONSTANT
+// on-screen size on every pitch: the small, standard, and large pitches all get the identical
+// scoreboard and the identical goal banner -- they no longer grow or shrink with the pitch.
+// Like newWorldFitCanvas it never pans or zooms and does not affect the world Viewport that
+// Frame returns for aim, so the aim transform survives a HUD drawn over the world.
+func newOverlayCanvas(dst *ebiten.Image) canvas {
+	w := float64(dst.Bounds().Dx())
+	h := float64(dst.Bounds().Dy())
+	scale, ox, oy := fitBox(w, h, overlayW, overlayH)
+	return canvas{dst: dst, scale: scale, ox: ox, oy: oy}
 }
 
 func (c canvas) px(x float64) float32 { return float32(x*c.scale + c.ox) }
@@ -292,6 +317,17 @@ func measureUI(s string, sizeUI float64) float64 {
 const (
 	UIWidth  = 1000
 	UIHeight = 680
+)
+
+// overlayW and overlayH are the fixed logical box that SCREEN-SPACE overlays (the scoreboard
+// card, the "GOAL!" banner, the pause/result banners, the stage cards, and the menu icons) lay
+// out in -- the same box the menus use. It is deliberately INDEPENDENT of the pitch geometry,
+// so those overlays stay a constant on-screen size on every pitch. (The world/pitch box, by
+// contrast, varies with the chosen pitch; newCanvas/newWorldFitCanvas fit that one.) They are
+// typed float64 constants so the layout math below reads cleanly without per-use conversions.
+const (
+	overlayW float64 = UIWidth
+	overlayH float64 = UIHeight
 )
 
 // UI is an immediate-mode drawing surface for menus, laid out in fixed UI coordinates
@@ -751,11 +787,10 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 }
 
 // drawPushPulses draws the middle-click push effect. For each player whose push just fired
-// (PushFlash > 0, set on every attempt -- even a whiff with no ball in reach), it paints a soft
-// burst centred on the PLAYER that expands outward in all directions as the press fades -- the
-// original player-anchored push ping (rather than the ball-anchored variant), so it reads as a
+// (PushFlash > 0, set on every attempt -- even a whiff with no ball in reach), it paints an
+// expanding ring centred on the PLAYER that travels outward as the press fades, so it reads as a
 // shockwave radiating from the jabbing player. Drawn BEFORE the ball and players (see Match/Frame)
-// so the burst renders UNDER them -- it wells up from beneath the player instead of covering it.
+// so the ring renders UNDER them -- it wells up from beneath the player instead of covering it.
 func drawPushPulses(screen *ebiten.Image, m *sim.Match) {
 	c := newCanvas(screen)
 	for _, p := range m.Players {
@@ -767,36 +802,33 @@ func drawPushPulses(screen *ebiten.Image, m *sim.Match) {
 	}
 }
 
-// drawPushPulse draws one middle-click push as a soft, semi-transparent burst centred on the
-// PLAYER: it starts at the player's surface and swells outward to ~2x the pull range in all
-// directions as the press fades -- brightest near the player and fading to nothing at its leading
-// edge, so it reads as a shockwave radiating out from the jabbing player. `flash` is the 1->0 press
-// timer (sim.Player.PushFlash); `body` is the pushing team's colour (the blue team -> blue), matching
-// the trap-aura and shoot-charge tints. This is the original player-anchored expanding ring, kept
-// blue, distance-faded, and bounded to ~2x the pull reach.
+// drawPushPulse draws one middle-click push as an expanding RING of CONSTANT thickness centred on
+// the player -- a dissipating shockwave. The ring is a bright thin pulse while it is small at the
+// player, then bursts outward (easeOut) and FADES as it grows: opacity falls on an easeOut curve, so
+// the bigger the ring gets the fainter it is, leaving it ~invisible by the time it reaches full
+// extent -- it never pops out or appears to brighten. Its thickness stays FIXED however far it has
+// expanded. `flash` is the 1->0 press timer (sim.Player.PushFlash); `body` is the pushing team's
+// colour, matching the trap-aura and shoot-charge tints.
 func drawPushPulse(c canvas, center geom.Vec, innerRadius, pullRange, flash float64, body color.RGBA) {
 	if flash <= 0 {
 		return
 	}
-	prog := 1 - flash                         // 0 at the press, 1 when the pulse ends
-	reach := innerRadius + prog*(2*pullRange) // outer radius: from the player surface out to ~2x pull range
-	const bands = 18
-	const peakAlpha = 130.0 // "a bit opaque": semi-transparent even at its brightest
-	width := reach / float64(bands-1) * 1.25
-	for i := 0; i < bands; i++ {
-		t := float64(i) / float64(bands-1) // 0 at the player centre, 1 at the leading edge
-		r := reach * t
-		if r < 0.5 {
-			continue
-		}
-		// Opacity is highest near the player and FADES the farther out the band sits (1-t); the whole
-		// burst also fades over the press timer (flash) -- so it dies away as it expands outward.
-		a := uint8(peakAlpha * (1 - t) * flash)
-		if a == 0 {
-			continue
-		}
-		c.strokeCircle(center.X, center.Y, r, width, color.RGBA{body.R, body.G, body.B, a})
+	// easeOut EXPANSION: the ring bursts outward quickly then decelerates as it dissipates (a real
+	// shockwave covers most of its distance early), so radius = surface + (1 - flash^2) * travel.
+	radius := innerRadius + (1-flash*flash)*(2*pullRange)
+	if radius < 0.5 {
+		return
 	}
+	const thickness = 2.5   // CONSTANT, THIN ring (world units) -- independent of how far it has expanded
+	const peakAlpha = 235.0 // a bright pulse while the ring is still small at the player...
+	// ...that fades on an easeOut curve (alpha ~ flash^2): brightest when small, dropping FAST as the
+	// ring grows so the bigger it gets the FAINTER it is. By the time it reaches full extent it is
+	// already ~invisible -- so it dissolves rather than popping out or appearing to brighten.
+	a := uint8(peakAlpha * flash * flash)
+	if a == 0 {
+		return
+	}
+	c.strokeCircle(center.X, center.Y, radius, thickness, color.RGBA{body.R, body.G, body.B, a})
 }
 
 // drawTrapAura draws a soft glow ring around a player while it traps. `level` is the trap's
@@ -1017,8 +1049,8 @@ var (
 // zooms), so it stays put under the camera. The same card serves the local and network
 // paths (HUDModel is built identically), with a shootout dot sub-row appended when active.
 func DrawHUD(screen *ebiten.Image, h HUDModel) {
-	c := newHUDCanvas(screen)
-	w := worldW
+	c := newOverlayCanvas(screen)
+	w := overlayW
 
 	// Card geometry: size each team block to its actual (swatch + name) content and keep both a
 	// fixed small gap from the central score, so the teams sit CLOSE to the score instead of at
@@ -1257,9 +1289,11 @@ func drawGoalOverlay(screen *ebiten.Image, message string, tint color.RGBA, ball
 	if prog > 1 {
 		prog = 1
 	}
-	// Expanding ring at the ball/goal spot (world space, under the camera-fit HUD canvas).
+	// Expanding ring at the ball/goal spot. This mark is WORLD-ANCHORED -- it sits at the
+	// ball's world position -- so it is drawn in the world box (newWorldFitCanvas) and scales
+	// with the pitch like the ball does. (The banner below, by contrast, is screen-space.)
 	worldW, worldH = sw, sh
-	wc := newHUDCanvas(screen)
+	wc := newWorldFitCanvas(screen)
 	ringR := 18 + prog*120
 	alpha := uint8(200 * (1 - prog))
 	const bands = 5
@@ -1273,9 +1307,10 @@ func drawGoalOverlay(screen *ebiten.Image, message string, tint color.RGBA, ball
 		wc.strokeCircle(ballPos.X, ballPos.Y, r, 3, color.RGBA{tint.R, tint.G, tint.B, a})
 	}
 
-	// Scale-in / fade banner, centred. Fades out over the back third of the lifetime.
-	worldW, worldH = sw, sh
-	c := newHUDCanvas(screen)
+	// Scale-in / fade banner, centred. Fades out over the back third of the lifetime. The
+	// banner is SCREEN-SPACE: it is drawn in the fixed overlay box so the "GOAL!" message is a
+	// constant size on every pitch (unlike the world-anchored ring above, which scales).
+	c := newOverlayCanvas(screen)
 	bannerAlpha := 1.0
 	if prog > 0.7 {
 		bannerAlpha = 1 - (prog-0.7)/0.3
@@ -1285,7 +1320,7 @@ func drawGoalOverlay(screen *ebiten.Image, message string, tint color.RGBA, ball
 		scaleIn = prog / 0.18
 	}
 	size := 22.0 * (0.6 + 0.4*scaleIn)
-	cx, cy := worldW/2, worldH*0.34
+	cx, cy := overlayW/2, overlayH*0.34
 	bw := measureUI(message, size) + 48
 	bh := size + 22
 	c.fillRect(cx-bw/2, cy-bh/2, bw, bh, color.RGBA{0, 0, 0, uint8(165 * bannerAlpha)})
@@ -1312,14 +1347,14 @@ func drawStageCard(screen *ebiten.Image, _ sim.Phase) {
 	if alpha < 0 {
 		alpha = 0
 	}
-	c := newHUDCanvas(screen)
-	c.fillRect(0, 0, worldW, worldH, color.RGBA{8, 12, 16, uint8(150 * alpha)})
+	c := newOverlayCanvas(screen)
+	c.fillRect(0, 0, overlayW, overlayH, color.RGBA{8, 12, 16, uint8(150 * alpha)})
 	bandH := 96.0
-	cy := worldH / 2
-	c.fillRect(0, cy-bandH/2, worldW, bandH, color.RGBA{12, 18, 24, uint8(210 * alpha)})
-	c.fillRect(0, cy-bandH/2, worldW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
-	c.fillRect(0, cy+bandH/2-3, worldW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
-	c.textSized(fx.phaseLabel, worldW/2, cy, 30, AlignCenter, color.RGBA{245, 240, 230, uint8(255 * alpha)})
+	cy := overlayH / 2
+	c.fillRect(0, cy-bandH/2, overlayW, bandH, color.RGBA{12, 18, 24, uint8(210 * alpha)})
+	c.fillRect(0, cy-bandH/2, overlayW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
+	c.fillRect(0, cy+bandH/2-3, overlayW, 3, color.RGBA{255, 196, 90, uint8(220 * alpha)})
+	c.textSized(fx.phaseLabel, overlayW/2, cy, 30, AlignCenter, color.RGBA{245, 240, 230, uint8(255 * alpha)})
 }
 
 // DrawClientOverlays drives the goal overlay and stage-card transitions for the network
@@ -1340,7 +1375,6 @@ func DrawClientOverlays(screen *ebiten.Image, celebrating bool, phaseLabel, goal
 		drawGoalOverlay(screen, msg, tint, ballPos, sw, sh)
 	}
 	if finished {
-		worldW, worldH = sw, sh
 		CenterBanner(screen, finalText)
 	}
 }
@@ -1395,34 +1429,34 @@ func goalTint(m *sim.Match) color.RGBA {
 
 // Scoreboard draws a HUD bar with the score and the controls hint.
 func Scoreboard(screen *ebiten.Image, leftName string, leftScore int, rightName string, rightScore int) {
-	c := newHUDCanvas(screen)
-	c.fillRect(0, 0, worldW, 28, hudColor)
+	c := newOverlayCanvas(screen)
+	c.fillRect(0, 0, overlayW, 28, hudColor)
 	score := leftName + " " + itoa(leftScore) + "   -   " + itoa(rightScore) + " " + rightName
-	c.text(score, worldW/2, 7, -len(score)*3, 0)
-	c.text("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap", 10, worldH-22, 0, 0)
+	c.text(score, overlayW/2, 7, -len(score)*3, 0)
+	c.text("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap", 10, overlayH-22, 0, 0)
 }
 
 // ScoreboardWithClock draws the HUD bar with the score centred, the match clock on the
 // left, and the current phase label on the right.
 func ScoreboardWithClock(screen *ebiten.Image, leftName string, leftScore int, rightName string, rightScore int, clockSeconds float64, phase string) {
-	c := newHUDCanvas(screen)
-	c.fillRect(0, 0, worldW, 28, hudColor)
+	c := newOverlayCanvas(screen)
+	c.fillRect(0, 0, overlayW, 28, hudColor)
 	score := leftName + " " + itoa(leftScore) + "   -   " + itoa(rightScore) + " " + rightName
-	c.textSized(score, worldW/2, 14, 16, AlignCenter, hudText)
+	c.textSized(score, overlayW/2, 14, 16, AlignCenter, hudText)
 	c.textSized(formatClock(clockSeconds), 12, 14, 16, AlignLeft, hudText)
 	if phase != "" {
-		c.textSized(phase, worldW-12, 14, 14, AlignRight, hudText)
+		c.textSized(phase, overlayW-12, 14, 14, AlignRight, hudText)
 	}
 	c.textSized("WASD move  -  mouse aim  -  hold left-click to charge shot  -  right-click to trap  -  Esc pause",
-		10, worldH-14, 12, AlignLeft, hudDim)
+		10, overlayH-14, 12, AlignLeft, hudDim)
 }
 
 // ShootoutPanel draws a sub-bar with the penalty tally: goals/kicks taken per side.
 func ShootoutPanel(screen *ebiten.Image, leftName string, lg, lt int, rightName string, rg, rt int) {
-	c := newHUDCanvas(screen)
-	c.fillRect(0, 28, worldW, 22, hudColor)
+	c := newOverlayCanvas(screen)
+	c.fillRect(0, 28, overlayW, 22, hudColor)
 	s := "PENALTIES   " + leftName + " " + itoa(lg) + "/" + itoa(lt) + "   -   " + itoa(rg) + "/" + itoa(rt) + " " + rightName
-	c.textSized(s, worldW/2, 39, 13, AlignCenter, hudText)
+	c.textSized(s, overlayW/2, 39, 13, AlignCenter, hudText)
 }
 
 // GoalBanner draws the "GOAL!" overlay shown after a goal.
@@ -1430,9 +1464,9 @@ func GoalBanner(screen *ebiten.Image) { CenterBanner(screen, "G O A L !") }
 
 // CenterBanner draws a centred overlay message (goal, pause, result).
 func CenterBanner(screen *ebiten.Image, message string) {
-	c := newHUDCanvas(screen)
-	c.fillRect(0, worldH/2-26, worldW, 52, bannerColor)
-	c.textSized(message, worldW/2, worldH/2, 24, AlignCenter, hudText)
+	c := newOverlayCanvas(screen)
+	c.fillRect(0, overlayH/2-26, overlayW, 52, bannerColor)
+	c.textSized(message, overlayW/2, overlayH/2, 24, AlignCenter, hudText)
 }
 
 // formatClock renders seconds as mm:ss.

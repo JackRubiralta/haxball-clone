@@ -41,6 +41,28 @@ const (
 // close -- a far ball in range is barely pulled. Higher = a steeper, more aggressive falloff.
 const centerPullFalloffExp = 3.0
 
+// clampOrbital constrains a hold-induced orbital speed `s` to the same sign as the ball's ACTUAL
+// orbital speed and to no greater magnitude: the hold can be credited with orbital motion only up to
+// what the ball actually has, and never in the opposite direction. Both are signed (CCW-positive).
+func clampOrbital(s, actual float64) float64 {
+	if actual >= 0 {
+		if s < 0 {
+			return 0
+		}
+		if s > actual {
+			return actual
+		}
+		return s
+	}
+	if s > 0 {
+		return 0
+	}
+	if s < actual {
+		return actual
+	}
+	return s
+}
+
 // handleBallToPlayerInteraction resolves everything between the ball and a player
 // except shooting: the attraction that lets the player dribble, and the contact,
 // which either sticks the ball or bounces it off.
@@ -171,6 +193,10 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	}
 	normal := toBall.Scale(1 / distance)
 	gap := distance - player.Radius() - ball.Radius()
+	// Ball velocity BEFORE any dribble force this tick. The touching hold uses it to credit the
+	// CARRY's contribution to the hold-induced orbital speed (heldOrbital): the carry moves the ball
+	// "along the player", so its tangential part is the player's doing, not a stray ball's momentum.
+	velIn := ball.Velocity
 	cos := geom.Dot(normal, player.Facing)
 	if cos > 1 {
 		cos = 1
@@ -247,6 +273,21 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		st := player.Tuning.Stickiness
 		controlCone := player.Tuning.controlConeRadians(player.possession, player.trapAura)
 
+		// HOLD-INDUCED orbital speed. tHat is the CCW unit tangent; oAct is the ball's ACTUAL orbital
+		// (tangential, relative-to-player) speed, signed. `heldOrbital` is the orbital speed THIS
+		// player's own hold forces are responsible for (it accumulates the carry + roll-to-front control
+		// below and decays with the damping, and is reset to 0 whenever the ball is not touching -- see
+		// updatePossession). The anti-fling and damping below act ONLY on `heldOrbital`, so a ball merely
+		// FOLLOWING the player (a dribbled ball, even through a hard turn or a stop) is held in full,
+		// while a stray ball's own incoming tangential momentum -- which the hold did NOT create -- is
+		// left alone and slides past. Seed it with this tick's carry, then clamp to the actual orbit:
+		// the hold can never claim more orbit than the ball has, nor orbit in the opposite direction,
+		// which also self-corrects inter-tick friction drift so a clean dribble keeps heldOrbital == oAct.
+		tHat := geom.NewVec(-normal.Y, normal.X)
+		oAct := geom.Dot(ball.Velocity.Sub(player.Velocity), tHat)
+		held := player.heldOrbital + geom.Dot(ball.Velocity.Sub(velIn), tHat)
+		held = clampOrbital(held, oAct)
+
 		// Sticky hold (radial): resist the ball separating from the player up to a capped holding
 		// impulse, scaled by the stickiness grip (near-constant, a hair lower at full possession).
 		// Full hold within the control cone, then the Stickiness curve from that edge (a small
@@ -294,24 +335,30 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 			(1 + player.Tuning.TrapControlBonus*player.trapAura) *
 			(1 + player.Tuning.PossessionControlBonus*player.possession)
 		tangential := player.Facing.Sub(normal.Scale(cos))
-		ball.Velocity = ball.Velocity.Add(tangential.Scale(strength * deltaTime * retention))
+		controlAdd := tangential.Scale(strength * deltaTime * retention)
+		ball.Velocity = ball.Velocity.Add(controlAdd)
+		held += geom.Dot(controlAdd, tHat) // the roll-to-front control rolls the ball along the player: hold-induced
 
-		relative := ball.Velocity.Sub(player.Velocity)
-		sideways := relative.Sub(normal.Scale(geom.Dot(relative, normal)))
 		damping := player.Tuning.ControlDamping * deltaTime
 		if damping > 1 {
 			damping = 1
 		}
-		ball.Velocity = ball.Velocity.Sub(sideways.Scale(damping * retention))
+		// Settle the orbital speed -- but only the HOLD-INDUCED part (`held`), not a stray ball's own
+		// tangential momentum. For a dribbled ball held == the full orbital speed, so this is exactly the
+		// old "damp the sideways velocity"; for a fast side-on stray (held ~ 0) almost nothing is bled,
+		// so the ball keeps its momentum and slides past instead of being settled onto the player.
+		dampAmt := damping * retention
+		ball.Velocity = ball.Velocity.Sub(tHat.Scale(held * dampAmt))
+		held *= 1 - dampAmt
 
-		// Centripetal stick: pull the ball inward in proportion to how fast it is still orbiting the
-		// player, so a hard/fast turn curves the ball around the player instead of flinging it off the
-		// surface. FULL strength always -- this IS the anti-fling and keeps its holding power (never
-		// scaled down). It vanishes on its own once the ball settles (orbit -> 0), so it never disturbs
-		// a resting ball.
-		orbit := ball.Velocity.Sub(player.Velocity)
-		orbitNow := geom.Norm(orbit.Sub(normal.Scale(geom.Dot(orbit, normal))))
-		ball.Velocity = ball.Velocity.Sub(normal.Scale(player.Tuning.OrbitStick * orbitNow * deltaTime))
+		// Centripetal stick (anti-fling): pull the ball inward to curve it around the player as it
+		// orbits, instead of letting it fling off the surface. It acts ONLY on the hold-induced orbital
+		// speed (`held`): for a dribbled ball that is the full orbital speed -- FULL strength, identical
+		// to before, so a hard turn (or stopping a turn) never flings the ball out -- while a stray
+		// ball's own orbital momentum (not created by the hold) is NOT curved in, so a fast perpendicular
+		// shot is no longer captured. It vanishes as a held ball settles (held -> 0).
+		ball.Velocity = ball.Velocity.Sub(normal.Scale(player.Tuning.OrbitStick * math.Abs(held) * deltaTime))
+		player.heldOrbital = held
 
 		// Seat: gently draw the ball flush to the surface so there is no visible gap.
 		// Position-based and proportional to the gap, so it vanishes at the surface (no
@@ -336,9 +383,6 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 //     the ball -- Rule 3). `drain` true -> falls FAST at PossessionStealRate (this player is a
 //     holder being marked/denied by an opponent that is not near the ball -- Rule 2). Otherwise
 //     it decays gently. It drives the grip on the ball (centre-pull and stickiness).
-//   - control: built toward 1 while the ball is touching AND within the front
-//     PossessionArcRadians, decayed otherwise. This is the tighter "ball under control out
-//     in front" state. It is TRACKED but currently UNUSED -- no mechanic reads it yet.
 func updatePossession(ball *Ball, player *Player, deltaTime float64, build, drain bool) {
 	switch {
 	case build:
@@ -354,27 +398,19 @@ func updatePossession(ball *Ball, player *Player, deltaTime float64, build, drai
 		player.possession = 0
 	}
 
-	// control: built only while the ball is touching within the front arc.
-	inArc := false
+	// When the ball is NOT touching this player, the hold is not acting, so the player owns no
+	// hold-induced orbital motion. Clearing it every such tick (this runs for every player every
+	// tick) guarantees a ball that arrives fresh starts its first touch with heldOrbital == 0 -- its
+	// whole incoming tangential momentum is then treated as "stray" and not arrested by the anti-fling.
+	touching := false
 	toBall := ball.Position.Sub(player.Position)
 	if dist := geom.Norm(toBall); dist > 0 {
-		gap := dist - player.Radius() - ball.Radius()
-		if gap < player.Tuning.TouchRange {
-			angle := ballAngle(toBall.Scale(1/dist), player.Facing)
-			inArc = angle <= player.Tuning.PossessionArcRadians
+		if gap := dist - player.Radius() - ball.Radius(); gap < player.Tuning.TouchRange {
+			touching = true
 		}
 	}
-
-	if inArc {
-		player.control += deltaTime / player.Tuning.PossessionBuildSeconds
-		if player.control > 1 {
-			player.control = 1
-		}
-	} else {
-		player.control -= deltaTime / player.Tuning.PossessionReleaseSeconds
-		if player.control < 0 {
-			player.control = 0
-		}
+	if !touching {
+		player.heldOrbital = 0
 	}
 }
 
@@ -399,18 +435,18 @@ func shoot(player *Player, ball *Ball) bool {
 		dir = toBall.Scale(1 / distance)
 		angle = ballAngle(dir, player.Facing)
 	}
-	// The left-click shot only works in the front 180deg the player faces -- it cannot kick a
-	// ball sitting behind it.
-	if angle >= math.Pi/2 {
+	// The left-click shot only works in the front 180deg the player faces (the full front
+	// hemisphere) -- it cannot kick a ball sitting at or behind the +-90deg edge.
+	if angle >= fireConeHalfAngle {
 		return false
 	}
 
 	charge := NormShootCharge(player.shootCharge)
 	factor := player.Tuning.MinShootFactor + (1-player.Tuning.MinShootFactor)*charge
-	// Power is full at dead front and degrades across the front hemisphere, much faster toward
-	// the +-90deg edges (frontShotFalloff). The LAUNCH DIRECTION is the radial nudged toward the
-	// facing by the aim assist (which also degrades toward the edges), so a centred shot goes
-	// where the player aims and an edge-of-hemisphere shot is weak and barely assisted.
+	// Power is full within the inner +-30deg cone and tapers (linearly) to 0 toward the +-90deg
+	// edges (frontShotFalloff). The LAUNCH DIRECTION is the radial nudged toward the
+	// facing by the aim assist (uniform across the hemisphere), so a centred shot goes
+	// where the player aims and an edge-of-hemisphere shot is weak but still on-aim.
 	power := player.Tuning.Shoot.Eval(0) * factor * frontShotFalloff(angle)
 	if distance > 0 {
 		dir = player.Tuning.ShootDirection(dir, player.Facing)
@@ -418,7 +454,6 @@ func shoot(player *Player, ball *Ball) bool {
 
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
-	player.control = 0
 	return true
 }
 
@@ -445,6 +480,5 @@ func push(player *Player, ball *Ball) bool {
 	power := player.Tuning.Shoot.Eval(0) * pushPowerFactor // a 70%-power jab, the same in every direction
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
-	player.control = 0
 	return true
 }

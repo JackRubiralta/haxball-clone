@@ -9,8 +9,8 @@ import (
 
 // TestPushAndFrontHemisphereShot covers the middle-click push and the redesigned left-click
 // shot: the push is an instant min-power radial push that reaches the whole pull radius and is
-// equal in every direction; the shot fires only in the front 180deg and its power degrades
-// (much faster) toward the +-90deg edges.
+// equal in every direction; the shot fires only in the front 180deg arc, at full power within the
+// inner +-30deg cone and tapering to 0 toward the +-90deg edges.
 func TestPushAndFrontHemisphereShot(t *testing.T) {
 	s := fieldPlayerTuning()
 	const ballR = 10.0
@@ -53,8 +53,12 @@ func TestPushAndFrontHemisphereShot(t *testing.T) {
 		t.Errorf("a push on a ball behind should push it backward, vx=%.2f", pb.Velocity.X)
 	}
 
-	// --- SHOOT: front 180deg only, power degrading toward the edges. ---
+	// --- SHOOT: front 180deg arc -- full power within the +-30deg cone, tapering to 0 by the edge. ---
 	d := d0 + 1.0 // touching (gap 1 < TouchRange)
+	atDeg := func(deg float64) *Ball {
+		r := deg * math.Pi / 180
+		return NewBall(geom.NewVec(d*math.Cos(r), d*math.Sin(r)), ballR)
+	}
 
 	frontBall := NewBall(geom.NewVec(d, 0), ballR)
 	if !shoot(newP(), frontBall) {
@@ -62,19 +66,28 @@ func TestPushAndFrontHemisphereShot(t *testing.T) {
 	}
 	frontPower := geom.Norm(frontBall.Velocity)
 
-	// 60deg off the facing: still in the front hemisphere, but much weaker.
-	sb := NewBall(geom.NewVec(d*math.Cos(math.Pi/3), d*math.Sin(math.Pi/3)), ballR)
-	if !shoot(newP(), sb) {
-		t.Fatalf("a 60deg shot is in the front hemisphere and should fire")
+	// 25deg off the facing: still INSIDE the +-30deg full-power cone, so full power.
+	cb := atDeg(25)
+	if !shoot(newP(), cb) {
+		t.Fatalf("a 25deg shot is inside the full-power cone and should fire")
 	}
-	if sidePower := geom.Norm(sb.Velocity); !(sidePower < frontPower*0.8) {
-		t.Errorf("a 60deg shot should be much weaker than a front shot: side %.1f vs front %.1f", sidePower, frontPower)
+	if conePower := geom.Norm(cb.Velocity); math.Abs(conePower-frontPower) > 1e-6 {
+		t.Errorf("a shot inside the +-30deg cone should be at full power: %.3f vs front %.3f", conePower, frontPower)
 	}
 
-	// 135deg (behind the hemisphere): no shot at all, ball untouched.
-	bb := NewBall(geom.NewVec(d*math.Cos(3*math.Pi/4), d*math.Sin(3*math.Pi/4)), ballR)
+	// 75deg off the facing: out in the taper, much weaker than a front shot.
+	sb := atDeg(75)
+	if !shoot(newP(), sb) {
+		t.Fatalf("a 75deg shot is inside the 180deg arc and should fire")
+	}
+	if sidePower := geom.Norm(sb.Velocity); !(sidePower < frontPower*0.6) {
+		t.Errorf("a 75deg shot should be much weaker than a front shot: side %.1f vs front %.1f", sidePower, frontPower)
+	}
+
+	// 135deg (behind the arc): no shot at all, ball untouched.
+	bb := atDeg(135)
 	if shoot(newP(), bb) {
-		t.Errorf("a shot behind the front hemisphere should not fire")
+		t.Errorf("a shot behind the front arc should not fire")
 	}
 	if bb.Velocity != (geom.Vec{}) {
 		t.Errorf("a disallowed back shot must not move the ball, got %v", bb.Velocity)

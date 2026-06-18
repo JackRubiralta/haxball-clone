@@ -5,6 +5,8 @@
 package menu
 
 import (
+	"log/slog"
+
 	"phootball/internal/config"
 	"phootball/internal/control"
 	"phootball/internal/input"
@@ -306,6 +308,9 @@ func (s Settings) Validate() error { return s.MatchSetup.Validate() }
 func (s Settings) Config() config.Config {
 	cfg, err := s.MatchSetup.Build()
 	if err != nil {
+		// The Start button is gated on Validate(), so this should be unreachable -- but log it
+		// rather than swallow it silently, so a slipped-through invalid setup is diagnosable.
+		slog.Warn("menu: invalid match setup, falling back to default config", "err", err)
 		return config.Default()
 	}
 	return cfg

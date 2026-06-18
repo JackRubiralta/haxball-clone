@@ -118,7 +118,9 @@ func (m *Match) applyConfig(cfg config.Config) {
 	// so the default match is unchanged.
 	if m.Ball != nil {
 		m.Ball.Friction = cfg.Tuning.BallFriction
-		m.Ball.InvMass = 1 / cfg.Tuning.BallMass
+		if cfg.Tuning.BallMass > 0 { // guard a misconfigured/zero mass (would be a divide-by-zero -> +Inf InvMass)
+			m.Ball.InvMass = 1 / cfg.Tuning.BallMass
+		}
 		m.Ball.SetRadius(cfg.Tuning.BallRadius)
 	}
 }
@@ -415,14 +417,14 @@ func (m *Match) touching(p *Player) bool {
 }
 
 // inPullRange reports whether the ball is within the player's POSSESSION radius -- close enough
-// to act on the ball without touching it. It uses possessionRadius() (the PossessionRange knob,
+// to act on the ball without touching it. It uses possessionReach() (the PossessionRange knob,
 // defaulting to base PullRange), NOT the trap-extended pullRadius(): a held trap extends the ball
 // ATTRACTION (the centre-pull in handleBallToPlayerInteraction) but it must NOT extend possession
 // reach, so trapping never widens who builds or contests possession. This is the single reach test
 // behind both the player-possession builder (engaged/advancePossessionBuilder) and the
 // team-possession contest (ballInTeamPullRange/advanceTeamPossession).
 func (m *Match) inPullRange(p *Player) bool {
-	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.possessionRadius()
+	return geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.possessionReach()
 }
 
 // ballInTeamPullRange reports whether any player on the given side has the ball within its BASE
@@ -444,11 +446,11 @@ func playersTouching(a, b *Player) bool {
 
 // playerReach reports whether challenger c has target t within c's POSSESSION radius -- a
 // player-to-player reach (body contact is included, since the surface gap is then negative). It
-// uses possessionRadius() (PossessionRange, defaulting to base PullRange), NOT the trap-extended
+// uses possessionReach() (PossessionRange, defaulting to base PullRange), NOT the trap-extended
 // pullRadius(), so trapping does not widen the marking/pressure that drives the possession contest
 // (pressuredByOpponent / markedByNonBallOpponent).
 func playerReach(c, t *Player) bool {
-	return geom.Dist(c.Position, t.Position)-c.Radius()-t.Radius() < c.possessionRadius()
+	return geom.Dist(c.Position, t.Position)-c.Radius()-t.Radius() < c.possessionReach()
 }
 
 // pressuredByOpponent reports whether any opponent has p within its pull reach (an opponent is
@@ -832,7 +834,6 @@ func (m *Match) resetKickoff(staged bool) {
 		p.Acceleration = geom.NewVec(0, 0)
 		p.moveHeading = geom.Vec{}
 		p.possession = 0
-		p.control = 0
 		p.shootCharge = 0
 		p.trapCharge = 0
 		p.trapAura = 0

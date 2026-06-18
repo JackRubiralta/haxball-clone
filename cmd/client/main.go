@@ -15,6 +15,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"phootball/internal/audio"
 	"phootball/internal/cliutil"
@@ -38,6 +39,7 @@ type Game struct {
 	geo           config.Geometry // geometry the cached field was built from
 	lastSoundTick uint64          // last tick whose sounds were played (dedupe)
 	viewport      render.Viewport // last frame's transform, for cursor->world aim
+	showStats     bool            // Tab toggles the live stats panel (from Snapshot.Stats)
 }
 
 func (g *Game) Update() error {
@@ -45,6 +47,9 @@ func (g *Game) Update() error {
 	case <-g.ctx.Done():
 		return ebiten.Termination
 	default:
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
+		g.showStats = !g.showStats
 	}
 	g.human.SetViewport(g.viewport)
 	if err := g.client.Send(g.human.Intent(nil)); err != nil {
@@ -94,6 +99,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	render.DrawClientOverlays(screen, snap.Celebrating, snap.PhaseLabel, snap.GoalText,
 		goalTint, ballPos, snap.Geometry.ScreenWidth, snap.Geometry.ScreenHeight,
 		snap.Finished, snap.WinnerText)
+	if g.showStats {
+		// Identical numbers to the local HUD -- built from the snapshot's stats projection.
+		render.StatsPanel(screen, render.StatsModelFromStats(
+			snap.Stats, snap.LeftName, snap.RightName, snap.LeftColor, snap.RightColor))
+	}
 }
 
 // goalTint is a neutral celebration tint for the network client, which does not receive

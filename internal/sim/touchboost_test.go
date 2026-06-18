@@ -87,8 +87,8 @@ func TestPossessionStealFromPullRange(t *testing.T) {
 		// other, so this isolates the PULL-RANGE steal from the body-contact one.
 		holdGap := (a.Tuning.TouchRange + a.Tuning.PullRange) / 2
 		a.Position = geom.NewVec(-(surface + holdGap), 0)
-		a.possession, a.control = 0.8, 0
-		b.possession, b.control, b.trapAura = 0, 0, trap // trapAura is the effective trap strength driving the reach
+		a.possession = 0.8
+		b.possession, b.trapAura = 0, trap // trapAura is the effective trap strength driving the reach
 		b.Position = geom.NewVec(surface+gap, 0)
 		m.possessor = a
 	}

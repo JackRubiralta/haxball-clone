@@ -34,7 +34,6 @@ type Player struct {
 	WantsKick    bool
 
 	possession    float64  // 0..1 build-up while the ball is touching anywhere; scales the grip on the ball
-	control       float64  // 0..1 build-up while the ball is touching within the front arc; tracked but unused
 	pullEnterSeq  uint64   // sequence stamp set when the ball entered this player's pull radius (0 = out of reach); the latest stamp is the sole possession builder
 	touchCoef     float64  // -1..1 touch-quality coefficient this tick from the team possession charge
 	boostDrain    float64  // 0..1 per-player erosion of THIS player's team boost while an opponent is touching it (recovers off contact)
@@ -49,6 +48,7 @@ type Player struct {
 	trapHeldPrev  bool     // trap-button state last tick, for the trap sound's rising edge
 	evictDwell    float64  // seconds spent violating a positional rule (warn-evict grace)
 	moveHeading   geom.Vec // current steering direction; rotates toward input at TurnRate
+	heldOrbital   float64  // signed orbital speed (CCW+, relative-to-player tangential) THIS player's hold forces are responsible for; the dribble anti-fling/damping act only on this, so a turning carrier holds the ball while a stray ball's own incoming momentum is not arrested (reset to 0 whenever the ball is not touching)
 }
 
 // Charge timing constants (seconds), shared by the sim and the renderer's gauges.
@@ -56,7 +56,7 @@ const (
 	shootChargeMax   = 0.75 // seconds of hold for a full-power shot (faster charge)
 	trapChargeTime   = 1.25 // seconds of holding the trap button to reach full trap charge (~25% slower)
 	trapChargeDecay  = 3.2  // per-second decay of trap charge once released (~25% slower release/aura fade)
-	pushFlashSeconds = 0.3  // seconds for the middle-click push pulse animation to fade out
+	pushFlashSeconds = 0.4  // seconds for the middle-click push ring to expand outward and fade away
 )
 
 // Trap strength shape: how the held trap's EFFECTIVE strength (`trapAura`) tracks the raw charge.
@@ -112,10 +112,6 @@ func (p *Player) PushRange() float64 { return p.Tuning.PullRange }
 // Possession returns the player's current 0..1 possession build-up (ball touching anywhere).
 func (p *Player) Possession() float64 { return p.possession }
 
-// Control returns the player's current 0..1 control build-up (ball touching within the
-// front arc). It is tracked but not yet used by any mechanic.
-func (p *Player) Control() float64 { return p.control }
-
 // TouchCoefficient returns the player's current -1..1 touch-quality coefficient this tick,
 // derived from the team possession charge: positive (its team owns the charge) is a cleaner
 // touch -- higher capture, lower bounce; negative (the other team owns it) is a worse touch
@@ -132,12 +128,12 @@ func (p *Player) pullRadius() float64 {
 	return p.Tuning.PullRange + p.Tuning.TrapRangeBonus*p.trapAura
 }
 
-// possessionRadius is the surface gap within which the player contests POSSESSION (the reach
+// possessionReach is the surface gap within which the player contests POSSESSION (the reach
 // behind Match.inPullRange / playerReach). Unlike pullRadius it is NEVER trap-extended -- a held
 // trap pulls the ball in from further but must not widen who owns/steals possession. It is the
 // player's PossessionRange, falling back to the base PullRange when PossessionRange is unset
 // (<= 0), so possession reach equals the attraction base by default yet can be tuned on its own.
-func (p *Player) possessionRadius() float64 {
+func (p *Player) possessionReach() float64 {
 	if p.Tuning.PossessionRange > 0 {
 		return p.Tuning.PossessionRange
 	}
