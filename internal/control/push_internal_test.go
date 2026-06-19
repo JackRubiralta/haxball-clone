@@ -13,7 +13,7 @@ import (
 func leftOutfielder(m *sim.Match) *sim.Player {
 	var me *sim.Player
 	for _, pl := range m.Teams[0].Players {
-		if pl.Role != sim.RoleGoalkeeper {
+		if pl.Role != sim.RoleKeeper {
 			me = pl
 			break
 		}
@@ -86,7 +86,7 @@ func TestKeeperPushesAwayUnderPressure(t *testing.T) {
 	var keeper *sim.Player
 	var mates []*sim.Player
 	for _, pl := range m.Teams[0].Players {
-		if pl.Role == sim.RoleGoalkeeper {
+		if pl.Role == sim.RoleKeeper {
 			keeper = pl
 		} else {
 			mates = append(mates, pl)

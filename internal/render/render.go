@@ -32,11 +32,11 @@ const (
 )
 
 var (
-	stadiumColor = color.RGBA{18, 46, 26, 255}    // outside the pitch
-	stripeA      = color.RGBA{46, 138, 54, 255}   // mowed grass band
-	stripeB      = color.RGBA{52, 150, 60, 255}   // alternate band
-	lineColor    = color.RGBA{235, 240, 235, 255} // pitch markings
-	netFill      = color.RGBA{14, 18, 24, 150}    // dark goal interior
+	stadiumColor = color.RGBA{18, 46, 26, 255}                     // outside the pitch
+	stripeA      = color.RGBA{46, 138, 54, 255}                    // mowed grass band
+	stripeB      = color.RGBA{52, 150, 60, 255}                    // alternate band
+	lineColor    = color.RGBA{235, 240, 235, 255}                  // pitch markings
+	netFill      = color.RGBA{14, 18, 24, 150}                     // dark goal interior
 	netLine      = fade(color.RGBA{120, 132, 140, 255}, 130.0/255) // off-colour (cool grey) net mesh, premultiplied
 	ballWhite    = color.RGBA{248, 248, 248, 255}
 	ballOutline  = color.RGBA{60, 60, 66, 255}
@@ -46,8 +46,8 @@ var (
 	coneInner    = color.RGBA{252, 206, 130, 255}
 	hudColor     = color.RGBA{0, 0, 0, 110}
 	bannerColor  = color.RGBA{0, 0, 0, 165}
-	hudText      = color.RGBA{226, 234, 226, 255} // legible HUD text (matches the menu Text)
-	hudDim       = color.RGBA{170, 188, 172, 235} // secondary HUD text (matches the menu TextDim)
+	hudText      = color.RGBA{226, 234, 226, 255}                  // legible HUD text (matches the menu Text)
+	hudDim       = color.RGBA{170, 188, 172, 235}                  // secondary HUD text (matches the menu TextDim)
 	offsideLine  = fade(color.RGBA{235, 240, 235, 255}, 105.0/255) // translucent white anti-camp line, premultiplied
 )
 
@@ -397,6 +397,15 @@ func (u UI) Fill(clr color.Color) { u.c.dst.Fill(clr) }
 
 // FillRect draws a filled rectangle in UI coordinates.
 func (u UI) FillRect(x, y, w, h float64, clr color.Color) { u.c.fillRect(x, y, w, h, clr) }
+
+// DimScreen draws clr over the ENTIRE framebuffer (alpha-blended), so a translucent dim covers the
+// whole screen -- including the letterbox margins OUTSIDE the UI box. Unlike FillRect (which only
+// covers the centred UI box and so leaves the screen edges undimmed at off-aspect windows) and Fill
+// (which replaces opaquely). Used to dim a paused/finished match uniformly to the screen edges.
+func (u UI) DimScreen(clr color.Color) {
+	b := u.c.dst.Bounds()
+	vector.DrawFilledRect(u.c.dst, float32(b.Min.X), float32(b.Min.Y), float32(b.Dx()), float32(b.Dy()), clr, false)
+}
 
 // StrokeRect draws a rectangle outline in UI coordinates.
 func (u UI) StrokeRect(x, y, w, h, sw float64, clr color.Color) { u.c.strokeRect(x, y, w, h, sw, clr) }
@@ -784,6 +793,99 @@ func PlayerAt(screen *ebiten.Image, pos, facing geom.Vec, radius float64, body c
 
 	c.number(itoa(number), pos.X, pos.Y, radius, ballWhite)
 	drawShootCharge(c, pos, facing, radius, shootCharge, body) // power gauge over the body
+}
+
+// SnapshotEntity is one drawable entity (ball or player) in a SnapshotView.
+type SnapshotEntity struct {
+	IsBall                  bool
+	PlayerID                int // player entities only; lets the renderer mark "you"
+	Position, Facing        geom.Vec
+	Radius                  float64
+	Color                   color.RGBA
+	Number                  int
+	ShootCharge, TrapCharge float64
+}
+
+// SnapshotView is the render-agnostic projection of a server snapshot that FrameFromSnapshot
+// draws. The render package must NOT import netcode, so callers adapt a netcode.Snapshot into this
+// struct (the adapter lives in the caller, keeping render dependency-clean).
+type SnapshotView struct {
+	Geometry                                 config.Geometry
+	LeftName, RightName                      string
+	LeftColor, RightColor                    color.RGBA
+	LeftScore, RightScore                    int
+	ClockSeconds                             float64
+	PhaseLabel                               string
+	InShootout                               bool
+	PenLeftGoals, PenLeftTaken               int
+	PenRightGoals, PenRightTaken             int
+	OffsideEnabled                           bool
+	OffsideFrac                              float64
+	PenaltyBoxMaxPlayers, GoalAreaMaxPlayers int
+	Celebrating                              bool
+	GoalText, WinnerText                     string
+	Finished                                 bool
+	Paused                                   bool       // the host paused the match
+	GoalTint                                 color.RGBA // celebration tint (neutral for a pure client)
+	Entities                                 []SnapshotEntity
+	Stats                                    sim.StatsSnapshot
+	SelfPlayerID                             int  // the local player's id, to mark "you" on the pitch
+	HaveSelf                                 bool // whether SelfPlayerID is known
+	RTTms                                    int  // round-trip latency for the corner badge (0 = hidden)
+}
+
+// FrameFromSnapshot draws a complete in-match frame from a server snapshot (no *sim.Match, no
+// camera -- fit-to-window) and RETURNS the Viewport it drew with, so the caller feeds it to
+// human.SetViewport next frame and the cursor maps to world aim. `field` is the caller-cached
+// *sim.Field, rebuilt only when v.Geometry changes; `showStats` gates the live stats panel. This is
+// the single in-match render path shared by the standalone client (cmd/client) and the menu app.
+func FrameFromSnapshot(screen *ebiten.Image, v SnapshotView, field *sim.Field, showStats bool) Viewport {
+	vp := Field(screen, field, v.LeftColor, v.RightColor) // also fills the screen and sets the world dims
+	var ballPos geom.Vec
+	for _, e := range v.Entities {
+		if e.IsBall {
+			ballPos = e.Position
+			BallAt(screen, e.Position, e.Radius)
+		} else {
+			PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge)
+			if v.HaveSelf && e.PlayerID == v.SelfPlayerID {
+				PlayerSelfMarker(screen, e.Position, e.Radius)
+			}
+		}
+	}
+	ZoneIndicators(screen, field, config.Ruleset{
+		OffsideEnabled:       v.OffsideEnabled,
+		OffsideFrac:          v.OffsideFrac,
+		PenaltyBoxMaxPlayers: v.PenaltyBoxMaxPlayers,
+		GoalAreaMaxPlayers:   v.GoalAreaMaxPlayers,
+	})
+	DrawHUD(screen, HUDFromSnapshot(
+		v.LeftName, v.RightName, v.LeftColor, v.RightColor,
+		v.LeftScore, v.RightScore, v.ClockSeconds, v.PhaseLabel,
+		v.InShootout, v.PenLeftGoals, v.PenLeftTaken, v.PenRightGoals, v.PenRightTaken))
+	DrawClientOverlays(screen, v.Celebrating, v.PhaseLabel, v.GoalText,
+		v.GoalTint, ballPos, v.Geometry.ScreenWidth, v.Geometry.ScreenHeight,
+		v.Finished, v.WinnerText)
+	if showStats {
+		StatsPanel(screen, StatsModelFromStats(v.Stats, v.LeftName, v.RightName, v.LeftColor, v.RightColor))
+	}
+	if v.Paused {
+		ui := BeginUI(screen)
+		ui.DimScreen(color.RGBA{0, 0, 0, 120})
+		ui.Title("PAUSED BY HOST", UIWidth/2, UIHeight/2-24, 44, color.RGBA{240, 244, 240, 255})
+	}
+	return vp
+}
+
+// PlayerSelfMarker draws a small downward chevron above a player to mark "you" on a crowded,
+// possibly-laggy networked pitch. Uses the same canvas transform PlayerAt just drew with.
+func PlayerSelfMarker(screen *ebiten.Image, pos geom.Vec, radius float64) {
+	c := newCanvas(screen)
+	y := pos.Y - radius - 9
+	w := radius * 0.5
+	col := color.RGBA{255, 235, 90, 255} // bright yellow, distinct from both team colours
+	c.line(pos.X-w, y, pos.X, y+w*0.85, 2.6, col)
+	c.line(pos.X+w, y, pos.X, y+w*0.85, 2.6, col)
 }
 
 // pitchGlowAdd is the grass tint baked into a team colour by glowColor. Tuned so the corrected
@@ -1349,7 +1451,7 @@ func drawGoalOverlay(screen *ebiten.Image, message string, tint color.RGBA, ball
 	bw := measureUI(message, size) + 48
 	bh := size + 22
 	c.fillRect(cx-bw/2, cy-bh/2, bw, bh, color.RGBA{0, 0, 0, uint8(165 * bannerAlpha)}) // black (valid premult)
-	c.fillRect(cx-bw/2, cy-bh/2, 6, bh, fade(tint, bannerAlpha))                         // team accent bar
+	c.fillRect(cx-bw/2, cy-bh/2, 6, bh, fade(tint, bannerAlpha))                        // team accent bar
 	c.fillRect(cx+bw/2-6, cy-bh/2, 6, bh, fade(tint, bannerAlpha))
 	c.textSized(message, cx, cy, size, AlignCenter, fade(color.RGBA{240, 244, 240, 255}, bannerAlpha))
 }

@@ -212,7 +212,7 @@ func (m *Match) enforceBoxCap(box ZoneRect, boxSide Side, team *Team, max int, p
 		if !box.overlapsCircle(p.Position, p.Radius()+boxLineClearance) {
 			continue // body clear of the box
 		}
-		occ = append(occ, occupant{p, boxInsideness(p, box, leftSide), ownerKeeper && p.Role == RoleGoalkeeper})
+		occ = append(occ, occupant{p, boxInsideness(p, box, leftSide), ownerKeeper && p.Role == RoleKeeper})
 	}
 
 	// Keep the owner's keeper first, then the deepest-inside up to the cap; wall out the rest.
@@ -246,7 +246,7 @@ func (m *Match) enforceBoxKeeperOnly(box ZoneRect, boxSide Side, team *Team, pen
 	leftSide := boxSide == SideLeft
 	owner := team.Side == boxSide
 	for _, p := range team.Players {
-		if owner && p.Role == RoleGoalkeeper {
+		if owner && p.Role == RoleKeeper {
 			continue // the owner's keeper is the only admitted player
 		}
 		// boxKeepOut itself gates on contact with the keep-out surface (body within the line),

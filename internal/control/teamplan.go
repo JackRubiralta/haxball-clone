@@ -43,14 +43,14 @@ func electPresser(p perception, players []sim.ObservedView, tune aiTuning) (best
 	bestCost, secondCost := math.Inf(1), math.Inf(1)
 	hasOutfield := false
 	for _, q := range players {
-		if q.Role() != sim.RoleGoalkeeper {
+		if q.Role() != sim.RoleKeeper {
 			hasOutfield = true
 			break
 		}
 	}
 	for _, q := range players {
 		cost := interceptCost(p, q, tune)
-		if q.Role() == sim.RoleGoalkeeper && hasOutfield {
+		if q.Role() == sim.RoleKeeper && hasOutfield {
 			cost += keeperPressPenalty
 		}
 		if cost < bestCost || (cost == bestCost && (best == -1 || q.ID() < best)) {

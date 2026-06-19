@@ -155,6 +155,7 @@ func (a *AI) keeperDistribute(p perception) sim.Intent {
 		dc := a.passChargeFor(p, target) // calibrated to reach the receiver in control
 		a.passReceiver = receiver
 		a.lastOnBall = actPass
+		a.recordPassIntent(p, target, receiver) // diagnostics only (write-only)
 		return a.shootAt(p, in, a.applyAim(p, target), dc, a.tune.shootAlignRad)
 	}
 	// No progressive pass found, but a keeper should PLAY THE BALL OUT, not hoof it: look for any
@@ -164,6 +165,7 @@ func (a *AI) keeperDistribute(p perception) sim.Intent {
 		dc := a.passChargeFor(p, target)
 		a.passReceiver = receiver
 		a.lastOnBall = actPass
+		a.recordPassIntent(p, target, receiver) // diagnostics only (write-only)
 		return a.shootAt(p, in, a.applyAim(p, target), dc, a.tune.shootAlignRad)
 	}
 	a.lastOnBall = actClear
@@ -185,7 +187,7 @@ func (a *AI) keeperOutlet(p perception) (geom.Vec, sim.ObservedView) {
 	var bestTarget geom.Vec
 	best := -1.0
 	for _, mate := range p.teammates {
-		if mate.Role() == sim.RoleGoalkeeper {
+		if mate.Role() == sim.RoleKeeper {
 			continue
 		}
 		target := a.leadPoint(p, mate)

@@ -10,9 +10,9 @@ import (
 func countRoles(players []*Player) (gk, mid, fwd int) {
 	for _, p := range players {
 		switch p.Role {
-		case RoleGoalkeeper:
+		case RoleKeeper:
 			gk++
-		case RoleStriker:
+		case RoleAttacker:
 			fwd++
 		default:
 			mid++
@@ -52,7 +52,7 @@ func TestBuildFormationCountsAndRoles(t *testing.T) {
 		}
 		// Keeper convention: when there is a keeper it is index 0 / number 1.
 		if tc.wantGK == 1 {
-			if players[0].Role != RoleGoalkeeper {
+			if players[0].Role != RoleKeeper {
 				t.Errorf("n=%d: index 0 is %v, want keeper", tc.n, players[0].Role)
 			}
 			if players[0].Number != 1 {
@@ -117,7 +117,7 @@ func TestBuildMatchAsymmetric3v2(t *testing.T) {
 		t.Errorf("total players = %d, want 5", len(m.Players))
 	}
 	// Each team has exactly one keeper at its index 0.
-	if m.Teams[0].Players[0].Role != RoleGoalkeeper || m.Teams[1].Players[0].Role != RoleGoalkeeper {
+	if m.Teams[0].Players[0].Role != RoleKeeper || m.Teams[1].Players[0].Role != RoleKeeper {
 		t.Errorf("each team's index 0 should be a keeper")
 	}
 }

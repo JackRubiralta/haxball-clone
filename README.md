@@ -25,7 +25,9 @@ go run ./cmd/game -mode timed -minutes 3
 go run ./cmd/game -mode cup -minutes 5         # timed, then extra time, then penalties
 go run ./cmd/game -offside-frac 0.667 -gk-box-max 1
 
-# LAN play (server-authoritative): the server runs all the physics, headless.
+# LAN play from the menu: Main menu -> Multiplayer -> Host Game / Join Game (see below).
+
+# LAN play, headless CLI (server-authoritative): the server runs all the physics.
 go run ./cmd/server -addr :4000 -mode cup -minutes 5 -seed 7
 go run ./cmd/client -addr HOST:4000
 ```
@@ -39,25 +41,62 @@ wheel** to zoom (with `-camera ball`), **C** to toggle follow/fit.
 Three buttons, three ways to touch the ball — each is best at one job:
 
 - **Shoot — hold left-click, release to fire.** Winds up a kick whose power scales with how
-  long you hold (a tap ≈ a third power, a full second ≈ full power), and **aims it where
+  long you hold (a tap ≈ a third power, ~¾ of a second ≈ full power), and **aims it where
   you're facing** rather than wherever the ball happens to sit, so a moving ball still goes
   where you point. It only fires into the **front 180°** (the whole hemisphere you're facing) —
   you can't shoot a ball that's behind you — and you move slower while winding up.
-  *Main thing:* your aimed scoring/passing shot, with chargeable power.
+  *Increases:* your kick **power** (the longer you charge) and **aim** (the launch snaps toward
+  where you face, not where the ball sits). *Main thing:* your aimed scoring/passing shot, with
+  chargeable power.
 
 - **Trap — hold right-click ("good touch").** Tightens your grip on the ball: it deadens an
   incoming ball so a hard pass or shot sticks to your feet instead of bouncing off, and it
-  snaps the ball to your front and glues it there as you move. It also reaches a little
-  further to drag in (or steal) a loose ball nearby. You move slower while trapping, and the
-  grip is strongest a moment after you press — holding it too long eases off.
-  *Main thing:* tight close control — **turning and pivoting with the ball quickly** without
-  it squirting away (cleanly receiving a hard pass is the bonus).
+  snaps the ball to your front and glues it there as you move. Because an *untrapped* dribble
+  follows you only loosely, the trap is what lets you **change direction sharply** without the
+  ball sliding wide. It also reaches a little further to drag in (or steal) a loose ball nearby.
+  You move slower while trapping, and the grip is strongest a moment after you press — holding
+  it too long eases off.
+  *Increases:* your **close control** — bounce-deadening (clean reception), snap-to-front, turn
+  grip, and pull reach. *Main thing:* **turning and pivoting with the ball quickly** without it
+  squirting away (cleanly receiving a hard pass is the bonus).
 
 - **Push — middle-click.** An instant poke that shoves the ball away at ~70% of a full shot,
   in **any direction** (including sideways or behind you) and on any ball within your pull
   reach — not just one at your feet. No wind-up and no aiming, so it fires faster than a shot.
-  *Main thing:* a quick jab to clear, escape pressure, or knock a loose ball away when a
-  charged front-shot is too slow or pointed the wrong way.
+  *Increases:* your **reaction speed and coverage** — no charge needed and it works on any ball
+  in reach in any direction (the trade-off is a fixed ~70% power and no aim). *Main thing:* a
+  quick jab to clear, escape pressure, or knock a loose ball away when a charged front-shot is
+  too slow or pointed the wrong way.
+
+## Multiplayer (LAN)
+
+Reach it from the main menu: **Multiplayer → Host Game / Join Game**. It reuses the existing
+authoritative server and snapshot client — the only authoritative simulation runs on the host,
+and every client (host included) just follows snapshots. There is no client-side prediction, so
+inputs are round-trip-delayed; it is built for LAN.
+
+- **Host** opens the normal **Match Setup** screen (now labelled **Create Lobby**), so the host
+  authors the full match config with the same validated controls as a solo game. Creating the
+  lobby spins up the in-process server and connects the host to it as a loopback client — so the
+  host has one render path and one lobby path, identical to a guest, differing only in host-only
+  controls.
+- **The lobby** shows both team columns (one row per roster slot, keeper marked `GK`), who holds
+  each seat, ready pips, and the spectators. Anyone picks a team/slot (**Take**/**Leave**, or the
+  *Join as* segmented control), readies up, and a connection-latency badge shows the ping. The
+  host can **Edit Settings** (re-opens Match Setup; **Apply** pushes the new config), **Kick** a
+  player, and **Start** (unclaimed seats are filled by AI). After a match, the host's **Back to
+  Lobby** rebuilds a fresh match and returns everyone to the lobby with their seats intact.
+- **Robustness.** A dropped player's seat is **held for 15s** (its AI fallback covers it) and
+  reclaimed via a `crypto/rand` **session token** on reconnect; a brief blip drops you to a
+  *Reconnecting…* overlay that auto-recovers. The host leaving ends the match for everyone with a
+  clear message (there is no host migration — clients hold only snapshots). Connection failures,
+  a full game, a kick, and version mismatches all surface a friendly reason rather than a silent
+  drop. The server treats clients as untrusted: per-frame size caps, control-message rate limits,
+  re-validated configs, and NaN-guarded intents keep one client from desyncing or OOMing the rest.
+
+The wire protocol is `internal/netcode` (`ProtoVersion 2`): TCP + `encoding/gob`, a single tagged
+`ClientFrame` client→server, and `Hello`/`Snapshot`/`Lobby`/`Reject`/`Pong`/`HostClosed` envelopes
+server→client. The `cmd/server`/`cmd/client` binaries above still work for headless CLI play.
 
 ## Command-line flags
 
@@ -66,7 +105,7 @@ Common to every binary: `-log-level` (debug|info|warn|error), `-log-format` (tex
 
 | Area | Flags | Binaries |
 | --- | --- | --- |
-| Pitch | `-field` (standard\|small\|large), `-play-width/-play-height`, `-goal-width/-goal-depth`, `-penalty-width/-penalty-depth`, `-goalarea-width/-goalarea-depth` | game, server |
+| Pitch | `-field` (small\|medium\|large; `medium`=`standard`), `-play-width/-play-height`, `-goal-width/-goal-depth`, `-penalty-width/-penalty-depth`, `-goalarea-width/-goalarea-depth` | game, server |
 | Match | `-mode` (friendly\|quick\|timed\|cup\|golden), `-minutes`, `-win-score`, `-extra-time`, `-golden-goal`, `-penalties`, `-direct-pens` | game, server |
 | Rules | `-offside-frac` (0..1, 0=off), `-penalty-box-max`, `-penalty-box-max-opp`, `-goalarea-box-max`, `-goalarea-box-max-opp`, `-goalarea-keeper-only`, `-zone-enforce` (clamp\|evict). `-gk-box-max` is a **deprecated** alias for `-goalarea-box-max`. | game, server |
 | AI | `-difficulty` (easy\|normal\|hard\|impossible) — validated against `control.SkillNames()` in the command layer | game, server |
@@ -208,11 +247,12 @@ path everywhere is `phootball/...`.
 
 ## Production-hardening backlog
 
-Beyond what ships here, the natural next steps are: an in-menu LAN host/join flow
-(today LAN runs through the dedicated `cmd/server`/`cmd/client` binaries); sending the
-settings once on join instead of in every snapshot; on-disk settings persistence (v1 is
-in-memory, CLI flags are the persistent surface); client-side snapshot interpolation;
-and replacing the procedurally-generated placeholder sound effects in
+Beyond what ships here, the natural next steps are: sending the match config once on join
+instead of geometry in every snapshot; client-side snapshot interpolation/prediction to hide
+LAN latency (today the client is a pure follower); on-disk persistence of the full match/app
+settings (only the multiplayer name + recent addresses persist today; CLI flags are the rest of
+the persistent surface); going beyond direct-IP LAN (a room code / relay for play over the
+internet); and replacing the procedurally-generated placeholder sound effects in
 `internal/audio/assets` with real recordings.
 
 ## Saved tuning values (in case)
@@ -221,7 +261,7 @@ Previous values for knobs that were changed, kept here so they can be restored:
 
 - `PullRange`: `8` (now `5`)
 - `TrapRangeBonus`: `14` (now `6`)
-- `Restitution` (front / back): `0.08 / 0.35` (now `0.23 / 0.24` — front raised so head-on shots deflect)
+- `Restitution` (front / back): `0.08 / 0.35` (now `0.21 / 0.24` — front lowered so a touch grips, still >0.20 so head-on shots deflect)
 
 ## Physics & player variables
 
@@ -280,27 +320,30 @@ Each is evaluated from the ball dead-in-front (0°) to directly-behind (180°). 
 (`curves.go`): Linear, Quadratic (eases in), InverseQuadratic (eases out), Smoothstep,
 Exponential.
 
-- **Restitution** `0.23 / 0.24` (InvQuad) — bounciness on a *hard* contact; front `0.23` (kept
-  > the buffed ~0.19) so a head-on hard shot deflects off a player rather than dying at their feet;
-  back `0.24`, springier behind.
-- **CaptureSpeed** `276 / 30` (Linear) — impact speed *below which the ball sticks*
-  (restitution 0) instead of bouncing. Front raised to ~276 (the whole capture band shifted
-  **+17.5%** from 235, so a player sticks firmer balls); back 30, so off-front hits stick much
-  less. A full-power shot still easily clears it, so an opponent never captures it — it deflects off.
+- **Restitution** `0.21 / 0.24` (InvQuad) — bounciness on a *hard* contact; front `0.21` (lowered for a
+  firmer front capture, kept just above the `0.20` floor so a head-on hard shot still deflects off a
+  player rather than sticking at their feet); back `0.24`, springier behind.
+- **CaptureSpeed** `320 / 50` (Linear) — impact speed *below which the ball sticks*
+  (restitution 0) instead of bouncing. The threshold is **flat at the front peak `320` everywhere
+  inside the reliable capture cone** (so a ball that sticks dead-on also sticks a touch off-centre),
+  then falls to the `50` floor across the soft band — so **past the cone**, off-front/side hits stick
+  much less. A full-power shot (575) easily clears it, so an opponent never captures it — it deflects off.
 - **CenterPull** `770 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
   make contact.
-- **Stickiness** `420 / 30` (InvQuad) — capped adhesion holding a touching ball until a
-  shot/bump overcomes it; a small baseline hold even at the back (`30`).
-- **Control** `1160.25 / 340` (Linear) — tangential pull rolling a touching ball to the front. Front
-  lowered in two steps (**−25% then −15%**) from 1820 → 1160.25; `TrapControlBonus` is re-bumped each
-  time so the **full-trap ("buffed") control stays pinned** (full-trap front = 1160.25 × (1 + 2.5875888817) ≈ 4162.5).
+- **Stickiness** `450 / 100` (InvQuad) — capped adhesion holding a touching ball until a
+  shot/bump overcomes it; front `450` for a sticky baseline hold and the back hold `100` so a ball
+  behind the player clings harder.
+- **Control** `1200 / 440` (Linear) — tangential pull rolling a touching ball to the front. Baseline
+  front `1200`, back `440`; `TrapControlBonus` is left unchanged, so the **full-trap control scales
+  with the front** (full-trap front = 1200 × (1 + 2.5875888817) ≈ 4305).
 - **Shoot** `shootForce / shootForce·0.3` (Linear; in-game `575 / 172.5`, +15% power) — shot power by angle.
 
 ### `PlayerStats` — scalar hold / damping
 
 - **ControlDamping** `11` — bleeds sideways/orbital ball speed so it settles at the front.
-- **OrbitStick** `8` — centripetal anti-fling: inward pull ∝ the ball's orbital speed, so a
-  hard turn curves the ball around you instead of flinging it off.
+- **OrbitStick** `8` — centripetal anti-fling: inward pull ∝ the ball's *hold-induced* orbital
+  speed, so a hard turn curves the ball around you instead of flinging it off (a fast stray ball
+  the hold did not create is left alone — see the Dribble note below).
 - **SeatStrength** `14` — gently draws a touching ball flush to the surface (gap-proportional,
   so no jitter).
 
@@ -314,17 +357,17 @@ strength inside its half-angle, then fades** toward the back. Cones are written 
 **Ball-control cones** (full strength inside the half-angle, then the named angle curve decays to
 its "behind" value — see *angle curves* above for the endpoints):
 
-- **Capture cone — ±30° (`CaptureConeRadians`) + a 55° soft band (`CaptureConeSoft`).** Inside ±30°
-  the ball reliably sticks (the capture-speed threshold is at its front peak, **276**); across the
-  next 55° (out to ~85°) that threshold decays to the side/back floor (**30**), so off-front touches
-  bounce off instead of sticking. Off-front hits also **bounce livelier** (restitution
+- **Capture cone — ±40.2° (`CaptureConeRadians`) + a 55° soft band (`CaptureConeSoft`).** Inside ±40.2°
+  (widened 34% from 30°) the ball reliably sticks (the capture-speed threshold is at its front peak,
+  **320**); across the next 55° (out to ~95.2°) that threshold decays to the side/back floor (**50**), so
+  off-front touches bounce off instead of sticking. Off-front hits also **bounce livelier** (restitution
   ×`(1+(1-cone))`, up to 2×). Widened by a team **buff +3°** (`ConeBonusRadians`) and a held **trap
-  +3°** (`CaptureConeTrapBonus`); **narrowed by a team debuff −12°** (`ConeDebuffRadians` —
+  +3°** (`CaptureConeTrapBonus`); **narrowed by a team debuff −16°** (`ConeDebuffRadians` —
   asymmetric, so a marked opponent catches far less). *(A cone-weighted impulse split also exists
   but is off by default — `uniformImpulseScale = true`.)*
 - **Control cone — ±22° (`ControlConeRadians`, 44° total).** Full strength here for **two** forces
-  that then taper to the back: the **sticky hold** (Stickiness `420→30`, resists the ball
-  separating) and the **roll-to-front control** (Control `1160.25→340`, steers the ball onto the
+  that then taper to the back: the **sticky hold** (Stickiness `450→100`, resists the ball
+  separating) and the **roll-to-front control** (Control `1200→440`, steers the ball onto the
   front). Widened by your **own possession +5°** (`ControlConePossessionBonus`) and a **trap +2°**
   (`ControlConeTrapBonus`); not team-buff scaled. The roll-to-front *magnitude* additionally gets a
   trap bonus (`TrapControlBonus`) and a possession bonus (`PossessionControlBonus`, +9% at full).
@@ -499,23 +542,22 @@ which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQua
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
   sticky touches that scale up as the charge builds (full-charge capture ≈ front × `CaptureBest`,
-  276 × 1.025 ≈ 283), so a fully-built possession receives firmly.
+  320 × 1.025 ≈ 328), so a fully-built possession receives firmly.
 - **Other team** → `OtherTeam·strength` (down to **−1.0**): capture down, bounce up (up to
-  ×1.875) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
+  ×1.43) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
 - **Capture cone** → scales ASYMMETRICALLY with the coefficient (see `captureConeRadians`):
   the buff WIDENS the owning team's reliable cone a little (`ConeBonusRadians` ≈3° at full
   charge — biggest cone), while the debuff NARROWS the conceding team's more (`ConeDebuffRadians`
-  ≈12° at full enemy charge — capture cone shrinks to ~18°, well under the ~30° baseline). So a
+  ≈16° at full enemy charge — capture cone shrinks to ~24.2°, well under the ~40.2° baseline). So a
   debuffed opponent catches less off the dead-on line. Dead-on (angle 0) is always inside
   the cone, so straight-on shots/captures are unchanged — only off-axis catching shrinks.
 
 *Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−1.0`, and the multiplier endpoints
 (anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.025`,
-**RestitutionWorst/Best** `1.875 / 0.844`. The capture multipliers are unchanged; the capture
-band was shifted up **+17.5%** (CaptureSpeed front `235 → 276`), so the buffed/debuffed *absolute*
-captures scale up with it — buffed capture ≈ **283** (276 × 1.025), debuffed capture ≈ **173**
-(276 × 0.628).
+**RestitutionWorst/Best** `1.43 / 0.844`. The capture multipliers are unchanged; the capture
+band front is `320`, so the buffed/debuffed *absolute* captures scale with it —
+buffed capture ≈ **328** (320 × 1.025), debuffed capture ≈ **201** (320 × 0.628).
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding
@@ -592,8 +634,8 @@ A left-click shot is governed by **one cone** (where it fires and aims) and **on
 - **TrapPullBonus** `1.0` — up to ×2 stronger centre-pull (trap/steal a loose ball); reduced from 1.5.
 - **TrapRangeBonus** `6` — extends pull range by up to +6 (reduced from 10).
 - **TrapControlBonus** `2.5875888817` — stronger roll-to-front (snaps the ball to the front);
-  re-bumped so full-trap front control = 1160.25 × (1 + 2.5875888817) = **4162.5**, unchanged by the
-  baseline drops (−25% then −15%).
+  full-trap front control = 1200 × (1 + 2.5875888817) ≈ **4305** (left unchanged, so it scales with
+  the raised `Control.Front` baseline).
 - **TrapStickinessBonus** `0.5` — stiffens the sticky hold while trapping (`Stickiness ×
   (1 + TrapStickinessBonus·trapCharge)`, up to +50% at full trap).
 - **TrapCaptureBonus** `60` — small capture-speed bump (+60 at full trap); the trap now relies
@@ -626,6 +668,8 @@ A left-click shot is governed by **one cone** (where it fires and aims) and **on
 - **Dribble** (only ever moves the ball): centre-pull draws a near ball in; carry paces it
   with your movement; while touching, sticky hold + roll-to-front control + orbit-stick
   (anti-fling) + seat keep it glued to the front — all scaled by grip (possession) and trap.
+  The sideways damping and anti-fling act only on the *hold-induced* orbital speed, so a fast stray
+  ball crossing your front slides past instead of being captured.
 - **Contact**: approach speed below the (cone- and trap-adjusted) CaptureSpeed → absorbed
   (sticks first touch); above → bounces with the angle's Restitution (deadened by trap). Two
   mass effects, both driven by the ball:player mass ratio:

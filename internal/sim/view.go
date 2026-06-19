@@ -113,7 +113,7 @@ type SelfView interface {
 	Possession() float64
 	// Tuning returns a copy of the player's own stat block (max speed, turn rate, shoot
 	// curve, ranges...). It is a value, so reading it cannot mutate the player.
-	Tuning() PlayerTuning
+	Tuning() config.PlayerTuning
 	HomePosition() geom.Vec
 }
 
@@ -294,7 +294,7 @@ func (v observedView) BallAngleToFacing(b BallView) float64 {
 func (v selfView) Velocity() geom.Vec     { return v.p.Velocity }
 func (v selfView) Heading() geom.Vec      { return v.p.moveHeading }
 func (v selfView) Possession() float64    { return v.p.possession }
-func (v selfView) Tuning() PlayerTuning   { return v.p.Tuning }
+func (v selfView) Tuning() config.PlayerTuning   { return v.p.Tuning }
 func (v selfView) HomePosition() geom.Vec { return v.p.HomePosition }
 
 func (v fieldView) Min() geom.Vec               { return v.f.Min }

@@ -36,7 +36,7 @@ func firstOn(m *Match, side Side) *Player {
 // buildToFull holds the ball with `holder` long enough to drive its team's charge to full.
 func buildToFull(m *Match, holder *Player, dt float64) {
 	onlyToucher(m, holder)
-	for i := 0; i < int(teamBuildSeconds/dt)+5; i++ {
+	for i := 0; i < int(m.Tuning.Possession.BuildSeconds/dt)+5; i++ {
 		m.advanceTeamPossession(dt)
 	}
 }
@@ -256,11 +256,11 @@ func TestPossessionCleanTakeover(t *testing.T) {
 // TestPossessionControlBonusAndCone is a cheap pin on two tuning values: the per-player Control
 // boost reaches x1.09 at full possession, and the role preset mirrors the widened capture cone.
 func TestPossessionControlBonusAndCone(t *testing.T) {
-	s := DefaultPlayerTuning(500)
+	s := config.DefaultPlayerTuning()
 	if mul := 1 + s.PossessionControlBonus*1; math.Abs(mul-1.09) > 1e-9 {
 		t.Errorf("Control multiplier at full possession = %.4f, want 1.09", mul)
 	}
-	if r := fieldPlayerTuning(); math.Abs(r.CaptureConeRadians-s.CaptureConeRadians) > 1e-9 {
+	if r := config.DefaultPlayerTuning(); math.Abs(r.CaptureConeRadians-s.CaptureConeRadians) > 1e-9 {
 		t.Errorf("role cone %.6f should match DefaultPlayerTuning %.6f", r.CaptureConeRadians, s.CaptureConeRadians)
 	}
 }
@@ -272,16 +272,16 @@ func TestPossessionControlBonusAndCone(t *testing.T) {
 // restitution is high enough that even a buffed receiver's deflection escapes the grip, and the
 // debuffed bounce is springier still but tamed off the near-elastic 0.95 cap.
 func TestFullPowerPassBouncesOffFront(t *testing.T) {
-	s := fieldPlayerTuning() // the in-game preset
+	s := config.DefaultPlayerTuning() // the in-game preset
 	tq := s.TouchQuality
 	capFront := s.CaptureSpeed.Front
 	restFront := s.Restitution.Front
-	fullShot := s.Shoot.Eval(0) // full-power front shot speed (575)
+	fullShot := s.Shoot.Front // full-power front shot speed (575)
 
 	// A full-power front shot must exceed the capture speed at both neutral and full buff, so it
 	// always lands in the BOUNCE branch -- a teammate cannot catch a point-blank blast untrapped.
 	for _, coef := range []float64{0, tq.OwnTeamMax} {
-		if cap := capFront * tq.captureMul(coef); cap >= fullShot {
+		if cap := capFront * tq.CaptureMul(coef); cap >= fullShot {
 			t.Errorf("full shot (%.0f) must exceed the capture speed at coef %+.1f (%.0f) so it bounces off", fullShot, coef, cap)
 		}
 	}
@@ -294,8 +294,8 @@ func TestFullPowerPassBouncesOffFront(t *testing.T) {
 	if restFront <= 0.20 {
 		t.Errorf("front restitution %.3f should be raised so a hard pass deflects off (not stick)", restFront)
 	}
-	buffedRest := restFront * tq.restitutionMul(tq.OwnTeamMax)
-	debuffRest := restFront * tq.restitutionMul(tq.OtherTeam)
+	buffedRest := restFront * tq.RestitutionMul(tq.OwnTeamMax)
+	debuffRest := restFront * tq.RestitutionMul(tq.OtherTeam)
 	if buffedRest < 0.12 {
 		t.Errorf("buffed front restitution %.4f too low -- a buffed teammate would catch a full pass", buffedRest)
 	}
@@ -308,11 +308,11 @@ func TestFullPowerPassBouncesOffFront(t *testing.T) {
 // coefficient -- biggest with the buff, baseline without, and WAY smaller with the debuff (so a
 // debuffed opponent catches far less). Never negative.
 func TestTeamChargeConeScaling(t *testing.T) {
-	s := DefaultPlayerTuning(500)
+	s := config.DefaultPlayerTuning()
 	base := s.CaptureConeRadians
-	buff := s.captureConeRadians(1, 0) // owning team, full charge
-	neutral := s.captureConeRadians(0, 0)
-	debuff := s.captureConeRadians(-1, 0) // conceding team, full enemy charge
+	buff := s.CaptureCone(1, 0) // owning team, full charge
+	neutral := s.CaptureCone(0, 0)
+	debuff := s.CaptureCone(-1, 0) // conceding team, full enemy charge
 
 	if math.Abs(neutral-base) > 1e-9 {
 		t.Errorf("a neutral coefficient should leave the cone unchanged: %.5f vs %.5f", neutral, base)
@@ -331,7 +331,7 @@ func TestTeamChargeConeScaling(t *testing.T) {
 	if !(debuff < base*0.7) {
 		t.Errorf("a fully-debuffed cone should be clearly smaller than baseline: %.4f vs base %.4f", debuff, base)
 	}
-	if s.captureConeRadians(-100, 0) < 0 {
+	if s.CaptureCone(-100, 0) < 0 {
 		t.Errorf("the cone must never go negative")
 	}
 }
@@ -773,20 +773,20 @@ func TestBoostHealsOnlyWhileTeamMateHasBall(t *testing.T) {
 // forces: it changes the centre-pull grip only mildly (rising to 1), and slightly REDUCES the
 // stickiness grip (a tiny debuff at full possession).
 func TestPossessionGripSplit(t *testing.T) {
-	s := DefaultPlayerTuning(500)
-	if got := s.centerPullGrip(0); math.Abs(got-s.CenterPullGripFloor) > 1e-9 {
+	s := config.DefaultPlayerTuning()
+	if got := s.CenterPullGrip(0); math.Abs(got-s.CenterPullGripFloor) > 1e-9 {
 		t.Errorf("centerPullGrip(0) = %.3f, want floor %.3f", got, s.CenterPullGripFloor)
 	}
-	if got := s.centerPullGrip(1); math.Abs(got-1) > 1e-9 {
+	if got := s.CenterPullGrip(1); math.Abs(got-1) > 1e-9 {
 		t.Errorf("centerPullGrip(1) = %.3f, want 1", got)
 	}
-	if swing := s.centerPullGrip(1) - s.centerPullGrip(0); swing > 0.5 {
+	if swing := s.CenterPullGrip(1) - s.CenterPullGrip(0); swing > 0.5 {
 		t.Errorf("possession should change the centre-pull only mildly (swing < the old 0.7), got %.3f", swing)
 	}
-	if got := s.stickinessGrip(0); math.Abs(got-1) > 1e-9 {
+	if got := s.StickinessGrip(0); math.Abs(got-1) > 1e-9 {
 		t.Errorf("stickinessGrip(0) = %.3f, want 1", got)
 	}
-	if full := s.stickinessGrip(1); !(full < 1 && full > 0.9) {
+	if full := s.StickinessGrip(1); !(full < 1 && full > 0.9) {
 		t.Errorf("stickinessGrip(1) should be a tiny debuff just below 1, got %.3f", full)
 	}
 }
@@ -794,13 +794,14 @@ func TestPossessionGripSplit(t *testing.T) {
 // TestTeamBuildCurve pins the build ramp: 0->0, 1->1, monotonic, and ACCELERATING (weaker
 // than linear early, so the rate increases toward the end).
 func TestTeamBuildCurve(t *testing.T) {
-	if teamBuildCurve(0) != 0 || teamBuildCurve(1) != 1 {
-		t.Errorf("build curve endpoints: got %.3f, %.3f want 0, 1", teamBuildCurve(0), teamBuildCurve(1))
+	m := &Match{Tuning: config.DefaultTuning()}
+	if m.teamBuildCurve(0) != 0 || m.teamBuildCurve(1) != 1 {
+		t.Errorf("build curve endpoints: got %.3f, %.3f want 0, 1", m.teamBuildCurve(0), m.teamBuildCurve(1))
 	}
-	if teamBuildCurve(0.5) >= 0.5 {
-		t.Errorf("build curve should be convex (weak early): teamBuildCurve(0.5)=%.3f", teamBuildCurve(0.5))
+	if m.teamBuildCurve(0.5) >= 0.5 {
+		t.Errorf("build curve should be convex (weak early): teamBuildCurve(0.5)=%.3f", m.teamBuildCurve(0.5))
 	}
-	if !(teamBuildCurve(0.25) < teamBuildCurve(0.5) && teamBuildCurve(0.5) < teamBuildCurve(0.75)) {
+	if !(m.teamBuildCurve(0.25) < m.teamBuildCurve(0.5) && m.teamBuildCurve(0.5) < m.teamBuildCurve(0.75)) {
 		t.Errorf("build curve should be monotonic increasing")
 	}
 }
@@ -808,29 +809,31 @@ func TestTeamBuildCurve(t *testing.T) {
 // TestTeamCoastEnvelope pins the post-release fade: full through the hold, then a smooth convex
 // decay to zero by the end -- a gentle fall at first that speeds up toward the end.
 func TestTeamCoastEnvelope(t *testing.T) {
+	m := &Match{Tuning: config.DefaultTuning()}
+	hold, decay := m.Tuning.Possession.HoldSeconds, m.Tuning.Possession.DecaySeconds
 	cases := []struct {
 		name        string
 		coast, want float64
 	}{
 		{"start of hold", 0, 1},
-		{"end of hold", teamHoldSeconds, 1},
-		{"decay end", teamDecaySeconds, 0},
-		{"past the end", teamDecaySeconds + 1, 0},
+		{"end of hold", hold, 1},
+		{"decay end", decay, 0},
+		{"past the end", decay + 1, 0},
 	}
 	for _, c := range cases {
-		if got := teamCoastEnvelope(c.coast); math.Abs(got-c.want) > 1e-9 {
+		if got := m.teamCoastEnvelope(c.coast); math.Abs(got-c.want) > 1e-9 {
 			t.Errorf("teamCoastEnvelope(%s, %.2f) = %.4f, want %.4f", c.name, c.coast, got, c.want)
 		}
 	}
 
-	mid := (teamHoldSeconds + teamDecaySeconds) / 2
+	mid := (hold + decay) / 2
 	// Strictly decreasing across the decay window.
-	if !(teamCoastEnvelope(teamHoldSeconds) > teamCoastEnvelope(mid) && teamCoastEnvelope(mid) > teamCoastEnvelope(teamDecaySeconds)) {
+	if !(m.teamCoastEnvelope(hold) > m.teamCoastEnvelope(mid) && m.teamCoastEnvelope(mid) > m.teamCoastEnvelope(decay)) {
 		t.Errorf("envelope should decrease across the decay window")
 	}
 	// Convex: the first half of the decay loses less than the second half (slow then fast).
-	firstHalf := teamCoastEnvelope(teamHoldSeconds) - teamCoastEnvelope(mid)
-	secondHalf := teamCoastEnvelope(mid) - teamCoastEnvelope(teamDecaySeconds)
+	firstHalf := m.teamCoastEnvelope(hold) - m.teamCoastEnvelope(mid)
+	secondHalf := m.teamCoastEnvelope(mid) - m.teamCoastEnvelope(decay)
 	if secondHalf <= firstHalf {
 		t.Errorf("decay should be slower early, faster late: first half lost %.3f, second half %.3f", firstHalf, secondHalf)
 	}
@@ -839,16 +842,16 @@ func TestTeamCoastEnvelope(t *testing.T) {
 // TestTouchQualityMultipliers checks the coefficient -> multiplier mappings: 0 is the baseline
 // (1.0), a cleaner touch means more capture and less bounce, a worse touch the reverse.
 func TestTouchQualityMultipliers(t *testing.T) {
-	tq := DefaultPlayerTuning(500).TouchQuality
+	tq := config.DefaultPlayerTuning().TouchQuality
 	approx := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
-	if !approx(tq.captureMul(0), 1) || !approx(tq.restitutionMul(0), 1) {
-		t.Errorf("coefficient 0 should be the baseline: capMul=%.4f restMul=%.4f", tq.captureMul(0), tq.restitutionMul(0))
+	if !approx(tq.CaptureMul(0), 1) || !approx(tq.RestitutionMul(0), 1) {
+		t.Errorf("coefficient 0 should be the baseline: capMul=%.4f restMul=%.4f", tq.CaptureMul(0), tq.RestitutionMul(0))
 	}
-	if !(tq.captureMul(1) > tq.captureMul(0) && tq.captureMul(0) > tq.captureMul(-1)) {
-		t.Errorf("captureMul should increase with the coefficient")
+	if !(tq.CaptureMul(1) > tq.CaptureMul(0) && tq.CaptureMul(0) > tq.CaptureMul(-1)) {
+		t.Errorf("CaptureMul should increase with the coefficient")
 	}
-	if !(tq.restitutionMul(1) < tq.restitutionMul(0) && tq.restitutionMul(0) < tq.restitutionMul(-1)) {
-		t.Errorf("restitutionMul should decrease with the coefficient")
+	if !(tq.RestitutionMul(1) < tq.RestitutionMul(0) && tq.RestitutionMul(0) < tq.RestitutionMul(-1)) {
+		t.Errorf("RestitutionMul should decrease with the coefficient")
 	}
 }
 
@@ -857,12 +860,12 @@ func TestTouchQualityMultipliers(t *testing.T) {
 // team the most. This is "better touches for my team, the ball flies off the other team".
 func TestTeamChargeShapesContact(t *testing.T) {
 	const ballRadius = 10
-	s := DefaultPlayerTuning(500)
+	s := config.DefaultPlayerTuning()
 	tq := s.TouchQuality
 
 	// A head-on front contact; only the touch coefficient varies. Returns ball velocity after.
 	contact := func(impact, coef float64) geom.Vec {
-		p := NewPlayer(1, geom.NewVec(0, 0), DefaultPlayerTuning(500), &Team{Side: SideLeft})
+		p := NewPlayer(1, geom.NewVec(0, 0), config.DefaultPlayerTuning(), &Team{Side: SideLeft})
 		p.Facing = geom.NewVec(1, 0)
 		p.touchCoef = coef
 		b := NewBall(geom.NewVec(p.Radius()+ballRadius-0.5, 0), ballRadius)
@@ -898,17 +901,64 @@ func TestTeamChargeShapesContact(t *testing.T) {
 	}
 }
 
+// TestOffAxisCaptureInCone: the capture-speed threshold is FLAT at the front peak everywhere inside
+// the reliable capture cone, so a ball at a given speed that sticks dead-on ALSO sticks when it
+// arrives a touch off-centre (still in the cone) -- it does not start bouncing just for being
+// off-axis. Only PAST the cone does the threshold fall and the ball bounce. The ball always
+// approaches along the contact normal (so approachSpeed == speed); only the player's Facing rotates
+// to place the contact at a chosen position angle.
+func TestOffAxisCaptureInCone(t *testing.T) {
+	const ballRadius = 10
+	s := config.DefaultPlayerTuning()
+
+	// A speed comfortably inside the front peak (320) but ABOVE the old, angle-decayed in-cone
+	// threshold (which was ~283 at 25deg) -- so before the flat-in-cone fix this stuck dead-on but
+	// bounced at 25deg.
+	const speed = 300
+
+	contact := func(facingAngle float64) geom.Vec {
+		p := NewPlayer(1, geom.NewVec(0, 0), config.DefaultPlayerTuning(), &Team{Side: SideLeft})
+		p.Facing = geom.NewVec(math.Cos(facingAngle), math.Sin(facingAngle))
+		b := NewBall(geom.NewVec(p.Radius()+ballRadius-0.5, 0), ballRadius)
+		b.Velocity = geom.NewVec(-speed, 0) // straight at the player: approachSpeed == speed, normal = +x
+		handleBallToPlayerInteraction(b, p, 1.0/60)
+		return b.Velocity
+	}
+
+	coneEdge := s.CaptureCone(0, 0) // neutral reliable-capture cone half-angle (~40.2deg)
+	inCone := coneEdge * 0.62       // ~25deg: well inside the cone
+	pastCone := coneEdge + 0.7      // well past the cone, into the soft falloff
+
+	deadOn := contact(0)
+	off := contact(inCone)
+	past := contact(pastCone)
+
+	// Dead-on and in-cone off-axis are both CAPTURED: the inbound normal speed is absorbed, so the
+	// ball does not fly back out (vx stays small, nowhere near a bounce).
+	if deadOn.X > 40 {
+		t.Errorf("dead-on %.0f should be captured (vx ~ 0), got vx=%.1f", float64(speed), deadOn.X)
+	}
+	if off.X > 40 {
+		t.Errorf("off-axis-but-in-cone (%.0f deg) %.0f should be captured like dead-on (vx ~ 0), got vx=%.1f -- the in-cone capture threshold is not flat",
+			inCone*180/math.Pi, float64(speed), off.X)
+	}
+	// Past the cone the threshold has fallen below the speed, so the ball BOUNCES (flies back out, vx > 0).
+	if past.X < 60 {
+		t.Errorf("past the cone (%.0f deg) %.0f should bounce off (vx clearly positive), got vx=%.1f", pastCone*180/math.Pi, float64(speed), past.X)
+	}
+}
+
 // TestMaxShotNotCapturedByDebuffedOpponent: a full-power shot, dead-on, is NOT captured by a
 // debuffed opponent (the conceding team when the shooter holds the possession boost) -- it
 // deflects off rather than being caught, even if that opponent is fully trapping.
 func TestMaxShotNotCapturedByDebuffedOpponent(t *testing.T) {
 	const ballRadius = 10
-	s := DefaultPlayerTuning(500)
-	maxShot := s.Shoot.Eval(0) // full-charge front shot power (the ball's launch speed)
+	s := config.DefaultPlayerTuning()
+	maxShot := s.Shoot.Front // full-charge front shot power (the ball's launch speed)
 	coef := s.TouchQuality.OtherTeam
 
 	contact := func(trap float64) (geom.Vec, float64) {
-		p := NewPlayer(1, geom.NewVec(0, 0), DefaultPlayerTuning(500), &Team{Side: SideRight})
+		p := NewPlayer(1, geom.NewVec(0, 0), config.DefaultPlayerTuning(), &Team{Side: SideRight})
 		p.Facing = geom.NewVec(1, 0) // facing the incoming ball: dead-on, inside the cone
 		p.touchCoef = coef           // debuffed (the conceding team)
 		p.trapAura = trap            // trapAura is the effective trap strength the contact reads (trap=1 -> peak)
@@ -954,7 +1004,7 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 	// A holds the ball long enough to build the team charge to ~0.75 progress.
 	buildTo := 0.75
 	onlyToucher(m, a)
-	for i := 0; i < int(buildTo*teamBuildSeconds/dt); i++ {
+	for i := 0; i < int(buildTo*config.DefaultTuning().Possession.BuildSeconds/dt); i++ {
 		m.advanceTeamPossession(dt)
 	}
 	if m.possSide != SideLeft {
@@ -969,7 +1019,7 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 	// A passes: the ball is in flight (nobody touching) for part of the hold window, so the
 	// charge is held at strength and the progress is preserved, not decayed.
 	onlyToucher(m, nil)
-	for i := 0; i < int(0.5*teamHoldSeconds/dt); i++ {
+	for i := 0; i < int(0.5*config.DefaultTuning().Possession.HoldSeconds/dt); i++ {
 		m.advanceTeamPossession(dt)
 	}
 	if m.possSide != SideLeft {
@@ -985,7 +1035,7 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 	// Teammate B receives and CONTINUES the build: it should reach full in the remaining
 	// (1-built) of the build window, far short of a fresh full build (which would mean it
 	// restarted from zero).
-	fullBuildTicks := int(teamBuildSeconds / dt)
+	fullBuildTicks := int(config.DefaultTuning().Possession.BuildSeconds / dt)
 	onlyToucher(m, b)
 	ticks := 0
 	for m.possProgress < 1 && ticks < fullBuildTicks+5 {
@@ -996,7 +1046,7 @@ func TestTeamChargeInheritedAcrossPass(t *testing.T) {
 		t.Fatalf("the receiver never finished the inherited build (restarted from zero?)")
 	}
 	// The remaining build is ~(1-built); allow a little slack but it must be well under a full build.
-	if want := int((1 - built) * teamBuildSeconds / dt); ticks > want+10 {
+	if want := int((1 - built) * config.DefaultTuning().Possession.BuildSeconds / dt); ticks > want+10 {
 		t.Errorf("the receiver should finish the inherited build in ~%d ticks, took %d", want, ticks)
 	}
 	if m.possSide != SideLeft {
@@ -1078,18 +1128,18 @@ func TestTeamChargeExpiresAfterDecayWindow(t *testing.T) {
 	buildToFull(m, left, dt)
 	onlyToucher(m, nil) // release: ball in flight
 
-	for i := 0; i < int((teamHoldSeconds*0.8)/dt); i++ { // inside the hold
+	for i := 0; i < int((config.DefaultTuning().Possession.HoldSeconds*0.8)/dt); i++ { // inside the hold
 		m.advanceTeamPossession(dt)
 	}
 	if m.possSide != SideLeft || m.teamPossessionStrength(SideLeft) < 0.99 {
 		t.Errorf("charge should still be full within the %.1fs hold, side=%v strength=%.3f",
-			teamHoldSeconds, m.possSide, m.teamPossessionStrength(SideLeft))
+			config.DefaultTuning().Possession.HoldSeconds, m.possSide, m.teamPossessionStrength(SideLeft))
 	}
-	for i := 0; i < int((teamDecaySeconds+0.3)/dt); i++ { // run well past the full decay window
+	for i := 0; i < int((config.DefaultTuning().Possession.DecaySeconds+0.3)/dt); i++ { // run well past the full decay window
 		m.advanceTeamPossession(dt)
 	}
 	if m.possSide != SideNone {
-		t.Errorf("the charge should expire after %.1fs of no touch, side=%v", teamDecaySeconds, m.possSide)
+		t.Errorf("the charge should expire after %.1fs of no touch, side=%v", config.DefaultTuning().Possession.DecaySeconds, m.possSide)
 	}
 }
 
@@ -1120,7 +1170,7 @@ func TestTeamChargeDecaysAndRebuildsOnLateReception(t *testing.T) {
 
 	// Release and let the ball fly into the middle of the decay window -- partly decayed, not gone.
 	onlyToucher(m, nil)
-	mid := (teamHoldSeconds + teamDecaySeconds) / 2
+	mid := (config.DefaultTuning().Possession.HoldSeconds + config.DefaultTuning().Possession.DecaySeconds) / 2
 	for i := 0; i < int(mid/dt); i++ {
 		m.advanceTeamPossession(dt)
 	}
@@ -1136,12 +1186,12 @@ func TestTeamChargeDecaysAndRebuildsOnLateReception(t *testing.T) {
 	if math.Abs(b.touchCoef-decayed) > 0.03 {
 		t.Errorf("the receiver should take the ball at the decayed coefficient ~%.2f, got %.3f", decayed, b.touchCoef)
 	}
-	if want := teamBuildCurveInv(decayed); math.Abs(m.possProgress-want) > 0.05 {
+	if want := m.teamBuildCurveInv(decayed); math.Abs(m.possProgress-want) > 0.05 {
 		t.Errorf("the charge should re-base to progress ~%.3f (the decayed strength), got %.3f", want, m.possProgress)
 	}
 
 	// It rebuilds to full from the decayed point -- in well under a fresh full build.
-	freshTicks := int(teamBuildSeconds / dt)
+	freshTicks := int(config.DefaultTuning().Possession.BuildSeconds / dt)
 	ticks := 1
 	for m.possProgress < 1 && ticks < freshTicks+5 {
 		m.advanceTeamPossession(dt)

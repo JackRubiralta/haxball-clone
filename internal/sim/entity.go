@@ -3,6 +3,7 @@ package sim
 import (
 	"math"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 	"phootball/internal/physics"
 )
@@ -28,7 +29,7 @@ type Player struct {
 	Number       int // jersey number shown on the player
 	Team         *Team
 	Role         Role
-	Tuning       PlayerTuning
+	Tuning       config.PlayerTuning
 	Facing       geom.Vec
 	HomePosition geom.Vec
 	WantsKick    bool
@@ -43,6 +44,7 @@ type Player struct {
 	shootHeldPrev bool     // shoot-button state last tick, for release-edge detection
 	shootCanceled bool     // current shoot charge was canceled (by a trap-tap); suppress the release-edge kick
 	wantsPush     bool     // middle-click jab requested this tick (instant min-power radial push)
+	pushHeldPrev  bool     // push-button state last tick, for the jab's rising-edge detection (idempotent over the network)
 	pushFlash     float64  // 1->0 cosmetic timer set whenever a middle-click push is ATTEMPTED (even a whiff with no ball in reach); drives the push pulse animation over the player
 	pushFlashPos  geom.Vec // player position at the moment of the push -- anchors the pulse on the player
 	trapHeldPrev  bool     // trap-button state last tick, for the trap sound's rising edge
@@ -153,7 +155,7 @@ func NormShootCharge(seconds float64) float64 {
 }
 
 // NewPlayer creates a player from a stats preset.
-func NewPlayer(id int, position geom.Vec, stats PlayerTuning, team *Team) *Player {
+func NewPlayer(id int, position geom.Vec, stats config.PlayerTuning, team *Team) *Player {
 	body := physics.NewCircleBody(position, stats.Radius, stats.Friction, stats.Mass)
 	body.MaxSpeed = stats.MaxSpeed
 	return &Player{
@@ -164,6 +166,20 @@ func NewPlayer(id int, position geom.Vec, stats PlayerTuning, team *Team) *Playe
 		Facing:       geom.NewVec(1, 0),
 		HomePosition: position,
 	}
+}
+
+// SetTuning replaces the player's tuning and re-syncs the body fields DERIVED from it
+// (friction, mass->InvMass, radius, max speed), so a re-stamp of the match's configured
+// tuning (see Match.applyConfig) actually reaches the physics body. Mirrors how applyConfig
+// restamps the ball. Mass is guarded against a zero divide.
+func (p *Player) SetTuning(t config.PlayerTuning) {
+	p.Tuning = t
+	p.Body.Friction = t.Friction
+	if t.Mass > 0 {
+		p.Body.InvMass = 1 / t.Mass
+	}
+	p.Body.SetRadius(t.Radius)
+	p.Body.MaxSpeed = t.MaxSpeed
 }
 
 // Move sets the player's acceleration from a movement intent: direction is the

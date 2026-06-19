@@ -24,7 +24,7 @@ func TestBuildMatchSizedCounts(t *testing.T) {
 		t.Errorf("total players = %d, want 5", len(m.Players))
 	}
 	for _, tm := range m.Teams {
-		if tm.Players[0].Role != RoleGoalkeeper {
+		if tm.Players[0].Role != RoleKeeper {
 			t.Errorf("%v P0 role = %v, want goalkeeper", tm.Side, tm.Players[0].Role)
 		}
 		if tm.Players[0].Number != 1 {

@@ -27,7 +27,7 @@ func TestPassPowerSoft(t *testing.T) {
 		}
 		// Softer than the old distance-blind power (dc = clamp(dist/fullRange,.15,.8)).
 		oldDC := clampFloat(dist/ai.tune.fullRange, 0.15, 0.8)
-		oldPower := me.Tuning.Shoot.Eval(0) * (me.Tuning.MinShootFactor + (1-me.Tuning.MinShootFactor)*oldDC)
+		oldPower := me.Tuning.Shoot.Front * (me.Tuning.MinShootFactor + (1-me.Tuning.MinShootFactor)*oldDC)
 		if v0 >= oldPower {
 			t.Errorf("dist %.0f: calibrated pass speed %.0f not softer than old %.0f", dist, v0, oldPower)
 		}
@@ -102,7 +102,7 @@ func TestKeeperOffLine(t *testing.T) {
 	field := sim.NewStandardField()
 	m := sim.BuildMatchFromConfig(field, 3, config.Default())
 	keeper := m.Players[0] // left team keeper
-	if keeper.Role != sim.RoleGoalkeeper {
+	if keeper.Role != sim.RoleKeeper {
 		t.Fatalf("player 0 is not the keeper")
 	}
 	ai := NewAISkill(keeper.PlayerID, SkillHard)

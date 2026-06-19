@@ -13,25 +13,27 @@ import "phootball/internal/geom"
 //	WASD            -> Move + Throttle
 //	cursor          -> Aim + AimFromCursor=true (face toward it at TurnRate)
 //	LMB held        -> ShootHeld (charge while held, fire on release)
-//	RMB held        -> Trap
-//	RMB rising edge -> CancelCharge (and engages the trap)
-//	MMB (rising)    -> Push (the instant jab)
+//	RMB held        -> Trap (and, while LMB is also held, CancelCharge)
+//	MMB held        -> Push (the sim fires the jab on the rising edge it reconstructs)
 type Intent struct {
 	Move      geom.Vec // desired movement direction (need not be unit; Move normalises it)
 	Throttle  float64  // [0,1] how hard to accelerate along Move
 	Aim       geom.Vec // world point to face (cursor for a human, ball or goal for AI)
 	ShootHeld bool     // shoot button currently held; the sim charges while held and fires on release
 	Trap      bool     // trap ("good touch") button currently held; the sim builds trap charge while held
-	// CancelCharge drops an in-progress shot charge this tick: the charge is cleared and the
-	// player will NOT fire when the shoot button is released. It is a human-reachable signal --
-	// a human raises it on the right-click rising edge -- and the AI uses it too, exactly as a
-	// human can: to abort a stuck/overtime charge, and when a trap or push takes over a live
-	// charge (see control/abilities.go, control/push.go, control/ai.go enforceAbilityExclusivity).
+	// CancelCharge drops an in-progress shot charge this tick: the charge is cleared (and latched
+	// canceled) so the player will NOT fire when the shoot button is released. It is a human-reachable
+	// signal -- a human raises it as a LEVEL while a higher-priority ability (trap or push) is held
+	// together with shoot -- and the AI uses it too, exactly as a human can: to abort a stuck/overtime
+	// charge, and when a trap or push takes over a live charge (see control/abilities.go,
+	// control/push.go, control/ai.go enforceAbilityExclusivity).
 	CancelCharge bool
-	// Push is the middle-click jab: an INSTANT, minimum-power radial push of the ball that
-	// reaches any ball within the PULL radius (not just touching) and fires equally in every
-	// direction (no aim assist, no charge). A human sets it on the rising edge of middle-click;
-	// the AI sets it too (its keeper/carrier jab-away move -- see control/push.go).
+	// Push is the middle-click jab: an INSTANT, minimum-power radial push of the ball that reaches
+	// any ball within the PULL radius (not just touching) and fires equally in every direction (no
+	// aim assist, no charge). It is a LEVEL signal (true while middle is held); the sim fires the jab
+	// once on the rising edge it reconstructs (Player.pushHeldPrev) -- so it is idempotent when an
+	// intent is re-applied across network ticks. The AI sets it too (its keeper/carrier jab-away
+	// move -- a one-tick pulse gated by a kick cooldown; see control/push.go).
 	Push bool
 	// AimFromCursor marks Aim as a raw human cursor target, so the sim turns the facing toward
 	// it at the player's TurnRate (the disk can't instantly snap to the cursor). The AI leaves it

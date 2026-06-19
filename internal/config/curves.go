@@ -1,8 +1,4 @@
-// Package sim is the headless gameplay layer: entities, per-player stats, the
-// ball/dribble/shoot rules, scoring, and the deterministic Match.Step that advances
-// one tick. It imports physics and geom but never Ebiten, so the authoritative
-// server runs the same simulation as the local client.
-package sim
+package config
 
 import "math"
 
@@ -12,6 +8,17 @@ import "math"
 // the front pull, shot power, ...). startValue is returned at startAngle and endValue
 // at endAngle; the named curves differ only in how they move between the two.
 type AngleCurve func(startValue, endValue, startAngle, endAngle, angle float64) float64
+
+// CurveSpec holds the front (0 rad) and back (pi rad) endpoints of an angle-dependent
+// quantity (restitution, the front pull, shot power, ...). The curve SHAPE that interpolates
+// between the endpoints is FIXED per quantity and hardcoded in the PlayerTuning evaluator
+// methods (RestitutionAt, CaptureSpeedAt, CenterPullAt, StickinessAt, ControlAt) -- it is not
+// stored here, so a CurveSpec is plain data (no function value) and the shape is never a
+// tunable knob. Only the two endpoints are editable.
+type CurveSpec struct {
+	Front float64
+	Back  float64
+}
 
 // ExponentialSteepness controls how sharply ExponentialCurve bends.
 const ExponentialSteepness = 3.0

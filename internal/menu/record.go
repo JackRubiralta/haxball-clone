@@ -9,8 +9,16 @@ import (
 	"phootball/internal/sim"
 )
 
-// statsDir is where finished-match JSON records are written (one file per game).
-const statsDir = "phootball-matches"
+// matchesDir is where finished-match JSON records are written (one file per game): a
+// user-writable subdir of the app config dir (<user config>/phootball/matches), falling back to
+// a CWD-relative "phootball-matches" only if the user dir can't be resolved. A CWD-relative path
+// breaks a distributed binary whose working directory may be read-only (e.g. Program Files).
+func matchesDir() string {
+	if dir, ok := appConfigDir(); ok {
+		return filepath.Join(dir, "matches")
+	}
+	return "phootball-matches"
+}
 
 // writeMatchRecord persists a finished match's stats + play-by-play as JSON. The filename is
 // derived from the seed and final score (never the wall clock, so a replay of the same match
@@ -21,13 +29,14 @@ func writeMatchRecord(m *sim.Match) {
 		return
 	}
 	mr := m.Recorder().MatchRecord(m)
-	if err := os.MkdirAll(statsDir, 0o755); err != nil {
-		slog.Warn("stats: could not create output dir", "dir", statsDir, "err", err)
+	dir := matchesDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		slog.Warn("stats: could not create output dir", "dir", dir, "err", err)
 		return
 	}
 	name := "match-seed" + strconv.FormatInt(mr.Seed, 10) + "-" +
 		strconv.Itoa(mr.FinalScore[0]) + "v" + strconv.Itoa(mr.FinalScore[1]) + ".json"
-	path := filepath.Join(statsDir, name)
+	path := filepath.Join(dir, name)
 	f, err := os.Create(path)
 	if err != nil {
 		slog.Warn("stats: could not create record file", "path", path, "err", err)

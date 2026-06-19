@@ -123,6 +123,13 @@ func (m *Match) applyConfig(cfg config.Config) {
 		}
 		m.Ball.SetRadius(cfg.Tuning.BallRadius)
 	}
+	// Make the tuning authoritative over every player the same way: stamp the configured
+	// player profile (one shared profile for all roles) and re-sync the body fields it
+	// derives. Idempotent -- for the default config this re-applies the values the players
+	// were already built with, so the default match is unchanged.
+	for _, p := range m.Players {
+		p.SetTuning(cfg.Tuning.Player)
+	}
 }
 
 // Step advances the match by one fixed timestep, applying each player's intent.
@@ -274,9 +281,13 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	}
 	p.shootHeldPrev = in.ShootHeld
 
-	// Middle-click jab: latch the instant push request for the kick phase (it fires once on the
-	// press edge -- the human sets Push only on the rising edge of middle-click).
-	p.wantsPush = in.Push
+	// Middle-click jab: fire once on the RISING edge of the (held) push signal, reconstructed here
+	// in the sim -- exactly like the shoot release-edge above. Detecting the edge authoritatively
+	// (rather than trusting a one-frame pulse from the input layer) makes the jab idempotent when an
+	// intent is re-applied across several server ticks, so the push works the same over the network
+	// as it does locally. (Push is a level signal: in.Push is true for every tick the button is held.)
+	p.wantsPush = in.Push && !p.pushHeldPrev
+	p.pushHeldPrev = in.Push
 
 	// Trap charge: build toward 1 while held, decay otherwise. (No sound on the trap/right-click
 	// rising edge -- the trap is silent by request.)
@@ -330,53 +341,39 @@ func (m *Match) teamFor(side Side) *Team {
 	return m.Teams[1]
 }
 
-// Team possession-charge timing. The charge builds to full over teamBuildSeconds of held
-// ball, then after a release (nobody touching) HOLDS at its built strength for
-// teamHoldSeconds and DECAYS to zero by teamDecaySeconds.
-const (
-	teamBuildSeconds   = 1.5 // seconds of team possession to build the charge to full
-	teamHoldSeconds    = 1.5 // seconds the charge holds at full strength after release (no touch)
-	teamDecaySeconds   = 3.5 // seconds until the charge has fully decayed after release (no touch)
-	teamBuildExponent  = 3.0 // build-curve exponent: higher = stays low for most of the build, spiking near the end
-	teamDrainPerSecond = 1.0 // owner buff-suppression (possBuffDrain) gained per second while the carrier is contested (and recovered per second otherwise); the conceding team's debuff is never drained
-
-	// Per-player boost drain: while an opponent is body-touching a player on the BOOSTED team,
-	// that ONE player's share of the team boost erodes (its published touch coefficient is scaled
-	// toward 0) -- the team charge and its team-mates are untouched. It recovers once the contact
-	// ends. So an opponent marking you body-to-body drains YOUR clean touch even off the ball.
-	boostContactDrainPerSecond   = 2.0 // fraction of a player's own boost drained per second while an opponent is touching it
-	boostContactRecoverPerSecond = 1.5 // fraction recovered per second once no opponent is touching it
-)
+// The team possession-charge timings/rates now live in config.Tuning.Possession (read off
+// m.Tuning each tick, so they can be tuned per match); config.DefaultTuning() reproduces the
+// original constants exactly. The charge builds to full over BuildSeconds of held ball, then
+// after a release (nobody touching) HOLDS for HoldSeconds and DECAYS to zero by DecaySeconds.
 
 // teamBuildCurve maps build progress (0..1, the held-time fraction) to charge strength on a
 // strongly ACCELERATING ramp -- it stays LOW for the majority of the build and shoots up only
-// in the last portion (the user's "lower for most of the start, increases a lot at the end").
-// strength = progress^teamBuildExponent (cubic), so full strength is reached only near the end
-// of the (deliberately long) build window.
-func teamBuildCurve(progress float64) float64 {
-	return math.Pow(clampUnit(progress), teamBuildExponent)
+// in the last portion. strength = progress^BuildExponent (cubic by default), so full strength
+// is reached only near the end of the (deliberately long) build window.
+func (m *Match) teamBuildCurve(progress float64) float64 {
+	return math.Pow(clampUnit(progress), m.Tuning.Possession.BuildExponent)
 }
 
 // teamBuildCurveInv inverts teamBuildCurve: the build progress that yields a given charge
 // strength. Used when a teammate receives a (possibly decayed) charge -- the decayed strength
 // is baked back into the progress so the build resumes from that point, not from full.
-func teamBuildCurveInv(strength float64) float64 {
-	return math.Pow(clampUnit(strength), 1.0/teamBuildExponent)
+func (m *Match) teamBuildCurveInv(strength float64) float64 {
+	return math.Pow(clampUnit(strength), 1.0/m.Tuning.Possession.BuildExponent)
 }
 
 // teamCoastEnvelope maps seconds-since-last-touch to a 0..1 fade applied after a release: full
-// (1) through teamHoldSeconds, then a smooth CONVEX decay to 0 by teamDecaySeconds -- a gentle
-// fall at first that speeds up toward the end (the user's "slow rate that speeds up at the
-// end"). 1 - x^2 over the decay window: flat where x=0, steepening to its fastest at x=1. The
-// window is long so a released charge lingers and fades slowly.
-func teamCoastEnvelope(coast float64) float64 {
+// (1) through HoldSeconds, then a smooth CONVEX decay to 0 by DecaySeconds -- a gentle fall at
+// first that speeds up toward the end. 1 - x^2 over the decay window: flat where x=0, steepening
+// to its fastest at x=1. The window is long so a released charge lingers and fades slowly.
+func (m *Match) teamCoastEnvelope(coast float64) float64 {
+	hold, decay := m.Tuning.Possession.HoldSeconds, m.Tuning.Possession.DecaySeconds
 	switch {
-	case coast <= teamHoldSeconds:
+	case coast <= hold:
 		return 1
-	case coast >= teamDecaySeconds:
+	case coast >= decay:
 		return 0
 	default:
-		x := (coast - teamHoldSeconds) / (teamDecaySeconds - teamHoldSeconds) // 0..1 across the decay
+		x := (coast - hold) / (decay - hold) // 0..1 across the decay
 		return 1 - x*x
 	}
 }
@@ -388,7 +385,7 @@ func (m *Match) teamPossessionStrength(side Side) float64 {
 	if side == SideNone || side != m.possSide {
 		return 0
 	}
-	return teamBuildCurve(m.possProgress) * teamCoastEnvelope(m.possCoast)
+	return m.teamBuildCurve(m.possProgress) * m.teamCoastEnvelope(m.possCoast)
 }
 
 // PossessionCharge returns side's current possession-charge strength (0..1), for the HUD /
@@ -582,8 +579,9 @@ func (m *Match) updateBallPossessor(deltaTime float64) {
 // the owning team builds (and resets its coast), a different team takes over with a fresh
 // build, both teams at once is contested (reset), and nobody touching coasts (hold then decay).
 func (m *Match) advanceTeamPossession(deltaTime float64) {
-	// Who has the ball within reach (touching, or in a player's trap-extended pull radius)? These
-	// gate both the publish-step boost drain/recovery and the charge update below, so compute up front.
+	// Who has the ball within reach (touching, or in a player's base possession reach -- NOT
+	// trap-extended; see possessionReach)? These gate both the publish-step boost drain/recovery and
+	// the charge update below, so compute up front.
 	left, right := m.touchingSides()
 	ownerTouches := (m.possSide == SideLeft && left) || (m.possSide == SideRight && right)
 	ownerNearBall := m.possSide != SideNone && (ownerTouches || m.ballInTeamPullRange(m.possSide))
@@ -614,9 +612,9 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 		// owning team still has the ball within reach (ownerNearBall) -- once the ball is released and
 		// loose/in-flight, a drained boost is FROZEN until a team-mate regains the ball.
 		if boosted && !m.inPullRange(p) && m.pressuredByOpponent(p) {
-			p.boostDrain = clampUnit(p.boostDrain + boostContactDrainPerSecond*deltaTime)
+			p.boostDrain = clampUnit(p.boostDrain + m.Tuning.Possession.BoostContactDrainPerSecond*deltaTime)
 		} else if ownerNearBall {
-			p.boostDrain = clampUnit(p.boostDrain - boostContactRecoverPerSecond*deltaTime)
+			p.boostDrain = clampUnit(p.boostDrain - m.Tuning.Possession.BoostContactRecoverPerSecond*deltaTime)
 		}
 		if boosted {
 			// Scale the owner's BUFF by both the team-wide contest suppression (possBuffDrain, when
@@ -659,9 +657,9 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 	// while it is loose and only heals once a team-mate regains it -- and FREEZES on a clean release
 	// the defender never touched. This scales only the owner's published buff, never the debuff.
 	if contested || (m.possContestLatched && !ownerNearBall) {
-		m.possBuffDrain = clampUnit(m.possBuffDrain + teamDrainPerSecond*deltaTime)
+		m.possBuffDrain = clampUnit(m.possBuffDrain + m.Tuning.Possession.DrainPerSecond*deltaTime)
 	} else if ownerNearBall {
-		m.possBuffDrain = clampUnit(m.possBuffDrain - teamDrainPerSecond*deltaTime)
+		m.possBuffDrain = clampUnit(m.possBuffDrain - m.Tuning.Possession.DrainPerSecond*deltaTime)
 	}
 
 	// Debuff relief mirrors the buff: it DRAINS while a defender contests the ball OR the ball is
@@ -672,9 +670,9 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 	// team is contesting or chasing a loose touched ball. Ownership hands over once it has fully
 	// drained with a defender alone on the ball (below).
 	if defenderNearBall || (m.possContestLatched && !ownerNearBall) {
-		m.possDebuffDrain = clampUnit(m.possDebuffDrain + teamDrainPerSecond*deltaTime)
+		m.possDebuffDrain = clampUnit(m.possDebuffDrain + m.Tuning.Possession.DrainPerSecond*deltaTime)
 	} else if ownerNearBall {
-		m.possDebuffDrain = clampUnit(m.possDebuffDrain - teamDrainPerSecond*deltaTime)
+		m.possDebuffDrain = clampUnit(m.possDebuffDrain - m.Tuning.Possession.DrainPerSecond*deltaTime)
 	}
 
 	switch {
@@ -687,7 +685,7 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 				toucher = SideRight
 			}
 			m.possSide = toucher
-			m.possProgress = clampUnit(deltaTime / teamBuildSeconds)
+			m.possProgress = clampUnit(deltaTime / m.Tuning.Possession.BuildSeconds)
 			m.possCoast = 0
 			m.possBuffDrain = 0
 			m.possDebuffDrain = 0
@@ -700,7 +698,7 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 		// debuff is fully drained, a defender alone on the ball falls through to the contested case
 		// below and keeps draining -- so ownership flips smoothly rather than snapping on first touch.
 		m.possSide = m.possSide.Opponent()
-		m.possProgress = clampUnit(deltaTime / teamBuildSeconds)
+		m.possProgress = clampUnit(deltaTime / m.Tuning.Possession.BuildSeconds)
 		m.possCoast = 0
 		m.possBuffDrain = 0
 		m.possDebuffDrain = 0
@@ -715,16 +713,16 @@ func (m *Match) advanceTeamPossession(deltaTime float64) {
 		// the charge had begun to decay -- bake that into the progress so a receiving teammate
 		// inherits the CURRENT (decayed) strength and rebuilds from there, not from full.
 		if m.possCoast > 0 {
-			m.possProgress = teamBuildCurveInv(teamBuildCurve(m.possProgress) * teamCoastEnvelope(m.possCoast))
+			m.possProgress = m.teamBuildCurveInv(m.teamBuildCurve(m.possProgress) * m.teamCoastEnvelope(m.possCoast))
 		}
-		m.possProgress = clampUnit(m.possProgress + deltaTime/teamBuildSeconds)
+		m.possProgress = clampUnit(m.possProgress + deltaTime/m.Tuning.Possession.BuildSeconds)
 		m.possCoast = 0
 	default:
 		// Nobody touching and no contest: hold then decay (progress preserved until a touch bakes
 		// in the decay).
 		if m.possSide != SideNone {
 			m.possCoast += deltaTime
-			if m.possCoast >= teamDecaySeconds {
+			if m.possCoast >= m.Tuning.Possession.DecaySeconds {
 				m.resetTeamPossession()
 			}
 		}
@@ -1062,7 +1060,7 @@ func BuildSolo(field *Field) *Match {
 	}
 
 	start := geom.NewVec(field.Min.X+field.Width()*0.25, field.CenterSpot.Y)
-	p := NewPlayer(0, start, DefaultPlayerTuning(500), left)
+	p := NewPlayer(0, start, config.DefaultPlayerTuning(), left)
 	p.Role = RoleMidfielder
 	p.Number = 10
 	left.Players = []*Player{p}
@@ -1085,10 +1083,10 @@ func BuildDuo(field *Field) *Match {
 	}
 
 	c := field.CenterSpot
-	p0 := NewPlayer(0, geom.NewVec(c.X-120, c.Y), DefaultPlayerTuning(500), left)
+	p0 := NewPlayer(0, geom.NewVec(c.X-120, c.Y), config.DefaultPlayerTuning(), left)
 	p0.Role = RoleMidfielder
 	p0.Number = 1
-	p1 := NewPlayer(1, geom.NewVec(c.X+120, c.Y), DefaultPlayerTuning(500), right)
+	p1 := NewPlayer(1, geom.NewVec(c.X+120, c.Y), config.DefaultPlayerTuning(), right)
 	p1.Role = RoleMidfielder
 	p1.Number = 2
 	p1.Facing = geom.NewVec(-1, 0)
@@ -1119,22 +1117,22 @@ func outfieldLines(k int) []formationLine {
 	case 0:
 		return nil
 	case 1: // GK + lone striker
-		return []formationLine{{RoleStriker, 1, 0.78}}
+		return []formationLine{{RoleAttacker, 1, 0.78}}
 	case 2: // 1-0-1
-		return []formationLine{{RoleMidfielder, 1, 0.45}, {RoleStriker, 1, 0.82}}
+		return []formationLine{{RoleDefender, 1, 0.45}, {RoleAttacker, 1, 0.82}}
 	case 3: // 1-1-1
-		return []formationLine{{RoleMidfielder, 1, 0.35}, {RoleMidfielder, 1, 0.6}, {RoleStriker, 1, 0.85}}
+		return []formationLine{{RoleDefender, 1, 0.35}, {RoleMidfielder, 1, 0.6}, {RoleAttacker, 1, 0.85}}
 	case 4: // 2-1-1
-		return []formationLine{{RoleMidfielder, 2, 0.35}, {RoleMidfielder, 1, 0.62}, {RoleStriker, 1, 0.86}}
+		return []formationLine{{RoleDefender, 2, 0.35}, {RoleMidfielder, 1, 0.62}, {RoleAttacker, 1, 0.86}}
 	case 5: // 2-2-1
-		return []formationLine{{RoleMidfielder, 2, 0.35}, {RoleMidfielder, 2, 0.62}, {RoleStriker, 1, 0.86}}
+		return []formationLine{{RoleDefender, 2, 0.35}, {RoleMidfielder, 2, 0.62}, {RoleAttacker, 1, 0.86}}
 	case 6: // 2-3-1
-		return []formationLine{{RoleMidfielder, 2, 0.32}, {RoleMidfielder, 3, 0.58}, {RoleStriker, 1, 0.86}}
+		return []formationLine{{RoleDefender, 2, 0.32}, {RoleMidfielder, 3, 0.58}, {RoleAttacker, 1, 0.86}}
 	default: // 7+ : 3 at the back, the surplus in midfield, 1 up top
 		fwd := 1
 		def := 3
 		mid := k - def - fwd
-		return []formationLine{{RoleMidfielder, def, 0.3}, {RoleMidfielder, mid, 0.56}, {RoleStriker, fwd, 0.86}}
+		return []formationLine{{RoleDefender, def, 0.3}, {RoleMidfielder, mid, 0.56}, {RoleAttacker, fwd, 0.86}}
 	}
 }
 
@@ -1175,7 +1173,7 @@ func buildFormation(f *Field, team *Team, n int, id *int) []*Player {
 	// always index 0 / number 1, parked just off its own goal line.
 	k := n
 	if n >= 2 {
-		add(RoleGoalkeeper, geom.NewVec(ownX+dir*40, center.Y))
+		add(RoleKeeper, geom.NewVec(ownX+dir*40, center.Y))
 		k = n - 1
 	}
 

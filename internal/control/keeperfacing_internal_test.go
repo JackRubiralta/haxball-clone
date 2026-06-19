@@ -17,7 +17,7 @@ func TestKeeperFacingRateLimited(t *testing.T) {
 
 	var gk *sim.Player
 	for _, p := range m.Players {
-		if p.Role == sim.RoleGoalkeeper {
+		if p.Role == sim.RoleKeeper {
 			gk = p
 			break
 		}

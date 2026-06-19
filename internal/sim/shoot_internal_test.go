@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 )
 
@@ -12,10 +13,10 @@ import (
 // equal in every direction; the shot fires only in the front 180deg arc, at full power within the
 // inner +-30deg cone and tapering to 0 toward the +-90deg edges.
 func TestPushAndFrontHemisphereShot(t *testing.T) {
-	s := fieldPlayerTuning()
+	s := config.DefaultPlayerTuning()
 	const ballR = 10.0
 	d0 := s.Radius + ballR // distance at zero gap
-	pushPower := s.Shoot.Eval(0) * pushPowerFactor
+	pushPower := s.Shoot.Front * pushPowerFactor
 
 	newP := func() *Player {
 		p := NewPlayer(0, geom.NewVec(0, 0), s, nil)
@@ -36,8 +37,8 @@ func TestPushAndFrontHemisphereShot(t *testing.T) {
 		t.Errorf("push power should be the push power %.1f, got %.1f", pushPower, got)
 	}
 	// The push fires at 70% of a full-charge front shot.
-	if math.Abs(pushPower-0.7*s.Shoot.Eval(0)) > 1e-6 {
-		t.Errorf("push should be ~70%% of a full front shot (%.1f), got %.1f", 0.7*s.Shoot.Eval(0), pushPower)
+	if math.Abs(pushPower-0.7*s.Shoot.Front) > 1e-6 {
+		t.Errorf("push should be ~70%% of a full front shot (%.1f), got %.1f", 0.7*s.Shoot.Front, pushPower)
 	}
 	// A held shot must NOT fire there -- it still needs the ball touching.
 	if shoot(newP(), NewBall(geom.NewVec(d0+gap, 0), ballR)) {
@@ -91,5 +92,37 @@ func TestPushAndFrontHemisphereShot(t *testing.T) {
 	}
 	if bb.Velocity != (geom.Vec{}) {
 		t.Errorf("a disallowed back shot must not move the ball, got %v", bb.Velocity)
+	}
+}
+
+// TestPushLatchRisingEdge verifies the middle-click push fires only on the RISING edge of the
+// (held) push signal, reconstructed in the sim -- so re-applying the same intent across ticks (as
+// the authoritative server does) jabs exactly once, and a release re-arms it. This is the fix that
+// makes the push work in multiplayer, treating it like the other held abilities.
+func TestPushLatchRisingEdge(t *testing.T) {
+	s := config.DefaultPlayerTuning()
+	p := NewPlayer(0, geom.NewVec(0, 0), s, nil)
+	p.Facing = geom.NewVec(1, 0)
+	m := &Match{Ball: NewBall(geom.NewVec(1e6, 1e6), 10)} // ball far away: no possession penalty / nil deref
+	dt := 1.0 / 60.0
+	held := Intent{Push: true}
+
+	m.applyIntent(p, held, dt)
+	if !p.wantsPush {
+		t.Fatal("the first held-push tick should latch the jab (rising edge)")
+	}
+	p.wantsPush = false // the kick phase consumes wantsPush each tick
+
+	for i := 0; i < 5; i++ {
+		m.applyIntent(p, held, dt)
+		if p.wantsPush {
+			t.Fatalf("a held push must not re-latch on continued-hold tick %d", i)
+		}
+	}
+
+	m.applyIntent(p, Intent{Push: false}, dt) // release re-arms
+	m.applyIntent(p, held, dt)
+	if !p.wantsPush {
+		t.Fatal("a fresh press after a release should latch the jab again")
 	}
 }

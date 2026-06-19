@@ -55,7 +55,7 @@ func clampZoneRules(p perception, v geom.Vec) geom.Vec {
 			v.X = clampFloat(v.X, line, f.Max().X)
 		}
 	}
-	if r.GoalAreaMaxPlayers > 0 && p.me.Role() != sim.RoleGoalkeeper {
+	if r.GoalAreaMaxPlayers > 0 && p.me.Role() != sim.RoleKeeper {
 		v = keepOutOfGoalArea(p, v)
 	}
 	return v

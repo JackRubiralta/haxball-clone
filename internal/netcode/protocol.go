@@ -26,6 +26,7 @@ const (
 // EntityState is one renderable entity in a snapshot.
 type EntityState struct {
 	Kind        EntityKind
+	PlayerID    int // players only; lets a client mark which entity is "me"
 	Position    geom.Vec
 	Facing      geom.Vec
 	Radius      float64
@@ -60,6 +61,7 @@ type Snapshot struct {
 	ClockSeconds float64
 	PhaseLabel   string
 	Finished     bool
+	Paused       bool   // the host paused the match (set by the server, not SnapshotOf)
 	WinnerText   string // result message when finished
 	GoalText     string // scorer/assist/own-goal message during a celebration
 
@@ -83,39 +85,47 @@ type Snapshot struct {
 	Events []sim.Event
 }
 
-// ProtoVersion is the wire-protocol version. The client stamps it on its first message and
-// the server rejects a mismatch, so an old client cannot silently desync a new server.
-const ProtoVersion = 1
+// ProtoVersion is the wire-protocol version. The client stamps it on its first message and the
+// server rejects a mismatch, so an old client cannot silently desync a new server. v2 added the
+// lobby/control messages (ClientFrame, MsgLobby/MsgReject/MsgHostClosed/MsgPong) and the Hello
+// IsHost/SessionToken fields. Hello and Reject keep a STABLE gob shape across versions so a
+// mismatched peer can still decode the rejection.
+const ProtoVersion = 2
 
-// MsgKind tags an Envelope (the server->client message) as exactly one of its variants.
+// MsgKind tags an Envelope (the server->client message) as exactly one of its variants. NEVER
+// reorder/remove MsgHello/MsgSnapshot -- append only (gob has no Register here; wire stability
+// depends on stable shapes).
 type MsgKind uint8
 
 const (
-	MsgHello    MsgKind = iota // the once-per-connection handshake
-	MsgSnapshot                // a per-tick state broadcast
+	MsgHello      MsgKind = iota // the once-per-connection handshake
+	MsgSnapshot                  // a per-tick state broadcast
+	MsgReject                    // server refuses the connection (full / version / kicked)
+	MsgLobby                     // pre-match lobby roster broadcast
+	MsgHostClosed                // the host deliberately ended the match
+	MsgPong                      // keepalive reply, for round-trip latency
 )
 
-// Hello is the server's handshake: it tells a freshly connected client the protocol version
-// and which player slot the server assigned it (so the client knows which entity is "me" --
-// previously impossible).
+// Hello is the server's handshake: protocol version, the assigned player slot (-1 = spectator),
+// whether this connection is the host, and a per-connection reconnect token. The token is sent
+// ONLY here (never in any roster broadcast). Fields are append-only for gob stability.
 type Hello struct {
 	ProtoVersion     int
 	AssignedPlayerID int
+	IsHost           bool
+	SessionToken     string // crypto-random; lets this client reclaim its slot within the grace window
 }
 
-// Envelope is the server->client message: a tagged union with exactly one of Hello/Snapshot
-// set per Kind. Wrapping lets the same stream carry the handshake and the per-tick snapshots.
+// Envelope is the server->client message: a tagged union with exactly one variant set per Kind.
+// New variants are append-only concrete pointer fields (no gob.Register in this package).
 type Envelope struct {
-	Kind     MsgKind
-	Hello    *Hello    `json:",omitempty"`
-	Snapshot *Snapshot `json:",omitempty"`
-}
-
-// ClientMsg is what a client sends the server each tick. ProtoVersion is stamped on every
-// message; the server validates it on the first one and rejects a version mismatch.
-type ClientMsg struct {
-	ProtoVersion int
-	Intent       sim.Intent
+	Kind       MsgKind
+	Hello      *Hello      `json:",omitempty"`
+	Snapshot   *Snapshot   `json:",omitempty"`
+	Reject     *Reject     `json:",omitempty"`
+	Lobby      *LobbyState `json:",omitempty"`
+	HostClosed *HostClosed `json:",omitempty"`
+	Pong       *Pong       `json:",omitempty"`
 }
 
 // SnapshotOf projects a match into a wire snapshot.
@@ -168,6 +178,7 @@ func SnapshotOf(m *sim.Match) Snapshot {
 	for _, p := range m.Players {
 		s.Entities = append(s.Entities, EntityState{
 			Kind:        KindPlayer,
+			PlayerID:    p.PlayerID,
 			Position:    p.Position,
 			Facing:      p.Facing,
 			Radius:      p.Radius(),

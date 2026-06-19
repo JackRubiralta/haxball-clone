@@ -27,6 +27,51 @@ func (a *AI) steer(p perception, target geom.Vec, arrive bool) (geom.Vec, float6
 	return a.avoid(p, d), throttle
 }
 
+// steerReceive steers a receiver to run ALONG the incoming ball's line of travel -- moving WITH
+// the ball so the RELATIVE impact (approachSpeed = ballVel-playerVel along the contact normal) is
+// low and the ball sticks -- instead of running across or head-on into it (the observed bug: a
+// scrub showed receivers reaching the ball mis-aligned, alignment ~0.5 or even negative, which
+// spikes the relative impact and either bounces the ball off or lets it sail past). The direction
+// blends a sideways pull ONTO the ball's line (scaled by how far off it is, capped by
+// receiveOntoMax so a with-the-ball forward component always remains) with running along the
+// ball's direction. The throttle stays full for a fast ball (a race -- run flat out in its
+// direction to minimise the relative speed) but eases to the ball's pace for a ball slower than
+// the receiver, so it doesn't OUTRUN a gentle ball. Used ONLY for an uncontested incoming pass
+// (receivingPass); a genuine 50/50 still sprints flat-out at the intercept via steer. Reuses avoid.
+func (a *AI) steerReceive(p perception, mp geom.Vec) (geom.Vec, float64) {
+	me := p.me.Position()
+	toMp := mp.Sub(me)
+	dist := geom.Norm(toMp)
+	if dist < a.tune.arriveRadius {
+		return geom.Vec{}, 0
+	}
+	ballDir := geom.Unit(p.ballVel)
+	maxSpeed := p.me.Tuning().MaxSpeed
+	if ballDir == (geom.Vec{}) || maxSpeed <= 0 {
+		return a.avoid(p, toMp), 1 // no ball direction to align to: fall back to the meeting point
+	}
+	// Perpendicular offset from the ball's line (points from the line to the receiver).
+	rel := me.Sub(p.ball)
+	perp := rel.Sub(ballDir.Scale(geom.Dot(rel, ballDir)))
+	offLine := geom.Norm(perp)
+	onto := geom.Vec{}
+	if offLine > 1e-6 {
+		onto = perp.Scale(-1 / offLine) // unit vector back toward the line
+	}
+	w := clampFloat(offLine/a.tune.receiveSlowRadius, 0, a.tune.receiveOntoMax)
+	dir := geom.Unit(ballDir.Scale(1 - w).Add(onto.Scale(w)))
+	if dir == (geom.Vec{}) {
+		dir = geom.Unit(toMp)
+	}
+	// Don't outrun a ball slower than us: once roughly on-line, pace to its speed so it catches a
+	// receiver moving with it; sprint full when off-line or when the ball is faster than we are.
+	th := 1.0
+	if ballSpd := geom.Norm(p.ballVel); ballSpd < maxSpeed {
+		th = lerp(clampFloat(ballSpd/maxSpeed, a.tune.receiveThrottleFloor, 1), 1, w)
+	}
+	return a.avoid(p, dir), th
+}
+
 // aimProjectDist is how far an Aim point is projected from the player. The simulation faces
 // the player toward the Aim POINT, so projecting it far (well beyond the pitch) makes the
 // facing essentially a direction that barely shifts as the player shuffles around. This is

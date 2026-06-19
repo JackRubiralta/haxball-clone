@@ -215,8 +215,9 @@ func TestHelloHandshakeAndSnapshots(t *testing.T) {
 	t.Fatal("client never received a snapshot")
 }
 
-// TestVersionMismatchRejected: a client announcing the wrong protocol version is dropped by
-// the server (after it has sent its Hello), so an incompatible client cannot feed intents in.
+// TestVersionMismatchRejected: a client whose handshake frame announces the wrong protocol
+// version gets a friendly Reject and is then dropped, so an incompatible client cannot feed
+// intents in. (The handshake is client-speaks-first in v2.)
 func TestVersionMismatchRejected(t *testing.T) {
 	m := sim.BuildMatchFromConfig(sim.NewStandardField(), 2, config.Default())
 	addr := freePort(t)
@@ -238,17 +239,21 @@ func TestVersionMismatchRejected(t *testing.T) {
 	}
 	defer nc.Close()
 
-	dec := gob.NewDecoder(nc)
-	var hello Envelope
-	if err := dec.Decode(&hello); err != nil || hello.Kind != MsgHello {
-		t.Fatalf("expected a Hello first, got %+v err=%v", hello, err)
+	// Announce a bad version on the handshake frame; the server must Reject then close.
+	if err := writeFrame(nc, ClientFrame{ProtoVersion: ProtoVersion + 99, Kind: CJoin}); err != nil {
+		t.Fatalf("write bad frame: %v", err)
 	}
-	// Announce a bad version; the server must drop us.
-	if err := gob.NewEncoder(nc).Encode(ClientMsg{ProtoVersion: ProtoVersion + 99}); err != nil {
-		t.Fatalf("encode bad msg: %v", err)
+	dec := gob.NewDecoder(nc)
+	var env Envelope
+	nc.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := dec.Decode(&env); err != nil {
+		t.Fatalf("expected a Reject, got err=%v", err)
+	}
+	if env.Kind != MsgReject {
+		t.Errorf("expected MsgReject, got kind %d", env.Kind)
 	}
 	nc.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if err := dec.Decode(&hello); err == nil {
+	if err := dec.Decode(&env); err == nil {
 		t.Error("server should have closed the connection after a version mismatch")
 	}
 }

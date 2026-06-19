@@ -54,6 +54,13 @@ type MatchSetup struct {
 	PenaltyBestOf    int     // kicks per side in a shootout (0 = the default of 5)
 
 	Seed int64
+
+	// Tuning is the per-match physics/gameplay tuning -- the player profile, ball/world physics,
+	// and team-possession timings (the values the in-menu "Tuning" tab edits). It is pure data,
+	// so it travels over the gob wire to the LAN server. A ZERO Tuning means "use the default"
+	// (see Build); DefaultMatchSetup seeds it with DefaultTuning so the menu starts from the
+	// baseline and edits a copy.
+	Tuning Tuning
 }
 
 // sizes returns the resolved per-team roster sizes, falling back to TeamSize whenever a
@@ -83,6 +90,7 @@ func DefaultMatchSetup() MatchSetup {
 		ExtraMinutes: 1,
 		OffsideFrac:  2.0 / 3.0,
 		Seed:         1,
+		Tuning:       DefaultTuning(),
 	}
 }
 
@@ -115,6 +123,11 @@ func (s MatchSetup) Validate() error {
 	}
 	if s.Penalties && s.PenaltyBestOf < 1 {
 		return fmt.Errorf("penalty best-of must be at least 1 when penalties are enabled")
+	}
+	if s.Tuning != (Tuning{}) { // only a seeded (non-default) tuning needs range-checking
+		if err := s.Tuning.Validate(); err != nil {
+			return err
+		}
 	}
 	// The resolved geometry must satisfy the relational constraints (box nesting, pitch
 	// proportions). Validate the geometry exactly as the match will see it.
@@ -258,5 +271,8 @@ func (s MatchSetup) Build() (Config, error) {
 	cfg.Geometry = g
 	cfg.Ruleset = r
 	cfg.Seed = s.Seed
+	if s.Tuning != (Tuning{}) { // a seeded setup carries its own tuning; a zero (unset) one keeps the default
+		cfg.Tuning = s.Tuning
+	}
 	return cfg, nil
 }

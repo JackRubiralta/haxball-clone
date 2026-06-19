@@ -71,6 +71,29 @@ func (a *AI) pushShotOn(p perception) bool {
 	return absFloat(crossY-p.enemyGoal.Y) < half
 }
 
+// shouldPokeSteal reports whether the presser should nick the ball off an opponent it is
+// pressing with a quick middle-click poke (a tackle): the opponent controls the ball, a push
+// reaches it, and the pure-radial jab sends it AWAY from our goal (upfield/wide) -- never a poke
+// into our own danger. It only fires at very close range so the radial reliably points off the
+// opponent. A clean, visible use of the push ability that disrupts the opponent and springs the
+// ball into space ahead, rather than dwelling to set up a trap-steal.
+func (a *AI) shouldPokeSteal(p perception) bool {
+	if !a.tune.pokeSteal || !p.carrierEnemy || !a.canPush(p) {
+		return false
+	}
+	if p.gapToBall > a.tune.pokeStealRange {
+		return false
+	}
+	// Only in our OWN half: a poke-tackle is a defensive tool (win the ball back and spring it
+	// upfield). In the attacking half we would rather dispossess cleanly and keep possession, so
+	// poking there just hands the ball back and starves our own attack (it cost goals in a sweep).
+	if !ballInOwnHalf(p) {
+		return false
+	}
+	dir := a.pushDir(p)
+	return dir != (geom.Vec{}) && dir.X*p.attackX > a.tune.pushClearMinForward
+}
+
 // pushIntent produces the Intent that fires a middle-click push this tick: an instant radial
 // jab, no charge. It cancels any in-progress charge (so the same tick can't ALSO release a
 // charged shot) and sets the post-kick cooldown so the player takes a real touch before

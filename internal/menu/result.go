@@ -4,8 +4,28 @@ import (
 	"image/color"
 	"strconv"
 
+	"phootball/internal/netcode"
 	"phootball/internal/sim"
 )
+
+// buildResultFromSnapshot assembles a ResultModel from a finished-match snapshot (the networked
+// path has no *sim.Match). The snapshot carries the score, names, and colours but not the full goal
+// timeline, so the timeline/shootout blocks stay empty -- the header + final stats tell the story.
+func buildResultFromSnapshot(snap netcode.Snapshot) ResultModel {
+	var r ResultModel
+	r.Teams[0] = ResultTeam{Name: snap.LeftName, Color: snap.LeftColor, Score: snap.LeftScore}
+	r.Teams[1] = ResultTeam{Name: snap.RightName, Color: snap.RightColor, Score: snap.RightScore}
+	r.WinnerIdx = -1
+	switch {
+	case snap.LeftScore > snap.RightScore:
+		r.WinnerIdx, r.WinnerLine, r.WinnerTint = 0, teamUpper(snap.LeftName)+" WINS", snap.LeftColor
+	case snap.RightScore > snap.LeftScore:
+		r.WinnerIdx, r.WinnerLine, r.WinnerTint = 1, teamUpper(snap.RightName)+" WINS", snap.RightColor
+	default:
+		r.WinnerLine, r.WinnerTint = "DRAW", theme.Accent
+	}
+	return r
+}
 
 // ResultModel is the plain-data summary of a finished match, assembled from the live
 // *sim.Match once so screenResult's draw code stays declarative (and the layout math is

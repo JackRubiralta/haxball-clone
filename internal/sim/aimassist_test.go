@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 )
 
@@ -12,7 +13,7 @@ import (
 // (a wide shot is only partly nudged), and a shot at/behind +-90deg does not fire at all
 // (the left-click shot is front-180 only). All angles are in radians.
 func TestShootAimAssist(t *testing.T) {
-	stats := DefaultPlayerTuning(500)
+	stats := config.DefaultPlayerTuning()
 	touchDist := stats.Radius + 10 // ball just touching (ball radius 10), inside TouchRange
 	const tol = 0.02               // ~1deg tolerance
 

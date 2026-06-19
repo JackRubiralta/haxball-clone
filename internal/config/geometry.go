@@ -246,7 +246,8 @@ func LargeGeometry() Geometry {
 // The second result is false for an unknown name.
 func PresetByName(name string) (Geometry, bool) {
 	switch name {
-	case "", "standard", "custom":
+	case "", "standard", "medium", "custom":
+		// "medium" is the user-facing name for the standard (default, middle) pitch.
 		return StandardGeometry(), true
 	case "small", "futsal":
 		return SmallGeometry(), true

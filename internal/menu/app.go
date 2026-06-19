@@ -3,14 +3,19 @@ package menu
 import (
 	"context"
 	"image/color"
+	"log/slog"
+	"math"
+	"runtime/debug"
 	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"phootball/internal/audio"
+	"phootball/internal/config"
 	"phootball/internal/control"
 	"phootball/internal/input"
+	"phootball/internal/netcode"
 	"phootball/internal/render"
 	"phootball/internal/sim"
 )
@@ -27,6 +32,14 @@ const (
 	StatePlaying
 	StatePaused
 	StateResult
+
+	// Multiplayer screens (LAN). The in-match StatePlaying/Paused/Result are reused on the
+	// networked path, distinguished by a non-nil a.net.
+	StateMPHome         // Host / Join chooser
+	StateMPJoin         // address entry
+	StateMPConnecting   // background connect with spinner / error variant
+	StateMPLobby        // roster, team/slot picking, ready, host controls
+	StateMPReconnecting // a dropped client redialing with its resume token
 )
 
 // App is the local game's state machine. It owns the current match and drives Ebiten's
@@ -44,7 +57,7 @@ type App struct {
 	// Match-setup IA: the selected tab and one scroll pane per tab (offset survives
 	// across frames; the wheel is read in the update pass only).
 	setupTab       int
-	setupScroll    [4]scrollState
+	setupScroll    [5]scrollState
 	settingsScroll scrollState
 
 	camera *render.Camera
@@ -69,12 +82,42 @@ type App struct {
 	duo      bool
 	duoHuman *input.Human
 	activeID int
+
+	// Multiplayer (LAN). net is non-nil while a networked match/lobby is live and selects the
+	// snapshot-follow path. mpRole marks Match Setup as host-config mode. The connect runs in the
+	// background and reports on dialCh; netErr/pendingAddr drive the connecting screen. mpName /
+	// mpAddr are the persisted player name and last join address; focusField is the focused text box.
+	net          *netSession
+	mpRole       int
+	dialCh       chan dialOutcome
+	dialSrv      *netcode.Server
+	dialCancel   context.CancelFunc
+	netErr       string
+	pendingAddr  string
+	mpName       string
+	mpAddr       string
+	recentAddrs  []string
+	focusField   *string
+	caretBlink   int
+	editingLobby bool // Match Setup was entered to edit an existing lobby (Apply -> CConfig)
 }
 
 // NewApp creates an app that opens on the main menu.
-func NewApp(ctx context.Context, s Settings) *App {
-	return &App{ctx: ctx, state: StateMenu, settings: s, prefs: DefaultAppPrefs(), camera: render.NewCamera()}
+func NewApp(ctx context.Context, uc UserConfig) *App {
+	return &App{
+		ctx: ctx, state: StateMenu,
+		settings:    uc.Settings, // match setup + physics Tuning, loaded from disk (or defaults)
+		prefs:       uc.Prefs,    // camera/audio
+		mpName:      uc.Net.Name,
+		mpAddr:      uc.Net.LastAddr,
+		recentAddrs: uc.Net.RecentAddrs,
+		camera:      render.NewCamera(),
+	}
 }
+
+// Prefs returns the current app prefs (camera/audio). The entry point reads these as the base
+// for explicit CLI overrides, so a saved pref survives unless the user passes the flag.
+func (a *App) Prefs() AppPrefs { return a.prefs }
 
 // NewPlayingApp creates an app that starts straight into a prepared match (fast-path
 // flags such as -solo).
@@ -135,16 +178,35 @@ func (a *App) afterStep() {
 	}
 }
 
+// recoverNet is the last-line safety net for the networked paths: if a frame panics (e.g. an
+// unforeseen nil-deref on a disconnect), it logs the panic, tears any session down, and drops to
+// the main menu instead of hard-crashing the app. Used as a deferred call in Update/Draw.
+func (a *App) recoverNet(where string) {
+	if r := recover(); r != nil {
+		slog.Error("recovered from panic; returning to menu", "where", where, "panic", r, "stack", string(debug.Stack()))
+		a.leaveNetwork()
+		a.match, a.controllers = nil, nil
+		a.statsHUD = false
+		a.state = StateMenu
+	}
+}
+
 // Update advances the active screen.
 func (a *App) Update() error {
+	defer a.recoverNet("Update")
 	select {
 	case <-a.ctx.Done():
 		return ebiten.Termination
 	default:
 	}
+	a.caretBlink++
 	switch a.state {
 	case StatePlaying:
-		a.updatePlaying()
+		if a.net != nil {
+			a.updateMPPlaying()
+		} else {
+			a.updatePlaying()
+		}
 	case StateMenu:
 		a.screenMenu(a.updateFrame())
 	case StateMatchSetup:
@@ -154,7 +216,31 @@ func (a *App) Update() error {
 	case StatePaused:
 		a.screenPaused(a.updateFrame())
 	case StateResult:
-		a.screenResult(a.updateFrame())
+		if a.net != nil {
+			a.updateMPResult()
+			// updateMPResult may have torn the session down (disconnect/host-leave) and changed
+			// state; only draw the networked result if we're still in it.
+			if a.state == StateResult && a.net != nil {
+				a.screenMPResult(a.updateFrame())
+			}
+		} else {
+			a.screenResult(a.updateFrame())
+		}
+	case StateMPHome:
+		a.screenMPHome(a.updateFrame())
+	case StateMPJoin:
+		a.screenMPJoin(a.updateFrame())
+	case StateMPConnecting:
+		a.pumpDial()
+		a.screenMPConnecting(a.updateFrame())
+	case StateMPLobby:
+		a.updateMPLobby()
+		if a.state == StateMPLobby && a.net != nil { // updateMPLobby may have disconnected us
+			a.screenMPLobby(a.updateFrame())
+		}
+	case StateMPReconnecting:
+		a.pumpReconnect()
+		a.screenMPReconnecting(a.updateFrame())
 	}
 	if a.quit {
 		return ebiten.Termination
@@ -205,24 +291,80 @@ func (a *App) updatePlaying() {
 
 // Draw renders the active screen.
 func (a *App) Draw(screen *ebiten.Image) {
+	defer a.recoverNet("Draw")
 	switch a.state {
 	case StatePlaying:
-		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
-		if a.statsHUD {
-			render.StatsPanel(screen, render.StatsModelFromMatch(a.match))
+		if a.net != nil {
+			a.drawMPWorld(screen)
+		} else {
+			a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
+			if a.statsHUD {
+				render.StatsPanel(screen, render.StatsModelFromMatch(a.match))
+			}
 		}
 	case StatePaused:
-		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
+		if a.net != nil {
+			a.drawMPWorld(screen)
+		} else {
+			a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
+		}
 		a.screenPaused(a.drawFrame(screen))
 	case StateResult:
-		a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
-		a.screenResult(a.drawFrame(screen))
+		if a.net != nil {
+			a.drawMPWorld(screen)
+			a.screenMPResult(a.drawFrame(screen))
+		} else {
+			a.worldViewport = render.Frame(screen, a.match, a.camera, dt)
+			a.screenResult(a.drawFrame(screen))
+		}
 	case StateMenu:
 		a.screenMenu(a.drawFrame(screen))
 	case StateMatchSetup:
 		a.screenMatchSetup(a.drawFrame(screen))
 	case StateSettings:
 		a.screenSettings(a.drawFrame(screen))
+	case StateMPHome:
+		a.screenMPHome(a.drawFrame(screen))
+	case StateMPJoin:
+		a.screenMPJoin(a.drawFrame(screen))
+	case StateMPConnecting:
+		a.screenMPConnecting(a.drawFrame(screen))
+	case StateMPLobby:
+		a.screenMPLobby(a.drawFrame(screen))
+	case StateMPReconnecting:
+		a.drawMPWorld(screen) // freeze the last frame behind the reconnect overlay
+		a.screenMPReconnecting(a.drawFrame(screen))
+	}
+}
+
+// drawMPWorld renders the networked match world from the latest snapshot, rebuilding the cached
+// field only when the geometry changes. Records the viewport so the next update maps the cursor to
+// world aim.
+func (a *App) drawMPWorld(screen *ebiten.Image) {
+	if a.net == nil {
+		screen.Fill(theme.BG)
+		return
+	}
+	snap, ok := a.net.client.Snapshot()
+	if !ok {
+		screen.Fill(theme.BG)
+		return
+	}
+	if a.net.field == nil || snap.Geometry != a.net.geo {
+		a.net.field = sim.NewFieldFromGeometry(snap.Geometry)
+		a.net.geo = snap.Geometry
+	}
+	a.worldViewport = render.FrameFromSnapshot(screen, a.adaptSnapshot(snap), a.net.field, a.statsHUD)
+
+	// Honest no-prediction framing: a corner latency badge, plus a one-time toast since inputs are
+	// round-trip-delayed (the client is a pure follower, no prediction).
+	ui := render.BeginUI(screen)
+	if rtt := a.net.client.RTTms(); rtt > 0 {
+		ui.TextRightS(latencyLabel(rtt), render.UIWidth-14, 16, theme.Small, latencyColor(rtt))
+	}
+	if a.net.toast > 0 {
+		ui.TextCenteredS("Online play — your inputs take a moment to reach the host",
+			render.UIWidth/2, render.UIHeight-28, theme.Small, theme.TextDim)
 	}
 }
 
@@ -238,9 +380,21 @@ func (a *App) DebugRenderScreen(dst *ebiten.Image, state AppState, tab int, m *s
 	a.Draw(dst)
 }
 
+// DebugSeedNet seeds the fields the multiplayer screens read; for screenshot/debug tooling only.
+func (a *App) DebugSeedNet(mode string) {
+	a.mpName = "Jack"
+	a.mpAddr = "192.168.1.20:47600"
+	a.recentAddrs = []string{"192.168.1.20:47600", "10.0.0.5:47600"}
+	a.pendingAddr = "192.168.1.20:47600"
+	if mode == "error" {
+		a.netErr = "Couldn't reach the host — check the address and that the host is running.\n(dial tcp 192.168.1.20:47600: connect: connection refused)"
+	}
+}
+
 // quitToMenu tears down the current match and returns to the main menu, clearing BOTH the
 // match and its controllers so no stale controller map survives into the next match.
 func (a *App) quitToMenu() {
+	a.leaveNetwork() // idempotent: closes the client + cancels the in-proc server if networked
 	a.match = nil
 	a.controllers = nil
 	a.statsHUD = false
@@ -284,7 +438,12 @@ func (a *App) screenMenu(f frame) {
 	bx := render.UIWidth/2 - bw/2
 	y := 260.0
 	if f.button("Play Match", bx, y, bw, bh) {
+		a.mpRole = roleNone
 		a.state = StateMatchSetup
+	}
+	y += bh + 18
+	if f.button("Multiplayer", bx, y, bw, bh) {
+		a.state = StateMPHome
 	}
 	y += bh + 18
 	if f.button("Settings", bx, y, bw, bh) {
@@ -298,7 +457,7 @@ func (a *App) screenMenu(f frame) {
 }
 
 // setupTabs are the Match Setup detail panes, in tab-rail order.
-var setupTabs = []string{"Teams & Control", "Pitch & Goals", "Boxes", "Match Rules"}
+var setupTabs = []string{"Teams & Control", "Pitch & Goals", "Boxes", "Match Rules", "Tuning"}
 
 func (a *App) screenMatchSetup(f frame) {
 	// Page chrome: backdrop + title, a left tab rail, a scrollable detail pane, and a
@@ -342,28 +501,61 @@ func (a *App) screenMatchSetup(f frame) {
 		a.setupBoxes(cf, &col)
 	case 3:
 		a.setupRules(cf, &col)
+	case 4:
+		a.setupTuning(cf, &col)
 	}
 	f.endScroll(sc, paneX, paneY, paneW, paneH, col.cursorY())
 
-	// Action bar: Back (left), validation banner (centre), Start (right, gated).
+	// Action bar: Back (left), validation banner (centre), and the primary action (right, gated).
+	// The SAME validated config screen serves three modes: a solo Start, the host's Create Lobby,
+	// and the host editing a live lobby (Apply -> CConfig).
 	const abw = 180.0
+	editing := a.editingLobby
+	hosting := a.mpRole == roleHost && !editing
 	if f.button("Back", railX, barY, abw, barH) {
-		a.state = StateMenu
+		switch {
+		case editing:
+			a.editingLobby = false
+			a.state = StateMPLobby // discard edits
+		case hosting:
+			a.state = StateMPHome
+		default:
+			a.state = StateMenu
+		}
 	}
 	err := a.settings.Validate()
 	if f.draw && err != nil {
 		f.ui.TextCenteredS(err.Error(), render.UIWidth/2, barY+barH/2, theme.Small, theme.Bad)
 	}
+	startLabel := "Start"
+	switch {
+	case editing:
+		startLabel = "Apply"
+	case hosting:
+		startLabel = "Create Lobby"
+	}
 	startX := px + pw - pad - abw
 	if err == nil {
-		if f.button("Start", startX, barY, abw, barH) {
-			a.startSetup()
+		if f.button(startLabel, startX, barY, abw, barH) {
+			a.saveUserConfig() // persist the committed match setup + tuning + prefs (Start/Create/Apply)
+			switch {
+			case editing:
+				a.editingLobby = false
+				if a.net != nil {
+					a.net.client.SendConfig(a.settings.MatchSetup)
+				}
+				a.state = StateMPLobby
+			case hosting:
+				a.beginHost(defaultMPListenAddr)
+			default:
+				a.startSetup()
+			}
 		}
 	} else if f.draw {
-		// Disabled Start: drawn dim, not clickable.
+		// Disabled action: drawn dim, not clickable.
 		f.ui.FillRect(startX, barY, abw, barH, theme.BtnBG)
 		f.ui.StrokeRect(startX, barY, abw, barH, 2, theme.Edge)
-		f.ui.TextCenteredS("Start", startX+abw/2, barY+barH/2, theme.Body, theme.TextDim)
+		f.ui.TextCenteredS(startLabel, startX+abw/2, barY+barH/2, theme.Body, theme.TextDim)
 	}
 }
 
@@ -388,8 +580,8 @@ func (a *App) setupTeams(f frame, col *colLayout) {
 			tc.Human = sel == 0
 			s.ClampDependents()
 		}
-		if d, i := f.rowStepper("Size", strconv.Itoa(tc.Size), c.x, c.row(), c.w, float64(tc.Size), 1, 7); d || i {
-			tc.Size = clampInt(tc.Size+dir(i), 1, 7)
+		if d, i := f.rowStepper("Size", strconv.Itoa(tc.Size), c.x, c.row(), c.w, float64(tc.Size), 1, 11); d || i {
+			tc.Size = clampInt(tc.Size+dir(i), 1, 11)
 			s.ClampDependents()
 		}
 		if tc.Human {
@@ -430,7 +622,7 @@ func (a *App) setupPitch(f frame, col *colLayout) {
 	} else {
 		col.row()
 	}
-	labels := [3]string{"Standard", "Small", "Large"}
+	labels := [3]string{"Small", "Medium", "Large"} // index-aligned with fieldPresets (small, standard, large)
 	by := col.row()
 	bw := (col.w - 2*theme.PanelPad) / 3
 	bh := theme.RowH - 10
@@ -599,6 +791,136 @@ func (a *App) setupRules(f frame, col *colLayout) {
 	f.disabledRow(drawSummary(s), col.x, col.row(), col.w)
 }
 
+// tuneRow draws one tuning stepper bound to *v, clamped to [lo,hi] and stepping by `step` (in
+// STORED units). disp formats the stored value for display (integer, decimal, percent, degrees).
+func (a *App) tuneRow(f frame, col *colLayout, label string, v *float64, lo, hi, step float64, disp func(float64) string) {
+	if d, i := f.rowStepper(label, disp(*v), col.x, col.row(), col.w, *v, lo, hi); d || i {
+		*v = clampF(*v+float64(dir(i))*step, lo, hi)
+	}
+}
+
+func tfInt(v float64) string  { return strconv.Itoa(int(math.Round(v))) }
+func tfDec1(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
+func tfDec2(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }
+func tfPct(v float64) string  { return strconv.Itoa(int(math.Round(v*100))) + "%" }
+func tfDeg(v float64) string  { return strconv.Itoa(int(math.Round(v*180/math.Pi))) + "°" }
+
+// setupTuning draws the per-match TUNING editor: every numeric physics/gameplay knob in the
+// README "Physics & player variables" section, grouped into sections. The angle-curve SHAPES
+// are hardcoded (never shown here) -- only the endpoints/scalars are editable. Edits write into
+// s.Tuning (a copy of DefaultTuning), which MatchSetup.Build folds into the match config and
+// the netcode wire carries to a LAN server. "Reset all" restores the defaults.
+func (a *App) setupTuning(f frame, col *colLayout) {
+	s := &a.settings
+	t := &s.Tuning
+	p := &t.Player
+	q := &p.TouchQuality
+	pp := &t.Possession
+	deg := math.Pi / 180
+
+	if f.selectButton("Reset all to defaults", false, col.x, col.row(), col.w, theme.RowH-10) {
+		s.Tuning = config.DefaultTuning()
+	}
+
+	f.sectionHeader("BODY & MOTION", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Radius", &p.Radius, 6, 40, 1, tfInt)
+	a.tuneRow(f, col, "Mass", &p.Mass, 1, 100, 1, tfInt)
+	a.tuneRow(f, col, "Friction", &p.Friction, -5, 0, 0.1, tfDec1)
+	a.tuneRow(f, col, "Max speed", &p.MaxSpeed, 40, 400, 5, tfInt)
+	a.tuneRow(f, col, "Acceleration", &p.Acceleration, 50, 800, 10, tfInt)
+	a.tuneRow(f, col, "Turn rate", &p.TurnRate, 2, 40, 1, tfInt)
+
+	f.sectionHeader("BALL CONTROL (reach)", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Touch range", &p.TouchRange, 0, 20, 0.5, tfDec1)
+	a.tuneRow(f, col, "Pull range", &p.PullRange, 0, 40, 0.5, tfDec1)
+	a.tuneRow(f, col, "Possession range", &p.PossessionRange, 0, 40, 0.5, tfDec1)
+
+	f.sectionHeader("ANGLE CURVES (front / back)", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Restitution (front)", &p.Restitution.Front, 0, 2, 0.01, tfDec2)
+	a.tuneRow(f, col, "Restitution (back)", &p.Restitution.Back, 0, 2, 0.01, tfDec2)
+	a.tuneRow(f, col, "Capture speed (front)", &p.CaptureSpeed.Front, 0, 600, 5, tfInt)
+	a.tuneRow(f, col, "Capture speed (back)", &p.CaptureSpeed.Back, 0, 600, 5, tfInt)
+	a.tuneRow(f, col, "Centre pull (front)", &p.CenterPull.Front, 0, 2000, 10, tfInt)
+	a.tuneRow(f, col, "Centre pull (back)", &p.CenterPull.Back, 0, 2000, 10, tfInt)
+	a.tuneRow(f, col, "Stickiness (front)", &p.Stickiness.Front, 0, 1000, 10, tfInt)
+	a.tuneRow(f, col, "Stickiness (back)", &p.Stickiness.Back, 0, 1000, 10, tfInt)
+	a.tuneRow(f, col, "Control (front)", &p.Control.Front, 0, 3000, 10, tfInt)
+	a.tuneRow(f, col, "Control (back)", &p.Control.Back, 0, 3000, 10, tfInt)
+	a.tuneRow(f, col, "Shot power (front)", &p.Shoot.Front, 50, 1500, 25, tfInt)
+	a.tuneRow(f, col, "Shot power (back)", &p.Shoot.Back, 0, 1000, 5, tfInt)
+
+	f.sectionHeader("CONES (degrees)", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Capture cone", &p.CaptureConeRadians, 0, math.Pi, deg, tfDeg)
+	a.tuneRow(f, col, "Capture cone soft", &p.CaptureConeSoft, 0, math.Pi, deg, tfDeg)
+	a.tuneRow(f, col, "Control cone", &p.ControlConeRadians, 0, math.Pi, deg, tfDeg)
+	a.tuneRow(f, col, "Control cone +possession", &p.ControlConePossessionBonus, 0, math.Pi/2, deg, tfDeg)
+	a.tuneRow(f, col, "Capture cone +trap", &p.CaptureConeTrapBonus, 0, math.Pi/2, deg, tfDeg)
+	a.tuneRow(f, col, "Control cone +trap", &p.ControlConeTrapBonus, 0, math.Pi/2, deg, tfDeg)
+	a.tuneRow(f, col, "Centre-pull cone", &p.CenterPullConeRadians, 0, math.Pi, deg, tfDeg)
+	a.tuneRow(f, col, "Centre-pull cone +poss", &p.CenterPullConePossessionBonus, 0, math.Pi/2, deg, tfDeg)
+	a.tuneRow(f, col, "Centre-pull cone +trap", &p.CenterPullConeTrapBonus, 0, math.Pi/2, deg, tfDeg)
+
+	f.sectionHeader("DAMPING & HOLD", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Control damping", &p.ControlDamping, 0, 50, 1, tfInt)
+	a.tuneRow(f, col, "Orbit stick", &p.OrbitStick, 0, 50, 1, tfInt)
+	a.tuneRow(f, col, "Seat strength", &p.SeatStrength, 0, 50, 1, tfInt)
+
+	f.sectionHeader("PLAYER POSSESSION", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Build seconds", &p.PossessionBuildSeconds, 0.1, 10, 0.1, tfDec1)
+	a.tuneRow(f, col, "Release seconds", &p.PossessionReleaseSeconds, 0.1, 10, 0.1, tfDec1)
+	a.tuneRow(f, col, "Centre-pull grip floor", &p.CenterPullGripFloor, 0, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Stickiness debuff", &p.StickinessPossessionDebuff, 0, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Speed factor", &p.PossessionSpeedFactor, 0.3, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Accel factor", &p.PossessionAccelFactor, 0.3, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Control bonus", &p.PossessionControlBonus, 0, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Steal rate", &p.PossessionStealRate, 0, 5, 0.1, tfDec1)
+
+	f.sectionHeader("CHARGED SHOT & AIM", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Min shot (tap)", &p.MinShootFactor, 0, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Shot speed factor", &p.ShootSpeedFactor, 0.1, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Shot accel factor", &p.ShootAccelFactor, 0.1, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Aim assist", &p.ShootAimAssist, 0, 1, 0.01, tfPct)
+
+	f.sectionHeader("TRAP (good touch)", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Pull bonus", &p.TrapPullBonus, 0, 5, 0.1, tfDec1)
+	a.tuneRow(f, col, "Range bonus", &p.TrapRangeBonus, 0, 30, 1, tfInt)
+	a.tuneRow(f, col, "Control bonus", &p.TrapControlBonus, 0, 5, 0.05, tfDec2)
+	a.tuneRow(f, col, "Stickiness bonus", &p.TrapStickinessBonus, 0, 3, 0.05, tfDec2)
+	a.tuneRow(f, col, "Accel factor", &p.TrapAccelFactor, 0.1, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Speed factor", &p.TrapSpeedFactor, 0.1, 1, 0.01, tfPct)
+	a.tuneRow(f, col, "Capture bonus", &p.TrapCaptureBonus, 0, 300, 5, tfInt)
+	a.tuneRow(f, col, "Radius bonus", &p.TrapRadiusBonus, 0, 30, 1, tfInt)
+	a.tuneRow(f, col, "Restitution factor", &p.TrapRestitutionFactor, 0, 2, 0.05, tfDec2)
+
+	f.sectionHeader("TEAM POSSESSION — TOUCH QUALITY", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Own team (max)", &q.OwnTeamMax, 0, 2, 0.05, tfDec2)
+	a.tuneRow(f, col, "Other team", &q.OtherTeam, -2, 0, 0.05, tfDec2)
+	a.tuneRow(f, col, "Capture worst", &q.CaptureWorst, 0, 2, 0.01, tfDec2)
+	a.tuneRow(f, col, "Capture best", &q.CaptureBest, 0, 2, 0.01, tfDec2)
+	a.tuneRow(f, col, "Restitution worst", &q.RestitutionWorst, 0, 4, 0.05, tfDec2)
+	a.tuneRow(f, col, "Restitution best", &q.RestitutionBest, 0, 4, 0.05, tfDec2)
+	a.tuneRow(f, col, "Cone bonus", &q.ConeBonusRadians, 0, math.Pi/2, deg, tfDeg)
+	a.tuneRow(f, col, "Cone debuff", &q.ConeDebuffRadians, 0, math.Pi/2, deg, tfDeg)
+
+	f.sectionHeader("TEAM POSSESSION — DURATIONS", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Build seconds", &pp.BuildSeconds, 0.1, 10, 0.1, tfDec1)
+	a.tuneRow(f, col, "Hold seconds", &pp.HoldSeconds, 0, 10, 0.1, tfDec1)
+	a.tuneRow(f, col, "Decay seconds", &pp.DecaySeconds, 0.1, 20, 0.1, tfDec1)
+	a.tuneRow(f, col, "Build exponent", &pp.BuildExponent, 0.5, 6, 0.1, tfDec1)
+	a.tuneRow(f, col, "Drain per second", &pp.DrainPerSecond, 0, 5, 0.1, tfDec1)
+	a.tuneRow(f, col, "Boost drain/sec", &pp.BoostContactDrainPerSecond, 0, 5, 0.1, tfDec1)
+	a.tuneRow(f, col, "Boost recover/sec", &pp.BoostContactRecoverPerSecond, 0, 5, 0.1, tfDec1)
+
+	f.sectionHeader("WORLD & BALL", col.x, col.header(1), col.w)
+	a.tuneRow(f, col, "Ball radius", &t.BallRadius, 2, 30, 0.5, tfDec1)
+	a.tuneRow(f, col, "Ball friction", &t.BallFriction, -2, 0, 0.05, tfDec2)
+	a.tuneRow(f, col, "Ball mass", &t.BallMass, 0.1, 20, 0.1, tfDec1)
+	a.tuneRow(f, col, "Ball wall bounce", &t.BallWallRestitution, 0, 1, 0.05, tfPct)
+	a.tuneRow(f, col, "Player wall bounce", &t.PlayerWallRestitution, 0, 1, 0.05, tfPct)
+	a.tuneRow(f, col, "Obstacle bounce", &t.ObstacleRestitution, 0, 1, 0.05, tfPct)
+	a.tuneRow(f, col, "Net bounce", &t.NetRestitution, 0, 1, 0.05, tfPct)
+}
+
 // winSummary describes the configured win condition in a single line for the Match Rules
 // tab, mirroring MatchSetup.Ruleset's mapping.
 func winSummary(s *Settings) string {
@@ -671,7 +993,7 @@ func (a *App) screenSettings(f frame) {
 	col := newCol(paneX, top, paneW-12)
 
 	cf.sectionHeader("CAMERA", col.x, col.header(1), col.w)
-	if d, i := cf.rowStepper("Mode", p.CameraMode, col.x, col.row(), col.w, 0, 0, 0); d || i {
+	if d, i := cf.rowStepper("Mode", p.CameraMode, col.x, col.row(), col.w, 0, 0, -1); d || i { // hi<lo: a cycling stepper (both arrows always active)
 		p.CameraMode = cycle(cameraPresets, p.CameraMode, dir(i))
 		a.applyPrefs()
 	}
@@ -703,14 +1025,29 @@ func (a *App) screenSettings(f frame) {
 	f.endScroll(&a.settingsScroll, paneX, paneY, paneW, paneH, col.cursorY())
 
 	if f.button("Back", render.UIWidth/2-90, barY, 180, barH) {
+		a.saveUserConfig() // persist the edited camera/audio prefs on leaving the settings screen
 		a.state = a.prevState
 	}
 }
 
 func (a *App) screenPaused(f frame) {
+	net := a.net != nil
+	paused := false // whether the host has paused the match (server-side)
+	if net {
+		if snap, ok := a.net.client.Snapshot(); ok {
+			paused = snap.Paused
+		}
+	}
 	if f.draw {
-		f.ui.FillRect(0, 0, render.UIWidth, render.UIHeight, theme.Overlay)
-		f.ui.Title("PAUSED", render.UIWidth/2, 170, theme.H1, theme.Accent)
+		f.ui.DimScreen(theme.Overlay) // cover the WHOLE screen, not just the letterboxed UI box
+		title := "PAUSED"
+		switch {
+		case net && paused:
+			title = "MATCH PAUSED"
+		case net:
+			title = "MENU — game continues" // a client menu is view-only; the server keeps ticking
+		}
+		f.ui.Title(title, render.UIWidth/2, 170, theme.H1, theme.Accent)
 	}
 	bw, bh := 280.0, theme.BtnH
 	bx := render.UIWidth/2 - bw/2
@@ -724,6 +1061,29 @@ func (a *App) screenPaused(f frame) {
 		a.state = StateSettings
 	}
 	y += bh + 16
+	if net {
+		// Networked: the host owns the match -- pause for everyone, or stop the game back to the
+		// lobby (everyone stays connected). "Return to Lobby" IS the end-the-game action; fully
+		// disconnecting is done from the lobby's Disconnect button. A guest can only leave.
+		if a.net.isHost {
+			pLabel := "Pause for everyone"
+			if paused {
+				pLabel = "Unpause match"
+			}
+			if f.button(pLabel, bx, y, bw, bh) {
+				a.net.client.SetPaused(!paused) // server-side; the menu stays open to toggle back
+			}
+			y += bh + 16
+			if f.button("Return to Lobby", bx, y, bw, bh) {
+				a.net.client.SetPaused(false)
+				a.net.client.ReturnToLobby() // ends the game; rebuilds the match, keeps everyone connected
+				a.state = StatePlaying       // updateMPPlaying sees InLobby() -> StateMPLobby
+			}
+		} else if f.button("Leave Match", bx, y, bw, bh) {
+			a.quitToMenu()
+		}
+		return
+	}
 	if !a.duo && f.button("Restart", bx, y, bw, bh) {
 		a.startMatch(a.practice, a.human)
 	}
@@ -751,7 +1111,7 @@ func (a *App) screenResult(f frame) {
 	const barH = 52.0
 	pad := theme.PanelPad
 	if f.draw {
-		f.ui.FillRect(0, 0, render.UIWidth, render.UIHeight, resultOverlay)
+		f.ui.DimScreen(resultOverlay) // cover the WHOLE screen, not just the letterboxed UI box
 		f.ui.Panel(px, py, pw, ph, theme.Panel, theme.Edge)
 	}
 	innerX := px + pad

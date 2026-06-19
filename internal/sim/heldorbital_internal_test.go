@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 )
 
@@ -21,7 +22,7 @@ const heldBallR = 7.5
 // full TurnRate for turnTicks, then hold the facing for holdTicks. Returns the max surface gap seen
 // during the turn/hold and the final ball position+velocity.
 func dribbleRun(turnTicks, holdTicks int) (gapMax float64, final, vel geom.Vec) {
-	stats := fieldPlayerTuning()
+	stats := config.DefaultPlayerTuning()
 	p := NewPlayer(0, geom.NewVec(0, 0), stats, nil)
 	p.Facing = geom.NewVec(1, 0)
 	p.possession = 1
@@ -63,12 +64,13 @@ func dribbleRun(turnTicks, holdTicks int) (gapMax float64, final, vel geom.Vec) 
 func TestDribbleTurnExact(t *testing.T) {
 	gapMax, pos, vel := dribbleRun(60, 0)
 	if gapMax > 0.1 {
-		t.Errorf("ball flung out while turning: max gap %.4f (TouchRange %.1f)", gapMax, fieldPlayerTuning().TouchRange)
+		t.Errorf("ball flung out while turning: max gap %.4f (TouchRange %.1f)", gapMax, config.DefaultPlayerTuning().TouchRange)
 	}
-	// Baseline re-captured after the roll-to-front Control front was lowered (-25% then -15%;
-	// full-trap "buffed" control unchanged); the ball still stays glued (gapMax << 0.1, checked above).
-	wantPos := geom.NewVec(24.9334854766, 5.3627252172)
-	wantVel := geom.NewVec(-5.0312473364, 25.4903454651)
+	// Baseline re-captured after the roll-to-front Control was raised (front 1160.25 -> 1450, back
+	// 340 -> 460), Stickiness raised (front 420 -> 500, back 30 -> 150) and CaptureSpeed back raised
+	// (30 -> 100); the ball still stays glued (gapMax << 0.1, checked above).
+	wantPos := geom.NewVec(24.3810785728, 7.4852890873)
+	wantVel := geom.NewVec(-7.7061197196, 26.8361333253)
 	if geom.Dist(pos, wantPos) > 1e-3 || geom.Dist(vel, wantVel) > 1e-3 {
 		t.Errorf("turn output drifted from the pre-change baseline:\n pos %v want %v\n vel %v want %v", pos, wantPos, vel, wantVel)
 	}
@@ -82,9 +84,10 @@ func TestStopTurnSettleNoFling(t *testing.T) {
 	if gapMax > 0.1 {
 		t.Errorf("ball flung out around the stop-turn: max gap %.4f", gapMax)
 	}
-	// Baseline re-captured after the Control front was lowered (-25% then -15%; full-trap unchanged).
-	wantPos := geom.NewVec(10.7017742823, -23.1626975510)
-	wantVel := geom.NewVec(-47.5596734879, -24.0164051277)
+	// Baseline re-captured after the Control was raised (front 1160.25 -> 1450, back 340 -> 460),
+	// Stickiness raised (front 420 -> 500, back 30 -> 150) and CaptureSpeed back raised (30 -> 100).
+	wantPos := geom.NewVec(6.6156201304, -24.6438127539)
+	wantVel := geom.NewVec(-52.3761472314, -16.0907284775)
 	if geom.Dist(pos, wantPos) > 5e-2 || geom.Dist(vel, wantVel) > 5e-2 {
 		t.Errorf("stop-turn output drifted materially from the pre-change baseline:\n pos %v want %v\n vel %v want %v", pos, wantPos, vel, wantVel)
 	}
@@ -95,7 +98,7 @@ func TestStopTurnSettleNoFling(t *testing.T) {
 // a head-on ball of the same speed gets (it deflects). The player is stationary and not turning, so
 // none of the ball's orbital velocity is hold-induced (heldOrbital stays ~0).
 func TestPerpendicularStrayNotCaptured(t *testing.T) {
-	stats := fieldPlayerTuning()
+	stats := config.DefaultPlayerTuning()
 	p := NewPlayer(0, geom.NewVec(0, 0), stats, nil)
 	p.Facing = geom.NewVec(1, 0)
 	p.possession = 0
@@ -124,7 +127,7 @@ func TestPerpendicularStrayNotCaptured(t *testing.T) {
 // enough for the roll-to-front control to build heldOrbital, so the hold engages). Guards against
 // over-releasing -- only fast strays should slip, not loose balls.
 func TestSlowLooseBallGathered(t *testing.T) {
-	stats := fieldPlayerTuning()
+	stats := config.DefaultPlayerTuning()
 	p := NewPlayer(0, geom.NewVec(0, 0), stats, nil)
 	p.Facing = geom.NewVec(1, 0)
 	p.possession = 0
@@ -147,7 +150,7 @@ func TestSlowLooseBallGathered(t *testing.T) {
 // TestTurnAfterGatherNoFling: gather a moderate ball, build possession, THEN turn hard -- the ball
 // must not fling out (heldOrbital has built up with the dribble, so the hold is at full strength).
 func TestTurnAfterGatherNoFling(t *testing.T) {
-	stats := fieldPlayerTuning()
+	stats := config.DefaultPlayerTuning()
 	p := NewPlayer(0, geom.NewVec(0, 0), stats, nil)
 	p.Facing = geom.NewVec(1, 0)
 	b := NewBall(geom.NewVec(stats.Radius+heldBallR+2, 0), heldBallR)

@@ -20,6 +20,20 @@ const (
 	actShield
 )
 
+// recordPassIntent snapshots the pass this controller is committing to, for the failed-pass
+// classifier in the package's internal tests ONLY. It is never read by any decision path (see
+// the diag* fields on AI), so it cannot affect play or widen what the AI perceives.
+func (a *AI) recordPassIntent(p perception, target geom.Vec, receiver sim.ObservedView) {
+	a.diagPassTarget = target
+	if receiver != nil {
+		a.diagPassRecvID = receiver.ID()
+	} else {
+		a.diagPassRecvID = -1
+	}
+	a.diagPassTick = p.view.Tick()
+	a.diagPassSet = true
+}
+
 // LastAction reports the carrier's most recent on-ball decision, for diagnostics/tests.
 func (a *AI) LastAction() string {
 	switch a.lastOnBall {
@@ -54,6 +68,7 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 				a.shotTarget = live
 				a.shotDesired = a.passChargeFor(p, a.shotTarget)
 			}
+			a.recordPassIntent(p, a.shotTarget, a.passReceiver) // diagnostics only (write-only)
 		} else if w := a.openDuration(p, p.me.Position()); w < a.tune.shootHurryWindow {
 			dist := geom.Dist(p.me.Position(), p.enemyGoal)
 			if hur := a.desiredCharge(dist) * clampFloat(w/a.tune.shootHurryWindow, 0.15, 1); hur < a.shotDesired {
@@ -79,6 +94,13 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 	// pressure. This keeps possession instead of hoofing every loose touch.
 	shootTarget, shootScore := a.bestShot(p)
 	passTarget, passReceiver, passScore := a.bestPass(p)
+	// Hold-time release valve: the longer the carrier has hoarded the ball, the more a (now-relaxed,
+	// still-safe) pass is boosted over the 1.0 dribble baseline, so the ball moves on instead of being
+	// dribbled forever. Only bites once a candidate exists (bestPass relaxed its gates under the same
+	// pressure); normal-length holds are unaffected (holdPressure 0).
+	if passReceiver != nil {
+		passScore += a.holdPressure(p) * a.tune.passHoldUrgency
+	}
 	dribbleTarget, dribbleScore := a.bestDribble(p)
 	clearScore := a.clearScore(p)
 	shieldScore := a.shieldScore(p, passScore)
@@ -134,6 +156,7 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 			a.runUntil = p.view.Tick() + a.tune.oneTwoTicks
 		}
 		a.passReceiver = passReceiver // keep the pass tracking the (moving) receiver
+		a.recordPassIntent(p, passTarget, passReceiver) // diagnostics only (write-only)
 		return a.shootAt(p, in, a.applyAim(p, passTarget), dc, a.tune.shootAlignRad)
 	case actClear:
 		// Under heavy pressure, BOOT it clear instantly with a push (no time to charge) -- but only
@@ -231,9 +254,34 @@ func laneClearance(from, to geom.Vec, players []sim.ObservedView, ballRadius flo
 // progress play (forward) unless we are under pressure and need an outlet. Returns the best
 // target, its receiver, and a score on the same scale as dribble (1.0), or a negative score
 // if no worthwhile pass exists -- so the carrier keeps the ball rather than spraying it.
+// holdPressure rises 0->1 as the carrier holds the ball from holdEaseTicks to holdForceTicks. It
+// drives the release valve: in bestPass it relaxes the space/contest gates toward a safety floor
+// and allows a recycle, and in onBall it boosts the best pass over the 1.0 dribble baseline -- so a
+// carrier that has hoarded the ball is pushed to move it on instead of dribbling forever. Reads the
+// player's OWN hold time only (holdStart), so it's within the AI<=human boundary.
+func (a *AI) holdPressure(p perception) float64 {
+	if a.holdStart == 0 || a.tune.holdForceTicks <= a.tune.holdEaseTicks {
+		return 0
+	}
+	held := p.view.Tick() + 1 - a.holdStart
+	if held <= a.tune.holdEaseTicks {
+		return 0
+	}
+	if held >= a.tune.holdForceTicks {
+		return 1
+	}
+	return float64(held-a.tune.holdEaseTicks) / float64(a.tune.holdForceTicks-a.tune.holdEaseTicks)
+}
+
 func (a *AI) bestPass(p perception) (geom.Vec, sim.ObservedView, float64) {
 	pressured := p.pressureOnMe > a.tune.actPressure
 	trapped := a.trapped(p)
+	// Hold-time release valve: the longer the carrier has hoarded the ball, the more the gates
+	// below relax (toward a safety floor) so a safe OFFLOAD always qualifies -- the carrier moves
+	// the ball on instead of dribbling forever. 0 for a normal-length hold (no effect).
+	hold := a.holdPressure(p)
+	spaceReq := lerp(a.tune.passReceiverSpace, a.tune.holdSpaceFloor, hold)
+	contestMargin := lerp(a.tune.passContestMargin, a.tune.holdContestFloor, hold)
 	best := -1.0
 	var bestTarget geom.Vec
 	var bestRecv sim.ObservedView
@@ -263,18 +311,18 @@ func (a *AI) bestPass(p perception) (geom.Vec, sim.ObservedView, float64) {
 			controlT = recvT
 		}
 		for _, o := range p.opponents {
-			if timeToPoint(o, target, p.ballRadius, a.tune.assumedOppSpeed) < controlT+a.tune.passContestMargin {
+			if timeToPoint(o, target, p.ballRadius, a.tune.assumedOppSpeed) < controlT+contestMargin {
 				return // an opponent reaches the target first/together -> contested, don't gift it
 			}
 		}
 		space := p.space(target)
-		if space < a.tune.passReceiverSpace {
+		if space < spaceReq {
 			return
 		}
 		advance := p.goalwardness(p.ball, target)
 		forward := advance >= a.tune.passMinAdvance
-		if !forward && !(pressured || trapped) {
-			return // recycle/back passes are an outlet only when we can't go forward or dribble
+		if !forward && !(pressured || trapped || a.tune.recycleFreely || hold > 0) {
+			return // recycle/back passes are an outlet only when we can't go forward, are stuck, or have hoarded the ball
 		}
 		// Prefer an open receiver who will STAY open, with a safe lane; penalise distance a
 		// little so a long, riskier ball doesn't out-rate a simple safe one. A forward pass
@@ -294,7 +342,7 @@ func (a *AI) bestPass(p perception) (geom.Vec, sim.ObservedView, float64) {
 	}
 
 	for _, mate := range p.teammates {
-		if mate.Role() == sim.RoleGoalkeeper && !trapped {
+		if mate.Role() == sim.RoleKeeper && !trapped {
 			continue // only recycle to the keeper when genuinely hemmed in
 		}
 		// To feet / lead the runner by the ball's real flight time.
@@ -363,11 +411,20 @@ func timeToPoint(q sim.ObservedView, point geom.Vec, ballRadius, speed float64) 
 // passChargeFor maps the pass launch speed to a shoot charge via the shoot curve, so the
 // pass is played with exactly enough power -- no more.
 func (a *AI) passChargeFor(p perception, target geom.Vec) float64 {
-	front := p.me.Tuning().Shoot.Eval(0)
+	front := p.me.Tuning().Shoot.Front
 	if front <= 0 {
 		return 0.3
 	}
-	factor := a.passSpeedFor(p, target) / front
+	want := a.passSpeedFor(p, target)
+	// The shot impulse ADDS to the ball's current velocity (interaction.shoot:451), so a pass
+	// played off a moving/dribbled ball would launch far faster than passSpeedFor intends -- the
+	// dominant cause of over-hit and too-fast-to-control receptions. Subtract the ball's existing
+	// pace ALONG the pass direction so the TOTAL launch lands on the calibrated speed. Clamped to
+	// the tap floor below (the kick can't fire softer than MinShootFactor).
+	if dir := geom.Unit(target.Sub(p.ball)); dir != (geom.Vec{}) {
+		want -= a.tune.passLaunchVelComp * geom.Dot(p.ballVel, dir)
+	}
+	factor := want / front
 	charge := (factor - p.me.Tuning().MinShootFactor) / (1 - p.me.Tuning().MinShootFactor)
 	return clampFloat(charge, 0, 1)
 }

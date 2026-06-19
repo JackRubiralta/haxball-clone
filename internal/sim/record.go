@@ -430,7 +430,7 @@ func (r *Recorder) checkSave(m *Match, p *Player) {
 	if p.Team.Side != r.lastKick.targetGoal {
 		return // only the defending team can save
 	}
-	inBox := p.Role == RoleGoalkeeper || m.Field.GoalAreaBox(p.Team.Side).overlapsCircle(p.Position, p.Radius())
+	inBox := p.Role == RoleKeeper || m.Field.GoalAreaBox(p.Team.Side).overlapsCircle(p.Position, p.Radius())
 	if !inBox {
 		return
 	}

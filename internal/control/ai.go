@@ -39,8 +39,23 @@ type AI struct {
 	lastDribbleDir geom.Vec         // last dribble heading, for turn-rate limiting (ball retention)
 	lastOnBall     onBallKind       // last on-ball action, for decision hysteresis
 	runUntil       uint64           // tick until which, having just passed, the player makes a give-and-go run
+	holdStart      uint64           // tick (+1; 0 = not holding) the player gained control, to measure how long it has been on the ball -- a release valve forces it to move the ball on rather than hoard it. Own state only (a human knows how long it has held the ball), so it's within the AI<=human boundary.
+	holdSpot       geom.Vec         // a supporter's CURRENT held receiving spot -- kept stable so a pass to it lands where the receiver still is (drifting receivers were the dominant over-hit failure)
+	holdSpotBall   geom.Vec         // ball position when holdSpot was last (re)picked, to detect when the held spot has gone stale
+	holdSpotOK     bool             // holdSpot is valid (a supporter is holding it)
 	recovering     bool             // hysteretic: facing the ball to scoop it back to the front (anti-jitter)
 	recoverTrap    bool             // previous tick we were trapping to scoop the ball home mid-commit (for the cancel/release sequencing)
+
+	// Diagnostic-only snapshot of the last pass this controller committed to, read ONLY by the
+	// failed-pass classifier in the package's internal tests. It is WRITE-ONLY from the AI's
+	// perspective: no decision path ever reads these fields back, so they cannot influence play
+	// and do not widen what the AI perceives. Recording the AI's OWN intended pass is not a
+	// boundary violation -- a human knows where they meant to pass; this is the controller's own
+	// decision, not hidden opponent state. See recordPassIntent.
+	diagPassTarget geom.Vec // the aim point of the committed pass
+	diagPassRecvID int      // intended receiver's player ID (-1 if none/unknown)
+	diagPassTick   uint64   // tick the pass intent was last recorded, to detect staleness
+	diagPassSet    bool     // a pass intent has been recorded at least once
 }
 
 // NewAI creates an AI controller for the given player at the default skill tier.
@@ -98,9 +113,20 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 	p := perceive(view, me, a.dt(view))
 	plan := assignRoles(p, a.tune)
 
+	// Track how long this player has continuously been on the ball (own state), so the on-ball
+	// decision can force it to move the ball on rather than hoard it. holdStart is a tick stamp
+	// (+1 so 0 means "not holding"); a non-control tick clears it. See AI.heldTicks / holdPressure.
+	if p.iControl {
+		if a.holdStart == 0 {
+			a.holdStart = view.Tick() + 1
+		}
+	} else {
+		a.holdStart = 0
+	}
+
 	var in sim.Intent
 	switch {
-	case me.Role() == sim.RoleGoalkeeper:
+	case me.Role() == sim.RoleKeeper:
 		in = a.keeper(p, plan)
 	case p.iControl:
 		in = a.onBall(p, plan)

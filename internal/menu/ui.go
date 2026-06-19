@@ -108,7 +108,10 @@ func (f frame) rowStepper(label, value string, x, y, w, cur, lo, hi float64) (de
 	incX := x + w - theme.StepBtnW
 	valCX := incX - gap - valW/2
 	decX := valCX - valW/2 - gap - theme.StepBtnW
-	unbounded := lo >= hi
+	// A cycling / no-bounds stepper signals itself with hi < lo (both arrows always active). When
+	// lo == hi there is exactly ONE possible value, so BOTH arrows grey out -- e.g. the human-slot
+	// picker at team size 1.
+	unbounded := lo > hi
 	canDec := unbounded || cur > lo
 	canInc := unbounded || cur < hi
 	if f.draw {
@@ -210,6 +213,65 @@ func (f frame) tabRail(items []string, sel int, x, y, w, rowH float64) int {
 		}
 	}
 	return out
+}
+
+// rowTextField draws a labelled single-line text box editing *val in [x, x+w] (the box is
+// right-aligned in the control band, like the steppers). When focused it consumes typed characters
+// (filtered by accept) and Backspace in the UPDATE pass only -- mirroring the wheel-read discipline
+// -- and shows a caret (blinking via caretOn). Input is charset-sanitized and length-capped so the
+// field can never hold an un-dialable or unbounded string. Returns whether the box was clicked, so
+// the caller can move focus to this field.
+func (f frame) rowTextField(label string, val *string, x, y, w float64, focused, caretOn bool, accept func(rune) bool, maxLen int) (clicked bool) {
+	bh := theme.RowH - 10
+	boxW := theme.ControlW + 60 // a touch wider than a stepper so an address fits
+	if boxW > w {
+		boxW = w
+	}
+	bx := x + w - boxW
+	if !f.draw {
+		if focused {
+			for _, r := range ebiten.AppendInputChars(nil) {
+				if accept(r) && len([]rune(*val)) < maxLen {
+					*val += string(r)
+				}
+			}
+			if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
+				if rs := []rune(*val); len(rs) > 0 {
+					*val = string(rs[:len(rs)-1])
+				}
+			}
+		}
+		return f.hit(bx, y, boxW, bh) && f.clicked
+	}
+	f.ui.TextS(label, x, y+theme.RowH/2, theme.Body, theme.Text)
+	edge := theme.BtnEdge
+	if focused {
+		edge = theme.Accent
+	}
+	f.ui.FillRect(bx, y, boxW, bh, theme.BtnBG)
+	f.ui.StrokeRect(bx, y, boxW, bh, 2, edge)
+	shown := fitTail(f, *val, boxW-16, theme.Body) // anchor the tail (the caret end) when it overflows
+	f.ui.TextS(shown, bx+8, y+bh/2, theme.Body, theme.Text)
+	if focused && caretOn {
+		cw := f.ui.MeasureUI(shown, theme.Body)
+		f.ui.Line(bx+8+cw+1, y+7, bx+8+cw+1, y+bh-7, 1, theme.Text)
+	}
+	return false
+}
+
+// fitTail truncates s from the FRONT with a leading ellipsis so its tail fits within maxW (used by
+// the text field, where the caret sits at the end).
+func fitTail(f frame, s string, maxW, sizeUI float64) string {
+	if f.ui.MeasureUI(s, sizeUI) <= maxW {
+		return s
+	}
+	for len(s) > 1 {
+		s = s[1:]
+		if f.ui.MeasureUI("…"+s, sizeUI) <= maxW {
+			return "…" + s
+		}
+	}
+	return s
 }
 
 // scrollState is the persistent state of one scroll pane. The App owns it (one per

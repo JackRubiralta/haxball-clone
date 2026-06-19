@@ -97,8 +97,8 @@ func idle(m *Match, n int) {
 // The kicker is credited a completed (sideways) pass; the receiver records a touch.
 func TestRecorderCompletedPass(t *testing.T) {
 	lt := &Team{Side: SideLeft}
-	a := NewPlayer(0, geom.NewVec(500, 300), DefaultPlayerTuning(500), lt)
-	b := NewPlayer(1, geom.NewVec(500, 345), DefaultPlayerTuning(500), lt)
+	a := NewPlayer(0, geom.NewVec(500, 300), config.DefaultPlayerTuning(), lt)
+	b := NewPlayer(1, geom.NewVec(500, 345), config.DefaultPlayerTuning(), lt)
 	m := customMatch([]*Player{a, b}, nil)
 	m.Ball.Position = geom.NewVec(500, 315)
 
@@ -127,8 +127,8 @@ func TestRecorderCompletedPass(t *testing.T) {
 func TestRecorderInterception(t *testing.T) {
 	lt := &Team{Side: SideLeft}
 	rt := &Team{Side: SideRight}
-	a := NewPlayer(0, geom.NewVec(500, 300), DefaultPlayerTuning(500), lt)
-	c := NewPlayer(1, geom.NewVec(500, 345), DefaultPlayerTuning(500), rt)
+	a := NewPlayer(0, geom.NewVec(500, 300), config.DefaultPlayerTuning(), lt)
+	c := NewPlayer(1, geom.NewVec(500, 345), config.DefaultPlayerTuning(), rt)
 	m := customMatch([]*Player{a}, []*Player{c})
 	m.Ball.Position = geom.NewVec(500, 315)
 
@@ -172,9 +172,9 @@ func TestRecorderJSONRoundTrip(t *testing.T) {
 func TestRecorderSave(t *testing.T) {
 	lt := &Team{Side: SideLeft}
 	rt := &Team{Side: SideRight}
-	shooter := NewPlayer(0, geom.NewVec(880, 340), DefaultPlayerTuning(500), lt)
-	keeper := NewPlayer(1, geom.NewVec(925, 340), DefaultPlayerTuning(500), rt)
-	keeper.Role = RoleGoalkeeper
+	shooter := NewPlayer(0, geom.NewVec(880, 340), config.DefaultPlayerTuning(), lt)
+	keeper := NewPlayer(1, geom.NewVec(925, 340), config.DefaultPlayerTuning(), rt)
+	keeper.Role = RoleKeeper
 	m := customMatch([]*Player{shooter}, []*Player{keeper})
 	m.Ball.Position = geom.NewVec(900, 340) // between shooter and the right goal mouth
 
@@ -200,9 +200,9 @@ func TestRecorderSave(t *testing.T) {
 func TestResetDerivationSuppressesPhantomSave(t *testing.T) {
 	lt := &Team{Side: SideLeft}
 	rt := &Team{Side: SideRight}
-	shooter := NewPlayer(0, geom.NewVec(880, 340), DefaultPlayerTuning(500), lt)
-	keeper := NewPlayer(1, geom.NewVec(925, 340), DefaultPlayerTuning(500), rt)
-	keeper.Role = RoleGoalkeeper
+	shooter := NewPlayer(0, geom.NewVec(880, 340), config.DefaultPlayerTuning(), lt)
+	keeper := NewPlayer(1, geom.NewVec(925, 340), config.DefaultPlayerTuning(), rt)
+	keeper.Role = RoleKeeper
 	m := customMatch([]*Player{shooter}, []*Player{keeper})
 	m.Ball.Position = geom.NewVec(900, 340)
 

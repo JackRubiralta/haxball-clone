@@ -74,7 +74,10 @@ func DefaultAppPrefs() AppPrefs {
 }
 
 var (
-	fieldPresets      = []string{"standard", "small", "large"}
+	// Ordered small -> medium -> large for the Pitch tab's quick-fill row. "standard" is the
+	// internal key for the medium pitch (shown as "Medium"); it sits in the middle and is the
+	// default. See setupPitch's parallel labels array.
+	fieldPresets      = []string{"small", "standard", "large"}
 	difficultyPresets = []string{"easy", "normal", "hard"}
 	cameraPresets     = []string{"ball", "player", "fit"}
 	controlPresets    = []string{"Human", "AI"}
@@ -195,16 +198,36 @@ func (s *Settings) stepCircle(d int) {
 // are custom. It is derived, not stored: editing any value away from a preset deselects it, and
 // editing back to a preset's values re-selects it.
 func (s *Settings) SelectedPreset() string {
+	// Resolve each editable dimension to the value the geometry will ACTUALLY use: a positive
+	// override wins, otherwise it inherits the current Field preset -- exactly how
+	// MatchSetup.Geometry builds the pitch. An untouched default inherits (stores 0) rather than
+	// copying each number, so comparing the raw fields would never match; comparing the resolved
+	// effective values makes the default highlight its preset (Medium) on open.
+	base, ok := config.PresetByName(s.Field)
+	if !ok {
+		base, _ = config.PresetByName("standard")
+	}
+	res := func(override, inherit float64) float64 {
+		if override > 0 {
+			return override
+		}
+		return inherit
+	}
+	pw, ph := res(s.PlayWidth, base.PlayWidth), res(s.PlayHeight, base.PlayHeight)
+	gw, gd := res(s.GoalWidth, base.GoalMouthWidth), res(s.GoalDepth, base.GoalPocketDepth)
+	pew, ped := res(s.PenaltyWidth, base.PenaltyWidth), res(s.PenaltyDepth, base.PenaltyDepth)
+	gaw, gad := res(s.GoalAreaWidth, base.GoalAreaWidth), res(s.GoalAreaDepth, base.GoalAreaDepth)
+	cc := res(s.CenterCircleRadius, base.CenterCircleRadius)
 	for _, name := range fieldPresets {
 		g, ok := config.PresetByName(name)
 		if !ok {
 			continue
 		}
-		if s.PlayWidth == g.PlayWidth && s.PlayHeight == g.PlayHeight &&
-			s.GoalWidth == g.GoalMouthWidth && s.GoalDepth == g.GoalPocketDepth &&
-			s.PenaltyWidth == g.PenaltyWidth && s.PenaltyDepth == g.PenaltyDepth &&
-			s.GoalAreaWidth == g.GoalAreaWidth && s.GoalAreaDepth == g.GoalAreaDepth &&
-			s.CenterCircleRadius == g.CenterCircleRadius {
+		if pw == g.PlayWidth && ph == g.PlayHeight &&
+			gw == g.GoalMouthWidth && gd == g.GoalPocketDepth &&
+			pew == g.PenaltyWidth && ped == g.PenaltyDepth &&
+			gaw == g.GoalAreaWidth && gad == g.GoalAreaDepth &&
+			cc == g.CenterCircleRadius {
 			return name
 		}
 	}

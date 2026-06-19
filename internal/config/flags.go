@@ -65,7 +65,7 @@ type geomFlags struct {
 
 func bindGeometry(fs *flag.FlagSet) *geomFlags {
 	gf := &geomFlags{}
-	fs.StringVar(&gf.field, "field", "standard", "pitch preset: standard, small, large")
+	fs.StringVar(&gf.field, "field", "standard", "pitch preset: small, medium, large (medium = standard)")
 	fs.Float64Var(&gf.playW, "play-width", 0, "override play-area width in world units (0 keeps the preset)")
 	fs.Float64Var(&gf.playH, "play-height", 0, "override play-area height (0 keeps the preset)")
 	fs.Float64Var(&gf.goalW, "goal-width", 0, "override goal mouth width (0 keeps the preset)")
@@ -219,7 +219,8 @@ type GameOptions struct {
 	Camera     string
 	Mute       bool
 	Volume     float64
-	Difficulty string // AI difficulty tier name (see control.SkillFromString)
+	Difficulty string          // AI difficulty tier name (see control.SkillFromString)
+	Set        map[string]bool // flag names the user EXPLICITLY passed (for "CLI overrides saved prefs only when set")
 }
 
 // ParseGame parses the local game command's flags.
@@ -244,6 +245,8 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	if err := fs.Parse(args); err != nil {
 		return GameOptions{}, parseError(err)
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true }) // only the flags the user actually passed
 	if *version {
 		return GameOptions{Version: true}, nil
 	}
@@ -298,6 +301,7 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 		Mute:       *mute,
 		Volume:     *volume,
 		Difficulty: *difficulty,
+		Set:        set,
 	}, nil
 }
 

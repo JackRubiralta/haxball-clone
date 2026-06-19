@@ -20,7 +20,7 @@ func TestKeeperReceivesBackPassOnTrajectory(t *testing.T) {
 
 	var keeper *sim.Player
 	for _, pl := range m.Teams[0].Players {
-		if pl.Role == sim.RoleGoalkeeper {
+		if pl.Role == sim.RoleKeeper {
 			keeper = pl
 		}
 	}

@@ -17,7 +17,7 @@ func TestDribbleAvoidsWall(t *testing.T) {
 
 	var carrier *sim.Player
 	for _, pl := range m.Teams[0].Players {
-		if pl.Role != sim.RoleGoalkeeper {
+		if pl.Role != sim.RoleKeeper {
 			carrier = pl
 			break
 		}
@@ -67,7 +67,7 @@ func TestKeeperPassesSafeOutletInsteadOfClearing(t *testing.T) {
 
 	var keeper, mate *sim.Player
 	for _, pl := range m.Teams[0].Players {
-		if pl.Role == sim.RoleGoalkeeper {
+		if pl.Role == sim.RoleKeeper {
 			keeper = pl
 		} else if mate == nil {
 			mate = pl
@@ -114,7 +114,7 @@ func TestKeeperGuardAnglesScaleWithNet(t *testing.T) {
 		m := sim.BuildMatchFromConfig(field, 3, config.Default())
 		var keeper *sim.Player
 		for _, pl := range m.Teams[0].Players {
-			if pl.Role == sim.RoleGoalkeeper {
+			if pl.Role == sim.RoleKeeper {
 				keeper = pl
 			}
 		}

@@ -13,20 +13,10 @@ import (
 // distinct lane, so players spread out instead of swarming the ball. Only the elected
 // presser leaves its slot to chase.
 
-type slot struct{ depth, width float64 } // normalized: depth 0=own goal..1=enemy goal
-
 // idealPosition returns the world-space slot this outfielder should hold this tick.
 func idealPosition(p perception, tune aiTuning) geom.Vec {
 	f := p.view.Field()
-	out := outfielders(p.view.Squad(p.me))
-	idx := indexOf(out, p.me.ID())
-	if idx < 0 {
-		idx, out = 0, []sim.ObservedView{p.me} // keeper acting as a field player (tiny teams)
-	}
-	slots := formationSlots(len(out), tune)
-	s := slots[idx]
-
-	depth, width := s.depth, s.width
+	depth, width := roleSlot(p, tune)
 	// Shift the line up when we have the ball, drop it when defending.
 	switch {
 	case p.carrierMine:
@@ -57,80 +47,65 @@ func idealPosition(p perception, tune aiTuning) geom.Vec {
 	return base
 }
 
-// formationSlots lays out k outfielders across defence/midfield/forward lines, spreading
-// each line evenly across the pitch width. Lower indices fill the back line first, so the
-// stable PlayerID sort maps low ids to defenders.
-func formationSlots(k int, tune aiTuning) []slot {
-	if k <= 0 {
-		return nil
+// roleSlot returns this outfielder's normalized (depth, width) slot from its AUTHORITATIVE
+// sim.Role() -- defenders hold a deep band, midfielders the middle, attackers high up -- with
+// players sharing a role fanned across the pitch width in a stable, observable order. Reading
+// the role directly (rather than re-deriving a line from PlayerID order) makes the four roles
+// behaviourally real: a defender stays back and an attacker pushes on, which staggers the team
+// into distinct depth lines so a carrier always has a short option at more than one height.
+func roleSlot(p perception, tune aiTuning) (depth, width float64) {
+	role := p.me.Role()
+	depth = roleDepth(role, tune)
+	// Fan players sharing this role across the width, ordered by observable ID so every teammate
+	// derives the SAME lanes without communicating (the AI<=human boundary: assignments come from
+	// observable identity, never hidden state).
+	peers := sameRole(p.view.Squad(p.me), role)
+	idx := indexOf(peers, p.me.ID())
+	if n := len(peers); n > 1 && idx >= 0 {
+		width = lerp(tune.widthMin, tune.widthMax, float64(idx)/float64(n-1))
+	} else {
+		// A lone player in its line: offset off-centre per role so successive single-player lines
+		// zig-zag instead of stacking into a dead central column (the lone striker stays central
+		// for a shot). The slot jitter in idealPosition further de-aligns mirrored teams.
+		width = 0.5 + roleStagger(role)
 	}
-	if k == 1 {
-		return []slot{{depth: 0.45, width: 0.5}}
-	}
-	lines := formationLines(k)
-	nonEmpty := 0
-	for _, c := range lines {
-		if c > 0 {
-			nonEmpty++
-		}
-	}
-	out := make([]slot, 0, k)
-	li, single := 0, 0
-	for _, c := range lines {
-		if c == 0 {
-			continue
-		}
-		depth := tune.defenderDepth
-		if nonEmpty > 1 {
-			depth = lerp(tune.defenderDepth, tune.forwardDepth, float64(li)/float64(nonEmpty-1))
-		}
-		for i := 0; i < c; i++ {
-			width := 0.5
-			if c > 1 {
-				width = lerp(tune.widthMin, tune.widthMax, float64(i)/float64(c-1))
-			} else {
-				// A lone player in a line: stagger it off-centre, alternating sides line to
-				// line, so successive single-player lines zig-zag instead of stacking into a
-				// dead central column.
-				if single%2 == 0 {
-					width = 0.5 - 0.2
-				} else {
-					width = 0.5 + 0.2
-				}
-				single++
-			}
-			out = append(out, slot{depth: depth, width: width})
-		}
-		li++
-	}
-	return out
+	return depth, width
 }
 
-// formationLines splits k outfielders into back/middle/front line counts. It biases
-// toward a solid back line and a lone-or-paired forward line, mirroring real small-sided
-// shapes (e.g. 4 -> 1-2-1 diamond, 5 -> 2-2-1, 10 -> 3-5-2).
-func formationLines(k int) []int {
-	if k <= 0 {
-		return nil
+// roleDepth maps a role to its normalized back-to-front depth band (0 own goal..1 enemy goal).
+func roleDepth(role sim.Role, tune aiTuning) float64 {
+	switch role {
+	case sim.RoleDefender:
+		return tune.defenderDepth
+	case sim.RoleAttacker:
+		return tune.forwardDepth
+	default: // midfielder, or a keeper pressed into outfield duty on a tiny team
+		return tune.midfielderDepth
 	}
-	if k == 2 {
-		return []int{1, 0, 1}
+}
+
+// roleStagger offsets a lone player of a role off-centre by +-0.2 so successive single-player
+// lines zig-zag (def/att to one side, mid to the other) instead of stacking into a dead central
+// column. The +-0.2 magnitude and the def/mid alternation reproduce the previous formation's
+// lone-line stagger, so introducing role-keyed slots stays shape-preserving.
+func roleStagger(role sim.Role) float64 {
+	if role == sim.RoleMidfielder {
+		return 0.2
 	}
-	def := (k + 1) / 3
-	fwd := k / 4
-	if fwd < 1 {
-		fwd = 1
-	}
-	mid := k - def - fwd
-	for mid < 0 { // shrink the forward line, then the back line, until it fits
-		if fwd > 1 {
-			fwd--
-		} else {
-			def--
+	return -0.2 // defenders and attackers to the opposite side from a lone midfielder
+}
+
+// sameRole returns the players in the roster that share role, sorted by PlayerID -- a stable,
+// observable order every teammate computes identically.
+func sameRole(players []sim.ObservedView, role sim.Role) []sim.ObservedView {
+	out := make([]sim.ObservedView, 0, len(players))
+	for _, q := range players {
+		if q.Role() == role {
+			out = append(out, q)
 		}
-		mid = k - def - fwd
 	}
-	return []int{def, mid, fwd}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID() < out[j].ID() })
+	return out
 }
 
 // worldFromFrac maps a normalized (depth, width) slot to world coordinates for this
@@ -170,7 +145,7 @@ func ballInOwnHalf(p perception) bool {
 func outfielders(players []sim.ObservedView) []sim.ObservedView {
 	out := make([]sim.ObservedView, 0, len(players))
 	for _, q := range players {
-		if q.Role() != sim.RoleGoalkeeper {
+		if q.Role() != sim.RoleKeeper {
 			out = append(out, q)
 		}
 	}

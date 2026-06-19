@@ -21,7 +21,8 @@ func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 	// don't charge the fast ball head-on at the first point we can touch it -- run ONTO its
 	// trajectory and meet it a little deeper, where it has slowed to a controllable pace, for a
 	// clean first touch. A genuine 50/50 still goes for the earliest intercept (win the race).
-	if a.receivingPass(p) {
+	receiving := a.receivingPass(p)
+	if receiving {
 		ip = a.receivePoint(p)
 	}
 
@@ -29,9 +30,15 @@ func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 	// hold just outside the centre circle until it moves.
 	if kickoffActive(p) && p.view.KickoffSide() != p.me.Side() {
 		ip = a.kickoffStandoff(p)
+		receiving = false // hold the standoff at full readiness, don't pace-match a non-pass
 	}
 
+	// Pace the reception to arrive WITH the ball (no overshoot) instead of sprinting through the
+	// meeting point; a genuine 50/50 (receiving false) keeps the flat-out steer.
 	mv, th := a.steer(p, ip, false)
+	if receiving && a.tune.receiveMatch {
+		mv, th = a.steerReceive(p, ip)
+	}
 	in.Move, in.Throttle = mv, th
 	in.Aim = a.aimToward(p, p.ball) // face the ball (projected far so the facing is cache-stable)
 
@@ -48,6 +55,14 @@ func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 			in.ShootHeld = true // keep charging as we close in
 		}
 		return in
+	}
+
+	// Poke-tackle: when pressing an opponent who has the ball at very close range, nick it off them
+	// with a quick middle-click jab (sends it upfield off the opponent) instead of dwelling to set
+	// up a trap-steal. A visible, tactical use of the push ability.
+	if a.shouldPokeSteal(p) {
+		a.lastOnBall = actDribble // a defensive poke is not a deliberate pass/shot/clear -- don't let it be mis-counted as one
+		return a.pushIntent(p)
 	}
 
 	// Trap to take a clean touch or steal -- but NOT in a 50/50 race: trap halves our speed,
@@ -99,7 +114,7 @@ func (a *AI) receivePoint(p perception) geom.Vec {
 	heading := p.me.Heading()
 	penalize := a.tune.turnPenaltyGain > 0 && turnRate > 0 && geom.Norm(heading) > 1e-9
 
-	var earliest geom.Vec
+	var earliest, deepest geom.Vec
 	haveEarliest := false
 	for t := 0.0; t <= a.tune.interceptHorizon; t += a.tune.interceptStep {
 		target := predictBall(p.ball, p.ballVel, t, p.friction, p.dt)
@@ -116,11 +131,23 @@ func (a *AI) receivePoint(p perception) geom.Vec {
 		if !haveEarliest {
 			earliest, haveEarliest = target, true
 		}
+		deepest = target // furthest-along reachable point so far (ball slowest, met moving WITH it)
 		if ballSpeedAt(p.ballVel, t, p.friction, p.dt) <= controlSpeed {
 			return target // soonest reachable point where the ball is controllable
 		}
 	}
 	if haveEarliest {
+		// The ball never slows below the clean-capture speed within reach (a hot short pass that
+		// can't decelerate enough over the lane). Meeting it at the EARLIEST point takes it nearly
+		// head-on -- a high RELATIVE impact speed (approachSpeed = playerVel-ballVel along the
+		// contact normal), so it bounces off. Meeting it at the DEEPEST reachable point instead has
+		// the receiver running in the ball's own travel direction, so the ball catches up from
+		// behind: the relative impact speed is far lower and the touch sticks even though the ball's
+		// absolute speed is still high. (Interception risk barely rises -- intercepts are a tiny
+		// share of failures -- and a deeper meeting point is also a slower ball.)
+		if a.tune.receiveDeepenHot {
+			return deepest
+		}
 		return earliest
 	}
 	return predictBall(p.ball, p.ballVel, a.tune.interceptHorizon, p.friction, p.dt)
@@ -181,13 +208,17 @@ func (a *AI) offBall(p perception, plan teamPlan) sim.Intent {
 	supporting := false
 	switch {
 	case p.teamControls && p.view.Tick() < a.runUntil:
-		target = a.receiveSpot(p, a.tune.runForwardBias) // give-and-go run into space
+		target = a.receiveSpot(p, a.tune.runForwardBias) // give-and-go run into space (deliberately moving)
 		supporting = true
+		a.holdSpotOK = false // a runner is not a stationary target; don't hold a spot during the run
 	case p.teamControls:
-		target = a.receiveSpot(p, a.tune.supportForwardBias) // offer a passing option in range
+		target = a.supportHoldSpot(p) // offer a STATIONARY passing option (held spot) so passes don't over-hit
 		supporting = true
 	case p.carrierEnemy && plan.support == p.me.ID():
 		target = a.markSpot(p)
+		a.holdSpotOK = false
+	default:
+		a.holdSpotOK = false
 	}
 
 	mv, th := a.steer(p, target, true)
@@ -227,6 +258,25 @@ func (a *AI) teammatePush(p perception) geom.Vec {
 		}
 	}
 	return push
+}
+
+// supportHoldSpot returns a STABLE receiving spot for a standing supporter: it re-picks a fresh
+// receiveSpot only when the held one has gone stale (the ball has moved far from where it was picked)
+// or is no longer a good option (its lane from the ball is no longer safe, or it is no longer open) --
+// otherwise it HOLDS the spot. A stationary target is what stops passes over-hitting a receiver that
+// has drifted off the ball's line during the flight (the dominant over-hit failure). The spot itself
+// still comes from receiveSpot's sector search, so players stay fanned out.
+func (a *AI) supportHoldSpot(p perception) geom.Vec {
+	repick := !a.holdSpotOK ||
+		geom.Dist(p.ball, a.holdSpotBall) > a.tune.supportHoldBallMove ||
+		laneSafe(p.ball, a.holdSpot, a.passSpeedFor(p, a.holdSpot), p.ballRadius, p.friction, p.opponents, a.tune) < a.tune.passSafetyMin ||
+		p.space(a.holdSpot) < a.tune.passReceiverSpace
+	if repick {
+		a.holdSpot = a.receiveSpot(p, a.tune.supportForwardBias)
+		a.holdSpotBall = p.ball
+		a.holdSpotOK = true
+	}
+	return a.holdSpot
 }
 
 // receiveSpot moves this player to where it is a real, REACHABLE passing option. Each
@@ -271,7 +321,7 @@ func (a *AI) markSpot(p perception) geom.Vec {
 	var mark sim.ObservedView
 	bestThreat := -1e9
 	for _, o := range p.opponents {
-		if o.Role() == sim.RoleGoalkeeper {
+		if o.Role() == sim.RoleKeeper {
 			continue
 		}
 		threat := -geom.Dist(o.Position(), p.ownGoal) // nearer our goal = more dangerous

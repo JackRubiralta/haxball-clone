@@ -169,8 +169,13 @@ func TestCleanFirstTouch(t *testing.T) {
 	if gap > 12 {
 		t.Errorf("receiver failed to bring the pass under control (gap %.1f) -- ball bounced away", gap)
 	}
-	if geom.Norm(m.Ball.Velocity) > 130 {
-		t.Errorf("ball was not damped on the first touch (speed %.0f)", geom.Norm(m.Ball.Velocity))
+	// The receiver now runs ONTO the ball's line and carries it at pace (the velocity-matched
+	// reception -- steerReceive/receiveMatch -- which lifted aggregate pass completion), rather than
+	// trapping it to a dead stop. So the first touch is CONTROLLED (gap above) but the ball is still
+	// rolling WITH the receiver, not stopped: the test guards that it didn't skid AWAY off a hot
+	// bounce (which left it at the inbound ~230), not that it was killed dead.
+	if geom.Norm(m.Ball.Velocity) > 185 {
+		t.Errorf("ball skidded off the first touch (speed %.0f) -- not brought under control", geom.Norm(m.Ball.Velocity))
 	}
 }
 
@@ -297,7 +302,7 @@ func TestKeeperQuickClear(t *testing.T) {
 	m, ais := aiMatch(3, 1, control.SkillImpossible, nil)
 	var keeper *sim.Player
 	for _, pl := range m.Teams[0].Players {
-		if pl.Role == sim.RoleGoalkeeper {
+		if pl.Role == sim.RoleKeeper {
 			keeper = pl
 		}
 	}
@@ -572,7 +577,7 @@ func TestNoClampJitter(t *testing.T) {
 			possessing := carrier != nil && carrier.Team == tm
 			line := m.Field.OffsideLineX(tm.Side, 2.0/3.0)
 			for _, p := range tm.Players {
-				if p.Role == sim.RoleGoalkeeper {
+				if p.Role == sim.RoleKeeper {
 					continue
 				}
 				past := !possessing && ((tm.Side == sim.SideLeft && p.Position.X > line+p.Radius()) ||
@@ -610,7 +615,7 @@ func TestKeeperSave(t *testing.T) {
 			m.Ball.Velocity = geom.NewVec(spd, 0)
 			keeperID := -1
 			for _, p := range m.Teams[1].Players {
-				if p.Role == sim.RoleGoalkeeper {
+				if p.Role == sim.RoleKeeper {
 					keeperID = p.PlayerID
 				}
 			}

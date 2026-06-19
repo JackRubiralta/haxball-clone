@@ -73,7 +73,8 @@ func (h *harness) Layout(int, int) (int, int) { return W, H }
 
 func main() {
 	os.MkdirAll("/tmp/shots", 0o755)
-	app := menu.NewApp(context.Background(), menu.DefaultSettings())
+	app := menu.NewApp(context.Background(), menu.DefaultUserConfig())
+	app.DebugSeedNet("") // seed the multiplayer screens' name/address fields
 
 	// A match with a populated scoreline / goals / winner for the in-match + result screens.
 	m, _ := menu.DefaultSettings().BuildMatch(false, true)
@@ -103,6 +104,9 @@ func main() {
 			{"07_playing_hud", menu.StatePlaying, 0, true},
 			{"08_paused", menu.StatePaused, 0, true},
 			{"09_result", menu.StateResult, 0, true},
+			{"10_mp_home", menu.StateMPHome, 0, false},
+			{"11_mp_join", menu.StateMPJoin, 0, false},
+			{"12_mp_connecting", menu.StateMPConnecting, 0, false},
 		},
 	}
 	ebiten.SetWindowSize(W, H)

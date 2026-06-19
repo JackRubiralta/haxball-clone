@@ -1,4 +1,4 @@
-package sim
+package config
 
 import (
 	"math"
@@ -6,23 +6,25 @@ import (
 	"phootball/internal/geom"
 )
 
-// CurveSpec binds an AngleCurve to its front (0 rad) and back (pi rad) endpoints,
-// so a single value fully describes an angle-dependent quantity.
-type CurveSpec struct {
-	Curve AngleCurve
-	Front float64
-	Back  float64
+// ballAngle is the angle in radians between two unit vectors (0 = aligned, pi = opposite),
+// clamped against floating-point drift. The shot/aim methods below use it; sim has its own
+// copy for the dribble resolver.
+func ballAngle(normal, facing geom.Vec) float64 {
+	cos := geom.Dot(normal, facing)
+	if cos > 1 {
+		cos = 1
+	} else if cos < -1 {
+		cos = -1
+	}
+	return math.Acos(cos)
 }
 
-// Eval evaluates the quantity at the given angle in RADIANS, where 0 is dead in front of
-// the player and pi is directly behind.
-func (s CurveSpec) Eval(angle float64) float64 {
-	return s.Curve(s.Front, s.Back, 0, math.Pi, angle)
-}
-
-// PlayerTuning is the full per-player tuning. A role preset is simply a PlayerTuning
-// value, so different players configure distinct bounce, stickiness, shot power,
-// speed, and size (a defensive keeper versus an attacking striker).
+// PlayerTuning is the full per-player parameter set: bounce, stickiness, shot power,
+// speed, size, trap behaviour, and the capture/control/centre-pull cones (the section
+// documented in the README). Every player on the pitch shares ONE PlayerTuning value --
+// keeper, defenders, midfielders and the attacker are all physically identical (see
+// TuningForRole); Role selects only AI behaviour, never stats. To change a parameter for
+// everyone, edit DefaultPlayerTuning below: it is the single source of truth.
 type PlayerTuning struct {
 	// Body / motion. MaxSpeed is a SOFT cap: the player's own acceleration cannot push
 	// past it, but a knock can exceed it and friction (not a hard clamp) bleeds the
@@ -205,13 +207,13 @@ type TouchQuality struct {
 	ConeDebuffRadians float64
 }
 
-// captureMul maps a coefficient in [-1,1] to the capture-speed multiplier (1.0 at 0).
-func (tq TouchQuality) captureMul(coef float64) float64 {
+// CaptureMul maps a coefficient in [-1,1] to the capture-speed multiplier (1.0 at 0).
+func (tq TouchQuality) CaptureMul(coef float64) float64 {
 	return triLerp(tq.CaptureWorst, 1, tq.CaptureBest, clampUnitSigned(coef))
 }
 
-// restitutionMul maps a coefficient in [-1,1] to the restitution multiplier (1.0 at 0).
-func (tq TouchQuality) restitutionMul(coef float64) float64 {
+// RestitutionMul maps a coefficient in [-1,1] to the restitution multiplier (1.0 at 0).
+func (tq TouchQuality) RestitutionMul(coef float64) float64 {
 	return triLerp(tq.RestitutionWorst, 1, tq.RestitutionBest, clampUnitSigned(coef))
 }
 
@@ -245,27 +247,27 @@ func clampUnit(v float64) float64 {
 	return v
 }
 
-// centerPullGrip is the centre-pull's grip at the given possession: it rises from
+// CenterPullGrip is the centre-pull's grip at the given possession: it rises from
 // CenterPullGripFloor (possession 0) to 1 (full possession). A high floor means possession
 // changes the centre-pull only a little.
-func (s PlayerTuning) centerPullGrip(possession float64) float64 {
+func (s PlayerTuning) CenterPullGrip(possession float64) float64 {
 	return s.CenterPullGripFloor + (1-s.CenterPullGripFloor)*possession
 }
 
-// stickinessGrip is the stickiness grip at the given possession: 1 at a fresh touch, trimmed
+// StickinessGrip is the stickiness grip at the given possession: 1 at a fresh touch, trimmed
 // slightly DOWN with possession by StickinessPossessionDebuff (a settled carrier is a hair
 // less sticky).
-func (s PlayerTuning) stickinessGrip(possession float64) float64 {
+func (s PlayerTuning) StickinessGrip(possession float64) float64 {
 	return 1 - s.StickinessPossessionDebuff*possession
 }
 
-// captureConeRadians is the reliable-capture cone half-angle adjusted by the touch
+// CaptureCone is the reliable-capture cone half-angle adjusted by the touch
 // coefficient, ASYMMETRICALLY: the buff (coef > 0) WIDENS it a little (ConeBonusRadians per
 // unit) for the owning team, while the debuff (coef < 0) NARROWS it a lot (the larger
 // ConeDebuffRadians per unit) so a debuffed opponent's cone gets way smaller and it catches
 // far less off the dead-on line. Never negative. (Dead-on, angle 0, is always inside the cone,
 // so shots/captures straight on are unchanged -- only off-axis catching shrinks.)
-func (s PlayerTuning) captureConeRadians(coef, trapAura float64) float64 {
+func (s PlayerTuning) CaptureCone(coef, trapAura float64) float64 {
 	per := s.TouchQuality.ConeBonusRadians
 	if coef < 0 {
 		per = s.TouchQuality.ConeDebuffRadians
@@ -276,19 +278,53 @@ func (s PlayerTuning) captureConeRadians(coef, trapAura float64) float64 {
 	return 0
 }
 
-// controlConeRadians is the half-angle within which roll-to-front control is at full strength.
+// ControlCone is the half-angle within which roll-to-front control is at full strength.
 // It is NOT affected by the team possession buff/debuff: the player's OWN possession widens it
 // (ControlConePossessionBonus at full) and a held trap widens it a little (ControlConeTrapBonus),
 // so a settled or trapping carrier steers the ball over a wider arc. Inputs are clamped to [0,1].
-func (s PlayerTuning) controlConeRadians(possession, trapAura float64) float64 {
+func (s PlayerTuning) ControlCone(possession, trapAura float64) float64 {
 	return s.ControlConeRadians + s.ControlConePossessionBonus*clampUnit(possession) + s.ControlConeTrapBonus*clampUnit(trapAura)
 }
 
-// centerPullConeRadians is the half-angle within which the centre-pull is at full strength. Like
+// CenterPullCone is the half-angle within which the centre-pull is at full strength. Like
 // the control cone it is NOT team-buff/debuff scaled; the player's own possession and a held trap
 // widen it. Inputs are clamped to [0,1].
-func (s PlayerTuning) centerPullConeRadians(possession, trapAura float64) float64 {
+func (s PlayerTuning) CenterPullCone(possession, trapAura float64) float64 {
 	return s.CenterPullConeRadians + s.CenterPullConePossessionBonus*clampUnit(possession) + s.CenterPullConeTrapBonus*clampUnit(trapAura)
+}
+
+// The curve SHAPE for each angle-dependent quantity is FIXED here (hardcoded, never a
+// tunable) -- only the front/back endpoints in the CurveSpec are data. RestitutionAt and
+// CaptureSpeedAt evaluate across the whole 0..pi arc; CenterPullAt/StickinessAt/ControlAt are
+// FULL strength within a cone (front..coneEdge) and then follow the curve from the cone edge
+// to the back, so coneEdge is passed in by the caller.
+
+// RestitutionAt is the bounce restitution at `angle` (0 = front, pi = back): inverse-quadratic.
+func (s PlayerTuning) RestitutionAt(angle float64) float64 {
+	return InverseQuadraticCurve(s.Restitution.Front, s.Restitution.Back, 0, math.Pi, angle)
+}
+
+// CaptureSpeedAt is the capture speed at `angle`: linear front -> back.
+func (s PlayerTuning) CaptureSpeedAt(angle float64) float64 {
+	return LinearCurve(s.CaptureSpeed.Front, s.CaptureSpeed.Back, 0, math.Pi, angle)
+}
+
+// CenterPullAt is the centre-pull at `angle`: full within the cone (angle <= coneEdge), then
+// inverse-quadratic from the cone edge to the back.
+func (s PlayerTuning) CenterPullAt(coneEdge, angle float64) float64 {
+	return InverseQuadraticCurve(s.CenterPull.Front, s.CenterPull.Back, coneEdge, math.Pi, angle)
+}
+
+// StickinessAt is the sticky hold at `angle`: full within the cone, then inverse-quadratic
+// from the cone edge to the back.
+func (s PlayerTuning) StickinessAt(coneEdge, angle float64) float64 {
+	return InverseQuadraticCurve(s.Stickiness.Front, s.Stickiness.Back, coneEdge, math.Pi, angle)
+}
+
+// ControlAt is the roll-to-front control at `angle`: full within the cone, then linear from
+// the cone edge to the back.
+func (s PlayerTuning) ControlAt(coneEdge, angle float64) float64 {
+	return LinearCurve(s.Control.Front, s.Control.Back, coneEdge, math.Pi, angle)
 }
 
 // shotFalloffExp shapes how shot power tapers across the falloff band -- from the full-power cone
@@ -321,6 +357,11 @@ func frontShotFalloff(angle float64) float64 {
 	return 1 - math.Pow(x, shotFalloffExp)
 }
 
+// InFireCone reports whether a ball sitting `angle` radians off the facing is shootable at
+// all: the left-click shot fires only within the front 180deg (the +-90deg fire cone). The
+// cone SHAPE is fixed/hardcoded, not a tunable.
+func InFireCone(angle float64) bool { return angle < fireConeHalfAngle }
+
 // aimAssistWeight returns the shot aim-assist blend weight for a ball sitting `angle` radians off
 // the facing direction: the full ShootAimAssist anywhere in the fire cone (UNIFORM -- no angular
 // degradation), and 0 at or behind the +-90deg arc edge (the shot is front-180 only) or when the
@@ -352,7 +393,7 @@ func (s PlayerTuning) ShootDirection(radial, facing geom.Vec) geom.Vec {
 // ShootLaunchVelocity returns the velocity a left-click shot ADDS to the ball for a ball sitting
 // along unit `radial` (player centre -> ball) with the player facing unit `facing`, at the given
 // 0..1 charge: the aim-assisted launch direction (ShootDirection) scaled by the charge- and
-// angle-scaled power -- MinShootFactor..1 of front power (Shoot.Eval(0)), tapered off the front
+// angle-scaled power -- MinShootFactor..1 of front power (Shoot.Front), tapered off the front
 // cone by frontShotFalloff. Returns the zero vector for a ball at/behind the +-90deg fire edge (no
 // shot fires there). This is the SINGLE SOURCE OF TRUTH for a shot's launch: the sim fires with it
 // (see shoot) and the AI predicts from it (see control.launchAligned), so the AI's aim can never
@@ -363,81 +404,6 @@ func (s PlayerTuning) ShootLaunchVelocity(radial, facing geom.Vec, charge float6
 		return geom.Vec{}
 	}
 	factor := s.MinShootFactor + (1-s.MinShootFactor)*charge
-	power := s.Shoot.Eval(0) * factor * frontShotFalloff(angle)
+	power := s.Shoot.Front * factor * frontShotFalloff(angle)
 	return s.ShootDirection(radial, facing).Scale(power)
-}
-
-// DefaultPlayerTuning returns the baseline player tuning.
-func DefaultPlayerTuning(shootForce float64) PlayerTuning {
-	return PlayerTuning{
-		Radius:          18,
-		Mass:            20,
-		Friction:        -1.5,
-		MaxSpeed:        140,
-		Acceleration:    300,
-		TurnRate:        14, // snappy but non-instant: a full 180 turn takes ~0.22s (limits both movement and the human cursor aim)
-		TouchRange:      2,
-		PullRange:       5,                                            // base centre-pull reach (the dribble attraction; a held trap extends this)
-		PossessionRange: 5,                                            // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionReach)
-		Restitution:     CurveSpec{InverseQuadraticCurve, 0.23, 0.24}, // front 0.23: controlled front touch (still >0.20 so a hard pass deflects, not sticks); back 0.24: springier behind. Multipliers unchanged -> buffed ~0.19, debuffed ~0.43
-		CaptureSpeed:    CurveSpec{LinearCurve, 276.125, 30},          // baseline front 276.125 (whole band shifted +17.5% from 235); the team buff is multiplicative (CaptureBest), so the buffed endpoint scales with it and stays above baseline
-		CenterPull:      CurveSpec{InverseQuadraticCurve, 770, 0},     // baseline pull trimmed a touch (800 -> 770)
-		Stickiness:      CurveSpec{InverseQuadraticCurve, 420, 30},    // front restored to 420; small baseline hold at the back (0 -> 30)
-		Control:         CurveSpec{LinearCurve, 1160.25, 340},         // baseline roll-to-front front lowered in two steps (-25% then -15%) from 1820 -> 1160.25; TrapControlBonus is re-bumped to keep the FULL-TRAP control unchanged
-		Shoot:           CurveSpec{LinearCurve, shootForce, shootForce * 0.3},
-		ControlDamping:  11,
-		OrbitStick:      8,
-
-		CaptureConeRadians: 0.5235987755982988, // 30deg reliable-capture cone for a good touch
-		CaptureConeSoft:    0.9599310885968813, // 55deg falloff band past the reliable cone
-
-		ControlConeRadians:         0.3839724354387525,  // 22deg: full roll-to-front control within this cone (44deg total)
-		ControlConePossessionBonus: 0.08726646259971647, // +5deg at full player possession (-> 27deg)
-		CaptureConeTrapBonus:       0.05235987755982988, // +3deg to the capture cone at full trap
-		ControlConeTrapBonus:       0.03490658503988659, // +2deg to the control cone at full trap
-
-		CenterPullConeRadians:         0.08726646259971647,  // 5deg/side: full centre-pull cone (10deg total baseline)
-		CenterPullConePossessionBonus: 0.017453292519943295, // +1deg/side at full player possession
-		CenterPullConeTrapBonus:       0.03490658503988659,  // +2deg/side at full trap (-> 8deg/side, 16deg total at max)
-
-		SeatStrength: 14,
-
-		PossessionBuildSeconds:     1.5,
-		PossessionReleaseSeconds:   0.4,
-		CenterPullGripFloor:        0.65, // possession changes the centre-pull much less than before (0.65 -> 1.0, vs the old 0.3 -> 1.0)
-		StickinessPossessionDebuff: 0.03, // possession trims stickiness a hair (down to 0.97 at full)
-
-		PossessionSpeedFactor: 0.925, // ~7.5% slower top speed while carrying the ball
-		PossessionAccelFactor: 0.925, // ~7.5% slower acceleration while carrying the ball
-
-		PossessionControlBonus: 0.09, // up to +9% roll-to-front control at full possession (x1.09)
-		PossessionStealRate:    1.0,  // a challenger drains/gains 1.0 possession per second while contesting the ball
-
-		MinShootFactor:   0.35,
-		ShootSpeedFactor: 0.35,
-		ShootAccelFactor: 0.4,
-
-		ShootAimAssist: 0.97, // blend 97% from the ball's radial toward the facing, uniformly across the front hemisphere
-
-		TrapPullBonus:         1.0,
-		TrapRangeBonus:        6,
-		TrapControlBonus:      2.5875888817, // re-bumped so full-trap control front = 1160.25*(1+2.5875888817) = 4162.5 (= the old 1820*2.2870879): the FULL-TRAP ("buffed") control is unchanged after the baseline drops (-25% then -15%)
-		TrapStickinessBonus:   0.5,       // a held trap stiffens the sticky hold (up to +50% at full trap)
-		TrapAccelFactor:       0.55,
-		TrapSpeedFactor:       0.5,
-		TrapCaptureBonus:      60, // small capture bump; the trap now relies on deadening the bounce
-		TrapRadiusBonus:       0,
-		TrapRestitutionFactor: 0.4, // reduced further (was 0.8): even a full trap only damps a bounce to ~60%, so a max shot deflects off a trapping keeper
-
-		TouchQuality: TouchQuality{
-			OwnTeamMax:        1.0,                 // owning team at full charge -> the cleanest touch
-			OtherTeam:         -1.0,                // other team at the owner's full charge -> worst-case touch (ball flies off)
-			CaptureWorst:      0.628,               // debuffed front capture ~173 (276.125*0.628): a conceding opponent absorbs even less, so the ball bounces off it sooner
-			CaptureBest:       1.025,               // buffed front capture ~283 (276.125*1.025): a buffed teammate captures slightly firmer balls than baseline (still far below a full shot, so it also bounces a point-blank blast)
-			RestitutionWorst:  1.875,               // debuffed front bounce ~0.45 (0.24*1.875): HELD at the prior value, springier than neutral so a conceding team still deflects the ball off
-			RestitutionBest:   0.844,               // buffed front bounce ~0.20 (0.24*0.844): HELD at the prior value, a buffed teammate deflects gentler than neutral (still bounces a blast)
-			ConeBonusRadians:  0.05235987755982988, // ~3deg: a slight cone widening at full team buff (biggest cone)
-			ConeDebuffRadians: 0.20943951023931953, // ~12deg: a debuffed opponent's cone shrinks a lot (to ~10deg) but a bit less than before (was ~15deg/~7deg) -- still well under the baseline
-		},
-	}
 }

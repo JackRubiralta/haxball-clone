@@ -4,6 +4,12 @@
 // cleanly on SIGINT/SIGTERM and on the window closing.
 package main
 
+// Kept in its own first import group so it initializes BEFORE Ebiten's package
+// tree: it mutes xgb's logger before Ebiten's internal/ui init() opens the X11
+// connection that would otherwise print harmless "Could not get authority info"
+// warnings on Wayland. No-op on non-Linux. See package x11quiet.
+import _ "phootball/internal/x11quiet"
+
 import (
 	"context"
 	"errors"
@@ -63,14 +69,34 @@ func run(ctx context.Context, name string, args []string, stderr io.Writer) erro
 	}
 	slog.SetDefault(logger)
 
-	app := buildApp(ctx, opts)
-	app.ConfigureCamera(opts.Camera, opts.Zoom)
-	app.ConfigureAudio(opts.Volume, opts.Mute)
+	// Persisted user config is the base; an EXPLICITLY-passed flag overrides it, an un-passed
+	// flag leaves the saved value alone (so a double-clicked exe keeps the user's prefs).
+	uc := menu.LoadUserConfig()
+	app := buildApp(ctx, opts, uc)
+	p := app.Prefs()
+	cam, zoom := p.CameraMode, p.Zoom
+	if opts.Set["camera"] {
+		cam = opts.Camera
+	}
+	if opts.Set["zoom"] {
+		zoom = opts.Zoom
+	}
+	app.ConfigureCamera(cam, zoom)
+	vol, muted := p.Volume, p.Muted
+	if opts.Set["volume"] {
+		vol = opts.Volume
+	}
+	if opts.Set["mute"] {
+		muted = opts.Mute
+	}
+	app.ConfigureAudio(vol, muted)
 	return runGame(&Game{app: app}, "phootball")
 }
 
-// buildApp opens the menu, or jumps straight into a match for the fast-path flags.
-func buildApp(ctx context.Context, opts config.GameOptions) *menu.App {
+// buildApp opens the menu (seeded from the persisted UserConfig), or jumps straight into a
+// match for the fast-path flags. The fast paths build from the CLI config and don't persist a
+// setup; only the menu path carries the saved settings + tuning.
+func buildApp(ctx context.Context, opts config.GameOptions, uc menu.UserConfig) *menu.App {
 	switch {
 	case opts.Solo:
 		field := sim.NewFieldFromGeometry(opts.Config.Geometry)
@@ -87,13 +113,23 @@ func buildApp(ctx context.Context, opts config.GameOptions) *menu.App {
 		m, ctrls := vsAI(opts, false)
 		return menu.NewPlayingApp(ctx, m, ctrls, false)
 	default:
-		// The lobby is where the pitch/rules are chosen, so seed only the seed and the
-		// AI difficulty from the CLI (field/size choices stay consistent in the lobby).
-		s := menu.DefaultSettings()
-		s.TeamSize = opts.TeamSize
-		s.Seed = opts.Config.Seed
-		s.SeedCLI(opts.TeamSize, opts.Difficulty)
-		return menu.NewApp(ctx, s)
+		// Start from the saved settings; apply CLI seeds only when explicitly passed (an
+		// un-passed flag must not clobber the user's saved lobby). The pitch/rules are chosen
+		// in the lobby, so only team size, seed, and AI difficulty are seeded from the CLI.
+		if opts.Set["team-size"] {
+			uc.Settings.TeamSize = opts.TeamSize
+		}
+		if opts.Set["seed"] {
+			uc.Settings.Seed = opts.Config.Seed
+		}
+		if opts.Set["team-size"] || opts.Set["difficulty"] {
+			diff := opts.Difficulty
+			if !opts.Set["difficulty"] {
+				diff = uc.Settings.Teams[0].Difficulty // keep the saved difficulty
+			}
+			uc.Settings.SeedCLI(uc.Settings.TeamSize, diff)
+		}
+		return menu.NewApp(ctx, uc)
 	}
 }
 

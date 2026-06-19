@@ -3,6 +3,7 @@ package sim
 import (
 	"math"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 )
 
@@ -114,7 +115,7 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			// to the side/back floor, so the ball bounces off; trapping raises it back.
 			// The team possession buff widens the cone slightly for the owning team (and
 			// narrows it for the conceding team) via the touch coefficient.
-			coneRadians := player.Tuning.captureConeRadians(quality, player.trapAura)
+			coneRadians := player.Tuning.CaptureCone(quality, player.trapAura)
 			cone := 1.0
 			if over := angle - coneRadians; over > 0 {
 				if player.Tuning.CaptureConeSoft <= 0 {
@@ -124,9 +125,16 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 				}
 			}
 
+			// Capture speed is FLAT at the front peak inside the reliable cone (cone == 1), then drops
+			// linearly to the side/back floor across the soft band (cone 1 -> 0), then stays at the
+			// floor. So a ball captured dead-on is captured ANYWHERE in the cone -- it does not start
+			// bouncing just because it is a touch off-centre. (This uses the front peak, NOT
+			// CaptureSpeedAt(angle), which decayed with angle even inside the cone and made an
+			// off-centre touch bounce at the same speed a dead-on one stuck. This mirrors how
+			// Stickiness/Control/CenterPull are full-strength within their cone, then curve from the edge.)
 			side := player.Tuning.CaptureSpeed.Back
-			captureSpeed := side + (player.Tuning.CaptureSpeed.Eval(angle)-side)*cone
-			captureSpeed *= player.Tuning.TouchQuality.captureMul(quality)
+			captureSpeed := side + (player.Tuning.CaptureSpeed.Front-side)*cone
+			captureSpeed *= player.Tuning.TouchQuality.CaptureMul(quality)
 			captureSpeed += player.Tuning.TrapCaptureBonus * player.trapAura
 
 			restitution := 0.0
@@ -136,8 +144,8 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 				// which swells then weakens as the trap is over-held -- see entity.trapAuraShape),
 				// and the touch quality scales it too -- a clean touch deadens it, a cold one livens it.
 				trapDeaden := 1 - math.Min(1, player.trapAura*player.Tuning.TrapRestitutionFactor)
-				restitution = player.Tuning.Restitution.Eval(angle) * (1 + (1 - cone)) * trapDeaden
-				restitution *= player.Tuning.TouchQuality.restitutionMul(quality)
+				restitution = player.Tuning.RestitutionAt(angle) * (1 + (1 - cone)) * trapDeaden
+				restitution *= player.Tuning.TouchQuality.RestitutionMul(quality)
 				if restitution > 0.95 {
 					restitution = 0.95
 				}
@@ -210,8 +218,8 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	// always present -- CenterPullGripFloor is high), while stickiness is, if anything, very
 	// slightly REDUCED by possession (StickinessPossessionDebuff). Plus the trap modifiers
 	// (a held trap strengthens and lengthens the centre-pull).
-	centerPullGrip := player.Tuning.centerPullGrip(player.possession)
-	stickinessGrip := player.Tuning.stickinessGrip(player.possession)
+	centerPullGrip := player.Tuning.CenterPullGrip(player.possession)
+	stickinessGrip := player.Tuning.StickinessGrip(player.possession)
 	trapPullMul := 1 + player.Tuning.TrapPullBonus*player.trapAura
 	pullRange := player.pullRadius()
 
@@ -222,9 +230,8 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 	if gap >= player.Tuning.TouchRange && gap < pullRange {
 		// Full centre-pull within its own cone (player-possession + trap widened, NOT team
 		// buff/debuff), then the CenterPull curve from that edge -- like control and stickiness.
-		cp := player.Tuning.CenterPull
-		ccone := player.Tuning.centerPullConeRadians(player.possession, player.trapAura)
-		strength := cp.Curve(cp.Front, cp.Back, ccone, math.Pi, angle) * centerPullGrip * trapPullMul
+		ccone := player.Tuning.CenterPullCone(player.possession, player.trapAura)
+		strength := player.Tuning.CenterPullAt(ccone, angle) * centerPullGrip * trapPullMul
 		// Distance falloff: STRONGEST near the surface, dropping off steeply as the ball gets
 		// further out (the exponent exaggerates how fast it weakens), so the player only draws in
 		// a ball that is already close -- a far ball in the pull radius is barely pulled.
@@ -269,9 +276,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// little by a held trap) is SHARED by both the sticky hold and the roll-to-front control
 		// below: within the cone the ball is held AND steered at full strength, then both taper
 		// from the cone edge -- so the ball is never steered firmly to a spot it holds weakly.
-		cs := player.Tuning.Control
-		st := player.Tuning.Stickiness
-		controlCone := player.Tuning.controlConeRadians(player.possession, player.trapAura)
+		controlCone := player.Tuning.ControlCone(player.possession, player.trapAura)
 
 		// HOLD-INDUCED orbital speed. tHat is the CCW unit tangent; oAct is the ball's ACTUAL orbital
 		// (tangential, relative-to-player) speed, signed. `heldOrbital` is the orbital speed THIS
@@ -294,7 +299,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// baseline hold even at the back). Below the cap the separation is cancelled (the ball
 		// clings); a push past it -- a shot or a hard bump -- frees the ball with the excess.
 		separating := geom.Dot(ball.Velocity.Sub(player.Velocity), normal)
-		holdCap := st.Curve(st.Front, st.Back, controlCone, math.Pi, angle) * stickinessGrip *
+		holdCap := player.Tuning.StickinessAt(controlCone, angle) * stickinessGrip *
 			(1 + player.Tuning.TrapStickinessBonus*player.trapAura) * deltaTime
 
 		// RETENTION measures how well the player's FULL hold contains the ball this frame: the sticky
@@ -331,7 +336,7 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// Control (roll-to-front): FULL strength within the shared control cone (above), then the
 		// Control curve from that edge to the back. It still gets the trap and per-player
 		// possession MAGNITUDE boosts on top of the cone widening.
-		strength := cs.Curve(cs.Front, cs.Back, controlCone, math.Pi, angle) *
+		strength := player.Tuning.ControlAt(controlCone, angle) *
 			(1 + player.Tuning.TrapControlBonus*player.trapAura) *
 			(1 + player.Tuning.PossessionControlBonus*player.possession)
 		tangential := player.Facing.Sub(normal.Scale(cos))
@@ -437,7 +442,7 @@ func shoot(player *Player, ball *Ball) bool {
 	}
 	// The left-click shot only works in the front 180deg the player faces (the full front
 	// hemisphere) -- it cannot kick a ball sitting at or behind the +-90deg edge.
-	if angle >= fireConeHalfAngle {
+	if !config.InFireCone(angle) {
 		return false
 	}
 
@@ -473,7 +478,7 @@ func push(player *Player, ball *Ball) bool {
 	if distance > 0 {
 		dir = toBall.Scale(1 / distance) // pure radial (player centre -> ball), no aim assist
 	}
-	power := player.Tuning.Shoot.Eval(0) * pushPowerFactor // a 70%-power jab, the same in every direction
+	power := player.Tuning.Shoot.Front * pushPowerFactor // a 70%-power jab, the same in every direction
 	ball.Velocity = ball.Velocity.Add(dir.Scale(power))
 	player.possession = 0
 	return true

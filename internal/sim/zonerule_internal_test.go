@@ -169,7 +169,7 @@ func TestGoalAreaKeeperOnly(t *testing.T) {
 	if box.empty() {
 		t.Fatal("standard field should have a left goal area")
 	}
-	if defTeam.Players[0].Role != RoleGoalkeeper {
+	if defTeam.Players[0].Role != RoleKeeper {
 		t.Fatalf("expected P0 of the owning team to be the keeper")
 	}
 	rad := defTeam.Players[0].Radius()

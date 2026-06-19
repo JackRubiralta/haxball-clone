@@ -4,6 +4,12 @@
 // collisions and exits cleanly on SIGINT/SIGTERM and on the window closing.
 package main
 
+// Kept in its own first import group so it initializes BEFORE Ebiten's package
+// tree: it mutes xgb's logger before Ebiten's internal/ui init() opens the X11
+// connection that would otherwise print harmless "Could not get authority info"
+// warnings on Wayland. No-op on non-Linux. See package x11quiet.
+import _ "phootball/internal/x11quiet"
+
 import (
 	"context"
 	"errors"
@@ -20,7 +26,6 @@ import (
 	"phootball/internal/audio"
 	"phootball/internal/cliutil"
 	"phootball/internal/config"
-	"phootball/internal/geom"
 	"phootball/internal/input"
 	"phootball/internal/logging"
 	"phootball/internal/netcode"
@@ -63,46 +68,65 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	screen.Fill(color.White)
 	snap, ok := g.client.Snapshot()
 	if !ok {
+		screen.Fill(color.White)
 		ebitenutil.DebugPrint(screen, "connecting to server...")
 		return
 	}
-
 	// Build the field from the geometry once, rebuilding only if it changes.
 	if g.field == nil || snap.Geometry != g.geo {
 		g.field = sim.NewFieldFromGeometry(snap.Geometry)
 		g.geo = snap.Geometry
 	}
+	g.viewport = render.FrameFromSnapshot(screen, adapt(snap), g.field, g.showStats)
+}
 
-	g.viewport = render.Field(screen, g.field, snap.LeftColor, snap.RightColor)
-	var ballPos geom.Vec
-	for _, e := range snap.Entities {
-		if e.Kind == netcode.KindBall {
-			ballPos = e.Position
-			render.BallAt(screen, e.Position, e.Radius)
-		} else {
-			render.PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge)
+// adapt projects a netcode.Snapshot into the render-agnostic render.SnapshotView. It lives here
+// (the caller) so the render package never imports netcode.
+func adapt(snap netcode.Snapshot) render.SnapshotView {
+	ents := make([]render.SnapshotEntity, len(snap.Entities))
+	for i, e := range snap.Entities {
+		ents[i] = render.SnapshotEntity{
+			IsBall:      e.Kind == netcode.KindBall,
+			Position:    e.Position,
+			Facing:      e.Facing,
+			Radius:      e.Radius,
+			Color:       e.Color,
+			Number:      e.Number,
+			ShootCharge: e.ShootCharge,
+			TrapCharge:  e.TrapCharge,
 		}
 	}
-	render.ZoneIndicators(screen, g.field, config.Ruleset{
+	return render.SnapshotView{
+		Geometry:             snap.Geometry,
+		LeftName:             snap.LeftName,
+		RightName:            snap.RightName,
+		LeftColor:            snap.LeftColor,
+		RightColor:           snap.RightColor,
+		LeftScore:            snap.LeftScore,
+		RightScore:           snap.RightScore,
+		ClockSeconds:         snap.ClockSeconds,
+		PhaseLabel:           snap.PhaseLabel,
+		InShootout:           snap.InShootout,
+		PenLeftGoals:         snap.PenLeftGoals,
+		PenLeftTaken:         snap.PenLeftTaken,
+		PenRightGoals:        snap.PenRightGoals,
+		PenRightTaken:        snap.PenRightTaken,
 		OffsideEnabled:       snap.OffsideEnabled,
 		OffsideFrac:          snap.OffsideFrac,
 		PenaltyBoxMaxPlayers: snap.PenaltyBoxMaxPlayers,
 		GoalAreaMaxPlayers:   snap.GoalAreaMaxPlayers,
-	})
-	render.DrawHUD(screen, render.HUDFromSnapshot(
-		snap.LeftName, snap.RightName, snap.LeftColor, snap.RightColor,
-		snap.LeftScore, snap.RightScore, snap.ClockSeconds, snap.PhaseLabel,
-		snap.InShootout, snap.PenLeftGoals, snap.PenLeftTaken, snap.PenRightGoals, snap.PenRightTaken))
-	render.DrawClientOverlays(screen, snap.Celebrating, snap.PhaseLabel, snap.GoalText,
-		goalTint, ballPos, snap.Geometry.ScreenWidth, snap.Geometry.ScreenHeight,
-		snap.Finished, snap.WinnerText)
-	if g.showStats {
-		// Identical numbers to the local HUD -- built from the snapshot's stats projection.
-		render.StatsPanel(screen, render.StatsModelFromStats(
-			snap.Stats, snap.LeftName, snap.RightName, snap.LeftColor, snap.RightColor))
+		Celebrating:          snap.Celebrating,
+		GoalText:             snap.GoalText,
+		WinnerText:           snap.WinnerText,
+		Finished:             snap.Finished,
+		Paused:               snap.Paused,
+		GoalTint:             goalTint,
+		Entities:             ents,
+		Stats:                snap.Stats,
+		// HaveSelf stays false here: the standalone client has no self-indicator (the snapshot
+		// EntityState carries no PlayerID yet -- wired in the multiplayer phase).
 	}
 }
 
