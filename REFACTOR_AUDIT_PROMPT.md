@@ -92,6 +92,58 @@ its value. High-quality is the *minimum* edit that removes a real problem — no
 - **Diff size is a cost.** A 4-file rename that buys clarity can be worth it; a 40-file rename for
   a marginally nicer word usually isn't. Weigh churn against benefit and prefer the smaller win.
 
+# NAMING, FILES & FUNCTIONS (bring the codebase to these — Effective Go / Go Code Review Comments)
+Naming and structure are first-class refactor targets: honest, idiomatic names and well-placed,
+single-purpose units are most of what "readable" means. Fix violations as `[refactor]`s, prefer
+`gopls` rename, and weigh churn vs. benefit (Minimalism) — a clarity-buying 4-file rename is worth
+it; a 40-file rename for a marginally nicer word usually isn't.
+
+**Identifiers**
+- `MixedCaps`, never `under_scores`; exported `MixedCaps`, unexported `mixedCaps`. No
+  type-encoded/Hungarian prefixes (`strName`, `iCount`).
+- Acronyms keep one case: `ID`, `URL`, `HTTP`, `JSON`, `AI` → `playerID`, `parseURL` (not `Id`/`Url`).
+- **No stutter across the package seam:** the package name is half the identifier —
+  `config.Config`→`config.Default`, not `config.ConfigDefault`; avoid `player.PlayerState`.
+- Getters carry no `Get` (`p.Name()`, not `p.GetName()`); the setter is `SetName`.
+- Single-method interfaces end in `-er` and are named by behavior, not implementation (`Controller`,
+  `Reader`). Sentinel errors are `ErrFoo`; error types `FooError`; messages lowercase, no trailing
+  punctuation.
+- Receivers are short (1–2 letters), and the **same name on every method** of a type; never
+  `this`/`self`.
+- **Length scales with scope:** `i`/short locals in tight loops are fine; exported and
+  package-level names are descriptive. Strip filler nouns (`Manager`, `Data`, `Info`, `Helper`,
+  `Util`, `Base`) unless they add real meaning. Booleans read as predicates (`ok`, `hasBall`,
+  `isPaused`); doers are verbs.
+
+**Functions & methods**
+- **One job, one level of abstraction.** If a function needs a comment to introduce its "second
+  half," split it. Prefer guard clauses / early returns over deep nesting.
+- **Few parameters.** Replace a long positional list (especially a parade of bools) with a small
+  options/params struct. Accept interfaces, return concrete types — don't return an interface "to
+  be flexible."
+- Use **named returns sparingly** (docs, or naked return in a short body) — not in long functions.
+- **Order for top-down reading:** exported before unexported, constructor beside its type, related
+  methods grouped, callers above callees.
+
+**Files & packages**
+- File names are lowercase `snake_case.go` and describe their content (`keeper.go`,
+  `record_json.go`); tests sit beside code as `<name>_test.go`.
+- **One cohesive concept per file.** Split god files (the 1000-line `match.go` class) along natural
+  seams — by type or responsibility, not arbitrarily by length — and keep a type with its methods.
+- Package names are short, lowercase, singular, no `under_scores`, and **no grab-bags** (`util`,
+  `common`, `helpers`, `misc`, `base`); each package has one clear purpose and a package doc
+  comment. Imports point one way (respect the existing layering).
+- Doc comments start with the symbol name (`// Match advances…`), say *why*, and point across
+  module seams where a concept spans packages.
+
+**A NAME can be load-bearing (wire safety).** Some names are part of a contract: `encoding/gob`
+encodes struct **field names**; `encoding/json` uses the field name as the key absent a tag; CLI
+**flag strings** (`-difficulty`), config keys, struct tags, golden/asset file paths, and
+reflection lookups all match by literal name. Renaming these **changes behavior/wire — it is not a
+pure `[refactor]`.** To improve such a name, preserve the external name (add `json:"oldName"`, keep
+the gob field name, keep the flag string) so the format is unchanged; otherwise treat it as out of
+scope or an explicitly-acknowledged change. Never silently rename a serialized field or a flag.
+
 # METHOD (do this, in order; think before each phase, reflect after each verify)
 1. **Map.** Build a model of every package and the dependency graph. Investigate before you act —
    never claim or change code you haven't opened. List the invariants you must not break (below).
@@ -143,6 +195,15 @@ its value. High-quality is the *minimum* edit that removes a real problem — no
 - Inconsistent idioms for the same task → unify on the clearest one already in the codebase.
 - A "helper" / generic abstraction with a single caller → inline it (the reverse smell — see
   counter-example).
+- **Naming violations:** stutter (`pkg.PkgThing`), `Get`-prefixed getters, `Id`/`Url`-cased
+  acronyms, `under_scored` identifiers, filler-noun names (`*Manager`, `*Helper`, `*Util`) → rename
+  to the idiom (`[refactor]`; mind wire-safe names above).
+- **Grab-bag packages/files** (`util`, `common`, `misc`, `helpers`) and **god files** (one huge
+  file holding several concepts) → split along seams / rehome into a purposeful package.
+- **Long, multi-job functions**, deep nesting, or long positional-bool parameter lists → extract or
+  restructure (within scope; apply the rule of three before introducing an abstraction).
+- A file whose name no longer matches its content, or a type living in the wrong file/package →
+  move it to its honest home.
 
 # TESTS ARE GROUND TRUTH
 - **Never delete or weaken a test to make work "pass."** If a test seems wrong, surface it; don't
@@ -163,6 +224,9 @@ its value. High-quality is the *minimum* edit that removes a real problem — no
 - Whole gate at once: `make` (= vet build test test-race headless golden).
 - If `staticcheck`/`golangci-lint` is available, run it on touched packages — but don't take on
   pre-existing lint debt outside your finding (note it as `DEFERRED:`).
+- **After any rename/move:** `grep` the old name across the whole repo (comments, struct tags,
+  string literals, flag strings, golden/asset paths) to catch references the compiler can't see,
+  and confirm no serialized field, JSON key, or flag string changed unintentionally.
 
 # HARD GUARDRAILS (the few things that are genuinely non-negotiable)
 - **Determinism & headless invariants.** No wall-clock, no RNG outside the seeded path, no
@@ -217,7 +281,9 @@ Then execute the ranked fixes in phases. After each phase, append to `CODE_AUDIT
 - whether any golden was intentionally regenerated (and the exact diff/why).
 End with a **scorecard**: top wins landed; `[fix]`es and the bugs they closed; `DEFERRED:` items
 with reason; and the net effect (lines removed, duplications killed, sources-of-truth unified,
-names fixed, drifted lists repaired). Favor fact-based reporting over self-congratulation.
+names made idiomatic, stutter removed, god files split, code rehomed to its right
+package/file, functions simplified, drifted lists repaired). Favor fact-based reporting over
+self-congratulation.
 
 # STOP CONDITIONS
 Stop when the high/medium-severity, high-confidence findings are fixed and verified, or when the
