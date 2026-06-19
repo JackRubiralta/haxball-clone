@@ -1,5 +1,7 @@
 package control
 
+import "phootball/internal/config"
+
 // aiTuning collects every behavioural constant in one place so the AI can be tuned and
 // swept from tests without hunting through the logic files. The default values are tuned
 // for the standard pitch (880x480) but are expressed relative to player/field sizes
@@ -31,16 +33,16 @@ type aiTuning struct {
 
 	// Formation shape. Each outfielder's depth band is chosen by its authoritative sim.Role()
 	// (see roleSlot), so the four roles are behaviourally distinct lines.
-	defenderDepth  float64 // normalized depth (0=own goal,1=enemy goal) of the defender line
+	defenderDepth   float64 // normalized depth (0=own goal,1=enemy goal) of the defender line
 	midfielderDepth float64 // normalized depth of the midfield line (between the defenders and attackers)
-	forwardDepth   float64 // normalized depth of the attacker line
-	widthMin      float64 // normalized lateral band edges for spreading a line
-	widthMax      float64
-	ballShiftX    float64 // how far the block slides toward the ball (fraction), along/across
-	ballShiftY    float64
-	attackBias    float64 // extra depth pushed up when our team has the ball
-	defendBias    float64 // extra depth dropped when defending
-	slotJitter    float64 // small deterministic per-player slot noise (world units)
+	forwardDepth    float64 // normalized depth of the attacker line
+	widthMin        float64 // normalized lateral band edges for spreading a line
+	widthMax        float64
+	ballShiftX      float64 // how far the block slides toward the ball (fraction), along/across
+	ballShiftY      float64
+	attackBias      float64 // extra depth pushed up when our team has the ball
+	defendBias      float64 // extra depth dropped when defending
+	slotJitter      float64 // small deterministic per-player slot noise (world units)
 
 	// Shooting.
 	shootRange       float64 // distance to goal under which shooting is considered at all
@@ -79,16 +81,16 @@ type aiTuning struct {
 	// Off-ball receiving movement.
 	supportHoldBallMove float64 // a standing supporter HOLDS its receiving spot (presents a stationary target so passes don't over-hit a drifting receiver) until the ball moves more than this from where the spot was picked, or the spot stops being safe/open -- then it re-picks
 	supportForwardBias  float64 // upfield bias of a supporting receiver's search (world units)
-	supportRangeFrac   float64 // distance the designated short supporter holds from the ball, as a fraction of pitch width
-	runForwardBias     float64 // stronger upfield bias for a give-and-go run after passing
+	supportRangeFrac    float64 // distance the designated short supporter holds from the ball, as a fraction of pitch width
+	runForwardBias      float64 // stronger upfield bias for a give-and-go run after passing
 
-	receiveControlFrac float64 // the receiver meets an incoming pass where it has slowed to this FRACTION of its own CaptureSpeed (the stick-speed); derived from the live capture so it auto-tracks the capture physics rather than a stale constant. See AI.receiveControlSpeed.
-	receiveMinSpeed    float64 // ball speed above which a loose ball counts as an in-flight pass to glide onto (vs a near-stopped ball to win)
-	receiveDeepenHot   bool    // when a hot pass never slows below clean-capture within reach, meet it at the DEEPEST reachable point (running WITH the ball, low relative impact) instead of the earliest (near head-on, high relative impact that bounces off)
-	receiveMatch       bool    // steer a receiver to run ALONG the ball's line (moving WITH the ball, low relative impact) instead of across/into it -- fixes the receiver overshooting/mis-aligning and the ball bouncing off or sailing past. See steerReceive.
+	receiveControlFrac   float64 // the receiver meets an incoming pass where it has slowed to this FRACTION of its own CaptureSpeed (the stick-speed); derived from the live capture so it auto-tracks the capture physics rather than a stale constant. See AI.receiveControlSpeed.
+	receiveMinSpeed      float64 // ball speed above which a loose ball counts as an in-flight pass to glide onto (vs a near-stopped ball to win)
+	receiveDeepenHot     bool    // when a hot pass never slows below clean-capture within reach, meet it at the DEEPEST reachable point (running WITH the ball, low relative impact) instead of the earliest (near head-on, high relative impact that bounces off)
+	receiveMatch         bool    // steer a receiver to run ALONG the ball's line (moving WITH the ball, low relative impact) instead of across/into it -- fixes the receiver overshooting/mis-aligning and the ball bouncing off or sailing past. See steerReceive.
 	receiveThrottleFloor float64 // throttle floor while pace-matching a slower ball, so the receiver eases to the ball's pace but never stalls into a head-on contact
-	receiveSlowRadius  float64 // off-line distance over which the receiver blends from "run onto the ball's line" to "run along it" (with the ball)
-	receiveOntoMax     float64 // cap on the sideways "onto the line" pull (0..1), so there is ALWAYS a with-the-ball forward component -- never a pure sideways/backward lunge into the ball
+	receiveSlowRadius    float64 // off-line distance over which the receiver blends from "run onto the ball's line" to "run along it" (with the ball)
+	receiveOntoMax       float64 // cap on the sideways "onto the line" pull (0..1), so there is ALWAYS a with-the-ball forward component -- never a pure sideways/backward lunge into the ball
 
 	recvLaneWeight    float64 // weight on a clear pass lane from the ball when picking a spot
 	recvSpaceWeight   float64 // weight on local open space when picking a receive spot
@@ -121,20 +123,20 @@ type aiTuning struct {
 	// holdForceTicks; as it rises it allows a recycle, relaxes the pass gates toward a safety floor,
 	// and boosts the best pass over the dribble baseline. Most holds are short and untouched; only a
 	// stuck carrier feels it. kickCooldownTicks (the ~0.37s post-kick dribble) is unaffected.
-	holdEaseTicks   uint64  // hold ticks at which the release valve starts ramping (most holds finish before this)
-	holdForceTicks  uint64  // hold ticks at which the valve fully forces an offload (the hoarding cap)
-	passHoldUrgency float64 // score the best pass gains at full hold pressure, so it decisively beats the 1.0 dribble baseline
-	holdSpaceFloor  float64 // receiver-space requirement at full hold pressure (relaxed from passReceiverSpace, never below this -- still a real option, not a hoof)
+	holdEaseTicks    uint64  // hold ticks at which the release valve starts ramping (most holds finish before this)
+	holdForceTicks   uint64  // hold ticks at which the valve fully forces an offload (the hoarding cap)
+	passHoldUrgency  float64 // score the best pass gains at full hold pressure, so it decisively beats the 1.0 dribble baseline
+	holdSpaceFloor   float64 // receiver-space requirement at full hold pressure (relaxed from passReceiverSpace, never below this -- still a real option, not a hoof)
 	holdContestFloor float64 // contest margin at full hold pressure (relaxed from passContestMargin toward this, never gifting a clear interception)
-	shootHurryWindow    float64 // open-window (seconds) under which the shot is hurried (less charge)
-	contestMargin       float64 // intercept-time margin within which the ball is "contested" (don't trap)
-	maxChargeTicks      uint64  // give-up timeout: ticks a charge can run before the attempt is abandoned
-	aimRelaxTicks       uint64  // after charge, ticks over which the aim tolerance relaxes if not lined up
-	turnTrapRad         float64 // dribble heading change above which the player traps and eases the turn
-	maxTurnRad          float64 // max facing change per decision with a settled ball (anti-fling)
-	minTurnRad          float64 // max facing change per decision with a loose ball (it lags more, turn gentler)
-	recoverConeRad      float64 // front half-angle the ball must stay within; past it the AI scoops it back to the front (recovery state + dribble turn cap)
-	dribbleWallAvoid    float64 // penalty weight steering a dribble heading away from carrying the ball into a wall
+	shootHurryWindow float64 // open-window (seconds) under which the shot is hurried (less charge)
+	contestMargin    float64 // intercept-time margin within which the ball is "contested" (don't trap)
+	maxChargeTicks   uint64  // give-up timeout: ticks a charge can run before the attempt is abandoned
+	aimRelaxTicks    uint64  // after charge, ticks over which the aim tolerance relaxes if not lined up
+	turnTrapRad      float64 // dribble heading change above which the player traps and eases the turn
+	maxTurnRad       float64 // max facing change per decision with a settled ball (anti-fling)
+	minTurnRad       float64 // max facing change per decision with a loose ball (it lags more, turn gentler)
+	recoverConeRad   float64 // front half-angle the ball must stay within; past it the AI scoops it back to the front (recovery state + dribble turn cap)
+	dribbleWallAvoid float64 // penalty weight steering a dribble heading away from carrying the ball into a wall
 
 	// Trap usage.
 	trapReceiveFactor float64 // trap to receive once an incoming ball's closing speed exceeds capture*this
@@ -152,6 +154,7 @@ type aiTuning struct {
 
 // defaultAITuning returns the baseline behavioural tuning.
 func defaultAITuning() aiTuning {
+	pt := config.DefaultPlayerTuning()
 	return aiTuning{
 		arriveRadius: 6,
 		slowRadius:   40,
@@ -162,9 +165,9 @@ func defaultAITuning() aiTuning {
 		avoidPush:    0.8,
 
 		interceptStep:    0.05,
-		assumedOppSpeed:  140, // = shared DefaultPlayerTuning MaxSpeed (was read directly before)
-		assumedOppTurn:   14,  // = shared DefaultPlayerTuning TurnRate
-		leadGain:         0,   // no lead: a mate's velocity is hidden, so aim at where it IS (set >0 to lead along its visible facing)
+		assumedOppSpeed:  pt.MaxSpeed, // shared field-player top speed; a controller may not read another player's hidden tuning, so it assumes the nominal value
+		assumedOppTurn:   pt.TurnRate, // shared field-player turn rate (same rationale)
+		leadGain:         0,           // no lead: a mate's velocity is hidden, so aim at where it IS (set >0 to lead along its visible facing)
 		interceptHorizon: 2.5,
 		interceptQuantum: 0.05,
 		turnPenaltyGain:  0.40,
@@ -172,13 +175,13 @@ func defaultAITuning() aiTuning {
 		defenderDepth:   0.22,
 		midfielderDepth: 0.51, // midway between the defender and attacker bands -- matches the old interpolated middle-line depth, so introducing role-keyed depths is shape-preserving before any band is retuned
 		forwardDepth:    0.80,
-		widthMin:      0.14,
-		widthMax:      0.86,
-		ballShiftX:    0.32,
-		ballShiftY:    0.55,
-		attackBias:    0.12,
-		defendBias:    0.14,
-		slotJitter:    14,
+		widthMin:        0.14,
+		widthMax:        0.86,
+		ballShiftX:      0.32,
+		ballShiftY:      0.55,
+		attackBias:      0.12,
+		defendBias:      0.14,
+		slotJitter:      14,
 
 		shootRange:       360,
 		tapRange:         120,
@@ -211,17 +214,17 @@ func defaultAITuning() aiTuning {
 		passRecycleCap:    1.12,
 		recycleFreely:     false, // OFF: a back/lateral pass off a forward-dribbled ball picks up the ball's perpendicular momentum and drifts off-line (under-hits), so freely recycling raised volume but LOWERED the completion rate over a 30-seed sweep. Kept as a tunable -- only the FORWARD-momentum case misfires; from a settled ball recycling is clean.
 
-		supportHoldBallMove:   50,  // hold the receiving spot until the ball has moved ~50u from where it was picked (then re-pick) -- a stationary target so passes land true; best of a 30-seed sweep (+~5% completion, tighter variance, fewer total fails vs re-picking every tick)
-		supportForwardBias:    40,
-		supportRangeFrac:      0.3,
-		runForwardBias:        150,
-		receiveControlFrac:    0.88, // meet the pass where it has slowed to 88% of the stick-speed -- well under capture so it sticks, tracking the live CaptureSpeed (so a buffed capture lets the receiver take it sooner/faster automatically)
-		receiveMinSpeed:       90, // a loose ball faster than this is an in-flight pass to glide onto (lowered 110->90 so a softened, decaying pass keeps registering as a ball to run onto, not flip to "loose ball, charge it head-on")
-		receiveDeepenHot:      true, // meet a too-fast pass deep (running with the ball) so the relative impact is low and it sticks -- targets the dominant receiver-miscontrol failures created by the ~201 launch floor
-		receiveMatch:          true, // run along the ball's line (with the ball) so the relative impact is low and the ball sticks -- the scrub showed receivers mis-aligned (moving across/into the ball, align ~0.5 or negative) which is the real overshoot/over-hit/miscontrol cause
-		receiveThrottleFloor:  0.35, // a paced receiver still moves at >=35% pace so it is travelling (not stationary) at contact -- a stationary receiver takes the ball head-on (high relative impact)
-		receiveSlowRadius:     50,   // within ~50u off the line, blend from running onto the line to running along it
-		receiveOntoMax:        0.55, // sweet spot from a 30-seed sweep: enough sideways pull to align the receiver with the ball (over-hit/overshoot down, completion +~6%) without over-retaining -- 0.7 raised completion more but pulled receivers so onto the line that the team stopped creating shots (goals 2.0->1.5); 0.55 holds scoring
+		supportHoldBallMove:  50, // hold the receiving spot until the ball has moved ~50u from where it was picked (then re-pick) -- a stationary target so passes land true; best of a 30-seed sweep (+~5% completion, tighter variance, fewer total fails vs re-picking every tick)
+		supportForwardBias:   40,
+		supportRangeFrac:     0.3,
+		runForwardBias:       150,
+		receiveControlFrac:   0.88, // meet the pass where it has slowed to 88% of the stick-speed -- well under capture so it sticks, tracking the live CaptureSpeed (so a buffed capture lets the receiver take it sooner/faster automatically)
+		receiveMinSpeed:      90,   // a loose ball faster than this is an in-flight pass to glide onto (lowered 110->90 so a softened, decaying pass keeps registering as a ball to run onto, not flip to "loose ball, charge it head-on")
+		receiveDeepenHot:     true, // meet a too-fast pass deep (running with the ball) so the relative impact is low and it sticks -- targets the dominant receiver-miscontrol failures created by the ~201 launch floor
+		receiveMatch:         true, // run along the ball's line (with the ball) so the relative impact is low and the ball sticks -- the scrub showed receivers mis-aligned (moving across/into the ball, align ~0.5 or negative) which is the real overshoot/over-hit/miscontrol cause
+		receiveThrottleFloor: 0.35, // a paced receiver still moves at >=35% pace so it is travelling (not stationary) at contact -- a stationary receiver takes the ball head-on (high relative impact)
+		receiveSlowRadius:    50,   // within ~50u off the line, blend from running onto the line to running along it
+		receiveOntoMax:       0.55, // sweet spot from a 30-seed sweep: enough sideways pull to align the receiver with the ball (over-hit/overshoot down, completion +~6%) without over-retaining -- 0.7 raised completion more but pulled receivers so onto the line that the team stopped creating shots (goals 2.0->1.5); 0.55 holds scoring
 
 		recvLaneWeight:        60,
 		recvSpaceWeight:       0.6,
@@ -236,10 +239,10 @@ func defaultAITuning() aiTuning {
 		clearThird:          0.32,
 		clearCharge:         0.45,
 		clearAlignRad:       0.4886921905584123,
-		pushPressure:        0.62, // an opponent within ~46u (centre-to-centre): boot it now, no time to charge
-		pushClearMinForward: 0.15, // only push-clear when the radial sends the ball clearly upfield/wide
+		pushPressure:        0.62,  // an opponent within ~46u (centre-to-centre): boot it now, no time to charge
+		pushClearMinForward: 0.15,  // only push-clear when the radial sends the ball clearly upfield/wide
 		pokeSteal:           false, // OFF: a poke-tackle is a visible use of the middle-click ability, but over 50 seeds it dragged pass completion (71.8->69.8) and goals (1.7->1.5) -- winning the ball with a hopeful jab starves our own build-up. Kept as a tunable; the AI still uses middle-click for quick clears/close shots under pressure (pushClears/pushShotOn).
-		pokeStealRange:      16,   // only at very close range (a real tackle), so the radial reliably sends the ball upfield off the opponent
+		pokeStealRange:      16,    // only at very close range (a real tackle), so the radial reliably sends the ball upfield off the opponent
 		settlePossession:    0.45,
 		settleThrottle:      0.72,
 		actPressure:         0.55,

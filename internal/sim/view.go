@@ -291,11 +291,11 @@ func (v observedView) BallAngleToFacing(b BallView) float64 {
 
 // Self-only methods (the hidden internal state) live on selfView, so an observedView handle
 // never carries them and cannot be type-asserted up to SelfView.
-func (v selfView) Velocity() geom.Vec     { return v.p.Velocity }
-func (v selfView) Heading() geom.Vec      { return v.p.moveHeading }
-func (v selfView) Possession() float64    { return v.p.possession }
-func (v selfView) Tuning() config.PlayerTuning   { return v.p.Tuning }
-func (v selfView) HomePosition() geom.Vec { return v.p.HomePosition }
+func (v selfView) Velocity() geom.Vec          { return v.p.Velocity }
+func (v selfView) Heading() geom.Vec           { return v.p.moveHeading }
+func (v selfView) Possession() float64         { return v.p.possession }
+func (v selfView) Tuning() config.PlayerTuning { return v.p.Tuning }
+func (v selfView) HomePosition() geom.Vec      { return v.p.HomePosition }
 
 func (v fieldView) Min() geom.Vec               { return v.f.Min }
 func (v fieldView) Max() geom.Vec               { return v.f.Max }

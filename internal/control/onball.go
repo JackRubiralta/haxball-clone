@@ -155,7 +155,7 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 		if p.goalwardness(p.ball, passTarget) > a.tune.passMinAdvance {
 			a.runUntil = p.view.Tick() + a.tune.oneTwoTicks
 		}
-		a.passReceiver = passReceiver // keep the pass tracking the (moving) receiver
+		a.passReceiver = passReceiver                   // keep the pass tracking the (moving) receiver
 		a.recordPassIntent(p, passTarget, passReceiver) // diagnostics only (write-only)
 		return a.shootAt(p, in, a.applyAim(p, passTarget), dc, a.tune.shootAlignRad)
 	case actClear:
@@ -395,11 +395,10 @@ func (a *AI) leadPoint(p perception, mate sim.ObservedView) geom.Vec {
 	return mate.Position().Add(geom.Unit(mate.Facing()).Scale(a.tune.assumedOppSpeed * a.tune.leadGain * t))
 }
 
-// timeToPoint estimates how long a player takes to reach a point at top speed (its body
-// reaching within a ball's touch of it). Used to check a pass is actually collectable.
 // timeToPoint estimates how long a player takes to reach a point at the given top speed (its
-// body reaching within a ball's touch of it). The speed is supplied by the caller (the assumed
-// nominal speed) because another player's actual MaxSpeed is hidden state.
+// body reaching within a ball's touch of it), used to check a pass is actually collectable. The
+// speed is supplied by the caller (the assumed nominal speed) because another player's actual
+// MaxSpeed is hidden state.
 func timeToPoint(q sim.ObservedView, point geom.Vec, ballRadius, speed float64) float64 {
 	d := geom.Dist(q.Position(), point) - q.Radius() - ballRadius
 	if d < 0 {

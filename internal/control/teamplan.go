@@ -11,9 +11,8 @@ import (
 // tie-breaks, they all agree on who does what without sharing any mutable state -- the
 // core of the anti-swarm design (exactly one presser; everyone else holds shape).
 type teamPlan struct {
-	presser    int // own-team PlayerID elected to go for the ball
-	support    int // own-team PlayerID that is second nearest (first support/cover)
-	oppPresser int // nearest opponent to the ball (their likely chaser)
+	presser int // own-team PlayerID elected to go for the ball
+	support int // own-team PlayerID that is second nearest (first support/cover)
 }
 
 // keeperPressPenalty is added to a keeper's intercept cost so an outfielder is preferred
@@ -26,13 +25,10 @@ const keeperPressPenalty = 0.7
 // preferred, quantises the cost so near-ties are stable, and breaks exact ties by
 // PlayerID -- a total order every teammate evaluates the same way.
 func assignRoles(p perception, tune aiTuning) teamPlan {
-	plan := teamPlan{presser: -1, support: -1, oppPresser: -1}
+	plan := teamPlan{presser: -1, support: -1}
 
 	first, second := electPresser(p, p.view.Squad(p.me), tune)
 	plan.presser, plan.support = first, second
-
-	oppFirst, _ := electPresser(p, p.opponents, tune)
-	plan.oppPresser = oppFirst
 	return plan
 }
 

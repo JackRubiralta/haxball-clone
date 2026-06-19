@@ -15,13 +15,17 @@ type Ball struct {
 	*physics.Body
 }
 
-// NewBall creates the ball (friction -0.3, mass 1.5).
+// NewBall creates the ball at position with the given radius and the default ball physics
+// (friction/mass sourced from config.DefaultTuning, the single source of truth). For a real
+// match Match.applyConfig then stamps the configured radius/friction/mass over these, so a
+// custom Tuning still wins; the defaults are byte-equal to those config values.
 func NewBall(position geom.Vec, radius float64) *Ball {
-	return &Ball{physics.NewCircleBody(position, radius, -0.3, 1.5)}
+	t := config.DefaultTuning()
+	return &Ball{physics.NewCircleBody(position, radius, t.BallFriction, t.BallMass)}
 }
 
-// Player is a controllable circle with per-player stats, a facing direction, and a
-// role. Its body's motion is integrated by the simulation; its stats drive the
+// Player is a controllable circle with per-player tuning, a facing direction, and a
+// role. Its body's motion is integrated by the simulation; its tuning drives the
 // dribble, shooting, bounce, and speed.
 type Player struct {
 	*physics.Body
@@ -46,7 +50,6 @@ type Player struct {
 	wantsPush     bool     // middle-click jab requested this tick (instant min-power radial push)
 	pushHeldPrev  bool     // push-button state last tick, for the jab's rising-edge detection (idempotent over the network)
 	pushFlash     float64  // 1->0 cosmetic timer set whenever a middle-click push is ATTEMPTED (even a whiff with no ball in reach); drives the push pulse animation over the player
-	pushFlashPos  geom.Vec // player position at the moment of the push -- anchors the pulse on the player
 	trapHeldPrev  bool     // trap-button state last tick, for the trap sound's rising edge
 	evictDwell    float64  // seconds spent violating a positional rule (warn-evict grace)
 	moveHeading   geom.Vec // current steering direction; rotates toward input at TurnRate
@@ -102,10 +105,6 @@ func (p *Player) TrapAura() float64 { return p.trapAura }
 // the renderer's push pulse (local play).
 func (p *Player) PushFlash() float64 { return p.pushFlash }
 
-// PushFlashPos returns the player's position at the moment of the push. Vestigial: the renderer now
-// anchors the pulse on the live player position directly.
-func (p *Player) PushFlashPos() geom.Vec { return p.pushFlashPos }
-
 // PushRange returns the surface-gap reach of the middle-click push -- the BASE PullRange, NOT the
 // trap-extended pullRadius (the push fires on any ball whose surface gap is below this; see push).
 // Exposed so the renderer can size and gate the push-pulse animation to the push's actual reach.
@@ -154,15 +153,15 @@ func NormShootCharge(seconds float64) float64 {
 	return t
 }
 
-// NewPlayer creates a player from a stats preset.
-func NewPlayer(id int, position geom.Vec, stats config.PlayerTuning, team *Team) *Player {
-	body := physics.NewCircleBody(position, stats.Radius, stats.Friction, stats.Mass)
-	body.MaxSpeed = stats.MaxSpeed
+// NewPlayer creates a player from a tuning preset.
+func NewPlayer(id int, position geom.Vec, tuning config.PlayerTuning, team *Team) *Player {
+	body := physics.NewCircleBody(position, tuning.Radius, tuning.Friction, tuning.Mass)
+	body.MaxSpeed = tuning.MaxSpeed
 	return &Player{
 		Body:         body,
 		PlayerID:     id,
 		Team:         team,
-		Tuning:       stats,
+		Tuning:       tuning,
 		Facing:       geom.NewVec(1, 0),
 		HomePosition: position,
 	}

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"image/color"
 	"net"
 	"time"
 
@@ -142,14 +141,7 @@ func buildHostMatch(s Settings) (*sim.Match, map[int]netcode.Bot, []int) {
 			bots[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
 		}
 	}
-	humanIDs := make([]int, 0, 2)
-	for _, t := range m.Teams {
-		idx := 0
-		if len(t.Players) > 1 {
-			idx = 1 // an outfielder, not the keeper
-		}
-		humanIDs = append(humanIDs, t.Players[idx].PlayerID)
-	}
+	humanIDs := m.ClaimableHumanIDs()
 	return m, bots, humanIDs
 }
 
@@ -439,12 +431,10 @@ func (a *App) onConnDown(err error) {
 		a.state = StateMPConnecting
 		return
 	}
-	a.net.deadline = time.Now().Add(reconnectWindow)
+	a.net.deadline = time.Now().Add(netcode.ReconnectGrace)
 	a.beginReconnect()
 	a.state = StateMPReconnecting
 }
-
-const reconnectWindow = 15 * time.Second
 
 // beginReconnect launches a background redial-with-resume loop until the deadline.
 func (a *App) beginReconnect() {
@@ -540,7 +530,7 @@ func (a *App) adaptSnapshot(snap netcode.Snapshot) render.SnapshotView {
 		WinnerText:           snap.WinnerText,
 		Finished:             snap.Finished,
 		Paused:               snap.Paused,
-		GoalTint:             netGoalTint,
+		GoalTint:             render.NeutralGoalTint,
 		Entities:             ents,
 		Stats:                snap.Stats,
 		SelfPlayerID:         selfID,
@@ -548,5 +538,3 @@ func (a *App) adaptSnapshot(snap netcode.Snapshot) render.SnapshotView {
 		RTTms:                a.net.client.RTTms(),
 	}
 }
-
-var netGoalTint = color.RGBA{240, 244, 240, 255}

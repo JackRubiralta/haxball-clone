@@ -50,7 +50,8 @@ func (v Vec) String() string {
 
 // Dist returns the distance between two vectors.
 func Dist(a, b Vec) float64 {
-	return math.Sqrt(math.Pow(a.X-b.X, 2) + math.Pow(a.Y-b.Y, 2))
+	dx, dy := a.X-b.X, a.Y-b.Y
+	return math.Sqrt(dx*dx + dy*dy)
 }
 
 // Norm returns the magnitude of the vector.

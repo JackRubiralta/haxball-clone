@@ -158,19 +158,12 @@ func (m *Match) ClockSeconds() float64 {
 	case PhasePlaying:
 		timed := m.Rules.Win == config.WinTimed || m.Rules.Win == config.WinFirstAndTimed
 		if timed && m.Rules.RegulationSeconds > 0 {
-			return clampPos(m.Rules.RegulationSeconds - m.Clock)
+			return max(m.Rules.RegulationSeconds-m.Clock, 0)
 		}
 		return m.Clock
 	case PhaseExtraTime:
-		return clampPos(m.Rules.ExtraTimeSeconds - (m.Clock - m.State.PhaseStart))
+		return max(m.Rules.ExtraTimeSeconds-(m.Clock-m.State.PhaseStart), 0)
 	default:
 		return m.Clock - m.State.PhaseStart
 	}
-}
-
-func clampPos(x float64) float64 {
-	if x < 0 {
-		return 0
-	}
-	return x
 }

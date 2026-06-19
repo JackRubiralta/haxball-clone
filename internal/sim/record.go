@@ -50,7 +50,7 @@ const (
 // Event flag bits (in Event.Flags).
 const (
 	flagPenaltyScored uint8 = 1 << iota
-	flagWoodwork
+	flagDeflected
 )
 
 // Event is one entry in the chronological play-by-play log.
@@ -473,7 +473,7 @@ func (r *Recorder) onGoal(m *Match, ev ScoreEvent) {
 	}
 	flags := uint8(0)
 	if ev.Deflected {
-		flags |= flagWoodwork // reuse: a deflected goal flag
+		flags |= flagDeflected // a deflected goal
 	}
 	r.emit(Event{Tick: m.Tick, Time: m.Clock, Kind: kind, Player: ev.Scorer, Team: ev.Team, Target: assistOrNone(ev), Pos: m.Ball.Position, BallVel: m.Ball.Velocity, Flags: flags})
 	r.lastKick = kickInfo{id: -1}

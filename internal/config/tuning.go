@@ -109,10 +109,10 @@ func DefaultPlayerTuning() PlayerTuning {
 		PullRange:       5,                     // base centre-pull reach (the dribble attraction; a held trap extends this)
 		PossessionRange: 5,                     // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionReach)
 		Restitution:     CurveSpec{0.21, 0.24}, // front 0.21: controlled front touch (lowered 0.23 -> 0.22 -> 0.21 for a firmer front capture, kept >0.20 so a hard pass still deflects, not sticks); back 0.24: springier behind. Multipliers unchanged -> buffed ~0.18, debuffed ~0.39
-		CaptureSpeed:    CurveSpec{320, 50}, // baseline front 320, back floor 50 (off-front/side touches stick less); the team buff is multiplicative (CaptureBest), so the buffed endpoint (~328) scales with it and stays well under a full shot (575), so a point-blank blast still bounces
-		CenterPull:      CurveSpec{770, 0},      // baseline pull trimmed a touch (800 -> 770)
-		Stickiness:      CurveSpec{450, 100},    // front 450 for a sticky baseline hold; back hold 100 so a ball behind the player clings harder
-		Control:         CurveSpec{1200, 440}, // roll-to-front: baseline front 1200, back 440; TrapControlBonus is unchanged, so the FULL-TRAP control scales with the front
+		CaptureSpeed:    CurveSpec{320, 50},    // baseline front 320, back floor 50 (off-front/side touches stick less); the team buff is multiplicative (CaptureBest), so the buffed endpoint (~328) scales with it and stays well under a full shot (575), so a point-blank blast still bounces
+		CenterPull:      CurveSpec{770, 0},     // baseline pull trimmed a touch (800 -> 770)
+		Stickiness:      CurveSpec{450, 100},   // front 450 for a sticky baseline hold; back hold 100 so a ball behind the player clings harder
+		Control:         CurveSpec{1200, 440},  // roll-to-front: baseline front 1200, back 440; TrapControlBonus is unchanged, so the FULL-TRAP control scales with the front
 		Shoot:           CurveSpec{playerShootForce, playerShootForce * 0.3},
 		ControlDamping:  11,
 		OrbitStick:      8,
@@ -166,7 +166,7 @@ func DefaultPlayerTuning() PlayerTuning {
 			RestitutionWorst:  1.43,                // debuffed front bounce ~0.30 (0.21*1.43): softened from 1.875 so a conceding team deflects the ball off less harshly, but still springier than the neutral 0.21
 			RestitutionBest:   0.844,               // buffed front bounce ~0.18 (0.21*0.844): a buffed teammate deflects gentler than neutral (still bounces a blast)
 			ConeBonusRadians:  0.05235987755982988, // ~3deg: a slight cone widening at full team buff (biggest cone)
-			ConeDebuffRadians: 0.2792526803190927, // ~16deg: scaled up with the wider 40.2deg cone so a debuffed opponent's reliable cone still shrinks WAY down (40.2 -> ~24deg, ~60% of baseline) -- catches far less off the dead-on line
+			ConeDebuffRadians: 0.2792526803190927,  // ~16deg: scaled up with the wider 40.2deg cone so a debuffed opponent's reliable cone still shrinks WAY down (40.2 -> ~24deg, ~60% of baseline) -- catches far less off the dead-on line
 		},
 	}
 }

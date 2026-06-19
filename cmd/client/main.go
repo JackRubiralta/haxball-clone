@@ -122,17 +122,13 @@ func adapt(snap netcode.Snapshot) render.SnapshotView {
 		WinnerText:           snap.WinnerText,
 		Finished:             snap.Finished,
 		Paused:               snap.Paused,
-		GoalTint:             goalTint,
+		GoalTint:             render.NeutralGoalTint,
 		Entities:             ents,
 		Stats:                snap.Stats,
 		// HaveSelf stays false here: the standalone client has no self-indicator (the snapshot
-		// EntityState carries no PlayerID yet -- wired in the multiplayer phase).
+		// EntityState carries no PlayerID).
 	}
 }
-
-// goalTint is a neutral celebration tint for the network client, which does not receive
-// the scoring side in the snapshot.
-var goalTint = color.RGBA{240, 244, 240, 255}
 
 // Layout renders at the display's physical pixel resolution so shapes stay crisp on
 // high-DPI / 4K screens. The render package scales the fixed world to fill it.

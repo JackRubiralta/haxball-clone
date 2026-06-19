@@ -64,20 +64,6 @@ var theme = Theme{
 	PanelPad: 28,
 }
 
-// Legacy palette names. app.go and settings.go reference these directly; they are
-// kept as package vars (sourced from the theme) so those files compile unchanged
-// while the canonical palette now lives on Theme.
-var (
-	menuBG    = theme.BG
-	overlayBG = theme.Overlay
-	panelBG   = theme.Panel
-	panelEdge = theme.Edge
-	btnBG     = theme.BtnBG
-	btnHover  = theme.BtnHover
-	btnBorder = theme.BtnEdge
-	accent    = theme.Accent
-)
-
 // colLayout is a simple top-to-bottom layout cursor for a column of rows. It turns
 // the hand-incremented `ly += rh` pattern into named steps, so a column's vertical
 // math lives in one place and stays identical between the update and draw passes.

@@ -31,10 +31,10 @@ const (
 	teamAway = 1 // Red / right
 )
 
-// Settings is the in-memory, lobby-editable match configuration: the shared
-// config.MatchSetup (the single mapping to a config.Config) plus per-team control (who
-// plays each team and at what difficulty -- a controller concern that does not belong in
-// the config layer). Not persisted (v1).
+// Settings is the lobby-editable match configuration: the shared config.MatchSetup (the
+// single mapping to a config.Config) plus per-team control (who plays each team and at what
+// difficulty -- a controller concern that does not belong in the config layer). It is
+// persisted across runs as part of UserConfig (see userconfig.go).
 type Settings struct {
 	config.MatchSetup
 	Teams [2]TeamControl // [teamHome] = Blue, [teamAway] = Red
@@ -60,7 +60,7 @@ func DefaultSettings() Settings {
 }
 
 // AppPrefs is the global, app-level configuration edited on the Settings screen: camera
-// and audio. In-memory only (v1).
+// and audio. It is persisted across runs as part of UserConfig (see userconfig.go).
 type AppPrefs struct {
 	CameraMode string // fit, ball, player
 	Zoom       float64
@@ -77,8 +77,10 @@ var (
 	// Ordered small -> medium -> large for the Pitch tab's quick-fill row. "standard" is the
 	// internal key for the medium pitch (shown as "Medium"); it sits in the middle and is the
 	// default. See setupPitch's parallel labels array.
-	fieldPresets      = []string{"small", "standard", "large"}
-	difficultyPresets = []string{"easy", "normal", "hard"}
+	fieldPresets = []string{"small", "standard", "large"}
+	// All AI tiers, sourced from control so the menu never drifts from the canonical set
+	// (currently easy/normal/hard/impossible). See control.SkillNames / SkillFromString.
+	difficultyPresets = control.SkillNames()
 	cameraPresets     = []string{"ball", "player", "fit"}
 	controlPresets    = []string{"Human", "AI"}
 )

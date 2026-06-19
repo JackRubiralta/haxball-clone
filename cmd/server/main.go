@@ -48,14 +48,7 @@ func run(ctx context.Context, name string, args []string, stderr io.Writer) erro
 
 	// One claimable human slot per team (an outfielder if there is one); every player
 	// also has an AI fallback that runs until a client claims its slot.
-	humanIDs := make([]int, 0, 2)
-	for _, t := range match.Teams {
-		idx := 0
-		if len(t.Players) > 1 {
-			idx = 1
-		}
-		humanIDs = append(humanIDs, t.Players[idx].PlayerID)
-	}
+	humanIDs := match.ClaimableHumanIDs()
 	skill, _ := control.SkillFromString(opts.Difficulty)
 	bots := make(map[int]netcode.Bot, len(match.Players))
 	for _, p := range match.Players {

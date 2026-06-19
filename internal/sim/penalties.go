@@ -70,17 +70,10 @@ func sideForIndex(i int) Side {
 	return SideLeft
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // beginShootout starts the shootout; a coin toss picks who shoots first.
 func (m *Match) beginShootout() {
 	m.shootout = &Shootout{
-		BestOf:      maxInt(1, m.Rules.Penalties.BestOf),
+		BestOf:      max(1, m.Rules.Penalties.BestOf),
 		SuddenDeath: m.Rules.Penalties.SuddenDeath,
 		First:       m.coinToss(),
 	}
