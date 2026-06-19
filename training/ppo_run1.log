@@ -1,0 +1,103 @@
+ppo: upd 5 rew/step=0.0002 pi=-0.019 v=0.107 ent=1.339 t=2s
+ppo: upd 10 rew/step=-0.0010 pi=-0.019 v=0.058 ent=1.214 t=4s
+ppo: upd 15 rew/step=-0.0014 pi=-0.020 v=0.027 ent=1.249 t=6s
+ppo: upd 20 rew/step=0.0013 pi=-0.021 v=0.026 ent=1.228 t=7s
+ppo: upd 25 rew/step=-0.0004 pi=-0.023 v=0.022 ent=1.229 t=9s
+ppo: upd 30 rew/step=-0.0008 pi=-0.019 v=0.020 ent=1.119 t=11s
+ppo: upd 35 rew/step=-0.0019 pi=-0.021 v=0.023 ent=1.161 t=13s
+ppo: upd 40 rew/step=-0.0009 pi=-0.020 v=0.024 ent=1.179 t=14s
+ppo: upd 45 rew/step=-0.0010 pi=-0.019 v=0.024 ent=1.043 t=16s
+ppo: upd 50 rew/step=-0.0026 pi=-0.017 v=0.029 ent=1.078 t=18s
+ppo: upd 55 rew/step=-0.0030 pi=-0.016 v=0.023 ent=1.067 t=19s
+ppo: upd 60 rew/step=0.0009 pi=-0.016 v=0.021 ent=1.160 t=21s
+ppo: upd 65 rew/step=0.0007 pi=-0.016 v=0.023 ent=1.119 t=23s
+ppo: upd 70 rew/step=-0.0016 pi=-0.015 v=0.028 ent=1.084 t=25s
+ppo: upd 75 rew/step=-0.0027 pi=-0.017 v=0.020 ent=1.025 t=26s
+ppo: upd 80 rew/step=-0.0024 pi=-0.016 v=0.020 ent=1.074 t=28s
+ppo: upd 85 rew/step=-0.0003 pi=-0.015 v=0.012 ent=1.040 t=30s
+ppo: upd 90 rew/step=0.0002 pi=-0.017 v=0.020 ent=1.040 t=32s
+ppo: upd 95 rew/step=-0.0010 pi=-0.018 v=0.021 ent=0.957 t=34s
+ppo: upd 100 rew/step=-0.0022 pi=-0.017 v=0.021 ent=0.939 t=35s
+ppo: upd 105 rew/step=-0.0030 pi=-0.018 v=0.019 ent=1.035 t=37s
+ppo: upd 110 rew/step=0.0025 pi=-0.013 v=0.025 ent=0.981 t=39s
+ppo: upd 115 rew/step=0.0019 pi=-0.013 v=0.021 ent=1.004 t=41s
+ppo: upd 120 rew/step=0.0013 pi=-0.012 v=0.019 ent=0.933 t=43s
+export: wrote /home/jack/Desktop/hax/haxball-clone/training/snapshots/snap_00120.bin (941716 bytes), parity skipped
+ppo: added snapshot /home/jack/Desktop/hax/haxball-clone/training/snapshots/snap_00120.bin; league: ['rule:easy 0.61@298', 'rule:normal 0.51@283', 'rule:hard 0.30@244', 'rule:impossible 0.23@239', 'frozen:snap_00120.bin -']
+export: wrote /home/jack/Desktop/hax/haxball-clone/training/checkpoints/ppo.pt.eval.bin (941716 bytes), parity skipped
+ppo: GATE upd 120 score=0.202 win[norm/hard/imp]=0.38/0.25/0.00 poss_hard=0.59 pass_hard=0.50
+ppo: SHIPPED new best (score 0.202) -> /home/jack/Desktop/hax/haxball-clone/internal/policy/weights/neural_v1.bin
+ppo: upd 125 rew/step=-0.0021 pi=-0.014 v=0.023 ent=0.912 t=55s
+ppo: upd 130 rew/step=-0.0018 pi=-0.016 v=0.014 ent=0.983 t=61s
+ppo: upd 135 rew/step=0.0009 pi=-0.012 v=0.016 ent=0.880 t=67s
+ppo: upd 140 rew/step=-0.0010 pi=-0.014 v=0.019 ent=0.902 t=74s
+ppo: upd 145 rew/step=0.0007 pi=-0.015 v=0.028 ent=0.901 t=80s
+ppo: upd 150 rew/step=-0.0015 pi=-0.013 v=0.018 ent=0.854 t=86s
+ppo: upd 155 rew/step=-0.0008 pi=-0.014 v=0.015 ent=0.948 t=92s
+ppo: upd 160 rew/step=-0.0003 pi=-0.013 v=0.026 ent=0.972 t=98s
+ppo: upd 165 rew/step=-0.0021 pi=-0.015 v=0.026 ent=1.013 t=105s
+ppo: upd 170 rew/step=0.0008 pi=-0.014 v=0.033 ent=1.020 t=110s
+ppo: upd 175 rew/step=-0.0015 pi=-0.014 v=0.030 ent=1.006 t=116s
+ppo: upd 180 rew/step=-0.0002 pi=-0.013 v=0.024 ent=0.987 t=122s
+ppo: upd 185 rew/step=0.0020 pi=-0.013 v=0.017 ent=0.927 t=127s
+ppo: upd 190 rew/step=-0.0010 pi=-0.013 v=0.014 ent=0.912 t=132s
+ppo: upd 195 rew/step=0.0024 pi=-0.010 v=0.029 ent=0.889 t=138s
+ppo: upd 200 rew/step=-0.0021 pi=-0.012 v=0.026 ent=0.930 t=144s
+ppo: upd 205 rew/step=-0.0035 pi=-0.017 v=0.023 ent=0.864 t=150s
+ppo: upd 210 rew/step=0.0003 pi=-0.013 v=0.018 ent=0.834 t=156s
+ppo: upd 215 rew/step=-0.0005 pi=-0.014 v=0.015 ent=0.916 t=162s
+ppo: upd 220 rew/step=0.0001 pi=-0.011 v=0.023 ent=0.903 t=167s
+ppo: upd 225 rew/step=-0.0004 pi=-0.014 v=0.022 ent=0.912 t=174s
+ppo: upd 230 rew/step=-0.0006 pi=-0.014 v=0.017 ent=0.926 t=180s
+ppo: upd 235 rew/step=-0.0024 pi=-0.015 v=0.033 ent=0.878 t=186s
+ppo: upd 240 rew/step=0.0029 pi=-0.010 v=0.029 ent=0.851 t=193s
+export: wrote /home/jack/Desktop/hax/haxball-clone/training/snapshots/snap_00240.bin (941716 bytes), parity skipped
+ppo: added snapshot /home/jack/Desktop/hax/haxball-clone/training/snapshots/snap_00240.bin; league: ['rule:easy 0.63@536', 'rule:normal 0.51@503', 'rule:hard 0.29@445', 'rule:impossible 0.22@442', 'frozen:snap_00120.bin 0.60@216', 'frozen:snap_00240.bin -']
+export: wrote /home/jack/Desktop/hax/haxball-clone/training/checkpoints/ppo.pt.eval.bin (941716 bytes), parity skipped
+ppo: GATE upd 240 score=0.058 win[norm/hard/imp]=0.00/0.00/0.00 poss_hard=0.58 pass_hard=0.38
+ppo: upd 245 rew/step=0.0013 pi=-0.013 v=0.031 ent=0.881 t=206s
+ppo: upd 250 rew/step=0.0006 pi=-0.017 v=0.023 ent=0.873 t=213s
+ppo: upd 255 rew/step=-0.0002 pi=-0.013 v=0.012 ent=0.878 t=220s
+ppo: upd 260 rew/step=0.0060 pi=-0.011 v=0.030 ent=0.826 t=227s
+ppo: upd 265 rew/step=0.0018 pi=-0.016 v=0.024 ent=0.858 t=233s
+ppo: upd 270 rew/step=0.0062 pi=-0.014 v=0.033 ent=0.822 t=240s
+ppo: upd 275 rew/step=-0.0027 pi=-0.011 v=0.029 ent=0.882 t=247s
+ppo: upd 280 rew/step=-0.0019 pi=-0.012 v=0.017 ent=0.882 t=253s
+ppo: upd 285 rew/step=0.0025 pi=-0.013 v=0.028 ent=0.890 t=260s
+ppo: upd 290 rew/step=0.0007 pi=-0.014 v=0.023 ent=0.923 t=266s
+ppo: upd 295 rew/step=-0.0027 pi=-0.010 v=0.034 ent=0.887 t=273s
+ppo: upd 300 rew/step=-0.0022 pi=-0.014 v=0.024 ent=0.896 t=279s
+ppo: upd 305 rew/step=-0.0024 pi=-0.013 v=0.018 ent=0.837 t=286s
+ppo: upd 310 rew/step=0.0008 pi=-0.013 v=0.021 ent=0.840 t=292s
+ppo: upd 315 rew/step=0.0029 pi=-0.011 v=0.026 ent=0.823 t=299s
+ppo: upd 320 rew/step=0.0006 pi=-0.014 v=0.033 ent=0.758 t=306s
+ppo: upd 325 rew/step=-0.0027 pi=-0.012 v=0.027 ent=0.738 t=313s
+ppo: upd 330 rew/step=-0.0013 pi=-0.012 v=0.018 ent=0.746 t=319s
+ppo: upd 335 rew/step=0.0014 pi=-0.014 v=0.020 ent=0.731 t=326s
+ppo: upd 340 rew/step=0.0007 pi=-0.014 v=0.026 ent=0.749 t=332s
+ppo: upd 345 rew/step=0.0000 pi=-0.010 v=0.034 ent=0.697 t=339s
+ppo: upd 350 rew/step=-0.0022 pi=-0.013 v=0.031 ent=0.659 t=343s
+ppo: upd 355 rew/step=-0.0030 pi=-0.012 v=0.027 ent=0.607 t=351s
+ppo: upd 360 rew/step=0.0008 pi=-0.012 v=0.028 ent=0.649 t=357s
+export: wrote /home/jack/Desktop/hax/haxball-clone/training/snapshots/snap_00360.bin (941716 bytes), parity skipped
+ppo: added snapshot /home/jack/Desktop/hax/haxball-clone/training/snapshots/snap_00360.bin; league: ['rule:easy 0.64@736', 'rule:normal 0.53@721', 'rule:hard 0.30@632', 'rule:impossible 0.22@590', 'frozen:snap_00120.bin 0.66@395', 'frozen:snap_00240.bin 0.66@146', 'frozen:snap_00360.bin -']
+export: wrote /home/jack/Desktop/hax/haxball-clone/training/checkpoints/ppo.pt.eval.bin (941716 bytes), parity skipped
+ppo: GATE upd 360 score=0.129 win[norm/hard/imp]=0.25/0.12/0.00 poss_hard=0.54 pass_hard=1.00
+ppo: upd 365 rew/step=-0.0004 pi=-0.010 v=0.027 ent=0.641 t=372s
+ppo: upd 370 rew/step=0.0012 pi=-0.015 v=0.036 ent=0.635 t=379s
+ppo: upd 375 rew/step=0.0023 pi=-0.013 v=0.026 ent=0.619 t=387s
+ppo: upd 380 rew/step=-0.0023 pi=-0.012 v=0.024 ent=0.592 t=394s
+ppo: upd 385 rew/step=0.0026 pi=-0.011 v=0.027 ent=0.608 t=401s
+ppo: upd 390 rew/step=0.0006 pi=-0.013 v=0.031 ent=0.642 t=409s
+ppo: upd 395 rew/step=0.0050 pi=-0.015 v=0.039 ent=0.621 t=417s
+ppo: upd 400 rew/step=-0.0009 pi=-0.015 v=0.036 ent=0.613 t=424s
+ppo: upd 405 rew/step=-0.0007 pi=-0.012 v=0.032 ent=0.595 t=432s
+ppo: upd 410 rew/step=-0.0014 pi=-0.014 v=0.029 ent=0.584 t=439s
+ppo: upd 415 rew/step=0.0001 pi=-0.011 v=0.032 ent=0.577 t=446s
+ppo: upd 420 rew/step=0.0012 pi=-0.012 v=0.035 ent=0.528 t=454s
+ppo: upd 425 rew/step=-0.0037 pi=-0.012 v=0.032 ent=0.559 t=461s
+ppo: upd 430 rew/step=-0.0002 pi=-0.009 v=0.023 ent=0.538 t=468s
+ppo: upd 435 rew/step=0.0009 pi=-0.011 v=0.025 ent=0.559 t=476s
+ppo: upd 440 rew/step=0.0023 pi=-0.008 v=0.023 ent=0.561 t=483s
+ppo: upd 445 rew/step=0.0006 pi=-0.012 v=0.022 ent=0.574 t=491s
+ppo: upd 450 rew/step=-0.0010 pi=-0.013 v=0.031 ent=0.595 t=499s

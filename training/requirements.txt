@@ -1,0 +1,4 @@
+# Neural-AI training dependencies. Installed into training/.venv.
+# torch 2.12+ provides cp314 wheels and Blackwell (sm_120) CUDA support.
+torch>=2.12
+numpy>=2.0

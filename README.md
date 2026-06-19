@@ -54,8 +54,12 @@ Three buttons, three ways to touch the ball — each is best at one job:
   snaps the ball to your front and glues it there as you move. Because an *untrapped* dribble
   follows you only loosely, the trap is what lets you **change direction sharply** without the
   ball sliding wide. It also reaches a little further to drag in (or steal) a loose ball nearby.
-  You move slower while trapping, and the grip is strongest a moment after you press — holding
-  it too long eases off.
+  You move slower while trapping. The trap runs off an **energy bar** shown over each player: holding
+  right-click **drains** it, and it **regenerates at about a third of the drain rate** when released.
+  On press the grip **ramps up gradually** to a strength set by how full the bar is (a half-full bar
+  gives a weaker touch), **holds** there while the bar lasts, then **eases back down at the same rate**
+  it came up — to a faint minimum while you keep holding, and all the way to nothing once you release.
+  A timing/stamina mechanic: strong when you have juice, and you can't hold or spam it forever.
   *Increases:* your **close control** — bounce-deadening (clean reception), snap-to-front, turn
   grip, and pull reach. *Main thing:* **turning and pivoting with the ball quickly** without it
   squirting away (cleanly receiving a hard pass is the bonus).
@@ -288,8 +292,8 @@ speed → apply friction → move position.
 
 - **Move** — desired heading. **Throttle** — 0–1 acceleration scale. **Aim** — point to
   face (sets `Facing`). **ShootHeld** — held charges, released fires on the edge.
-  **CancelCharge** — right-click while charging aborts the shot. **Trap** — held builds
-  trap charge.
+  **CancelCharge** — right-click while charging aborts the shot. **Trap** — held engages the
+  trap, draining its energy bar.
 
 ### Player runtime state (`sim.Player`)
 
@@ -298,8 +302,26 @@ speed → apply friction → move position.
   `AimFromCursor` intent flag) so the disk can't instantly snap around. **moveHeading** —
   actual steering direction, which *rotates toward* `Move` at `TurnRate` (turning is
   non-instant). **possession** (0–1), **control** (0–1), **touchCoef** (−1..1, this tick),
-  **shootCharge** (sec), **trapCharge** (0–1) — see below. Charge timing: full shot at `shootChargeMax = 0.75s`; full trap at
-  `trapChargeTime = 1.25s`; trap decays at `trapChargeDecay = 3.2/s`.
+  **shootCharge** (sec), **trapCharge** (0–1, the trap **energy bar** — drains while trapping,
+  regenerates at ~⅓ rate otherwise), **trapAura** (0–1, the effective trap strength/glow — rises to an
+  energy-limited peak, holds, then collapses when the bar empties) — see below. Charge timing: full
+  shot at `shootChargeMax = 0.75s`; the trap energy drains/regenerates and the aura grows/shrinks at the
+  per-player `Trap*PerSecond` rates.
+
+### Movement model (`config.Tuning.MoveModel` + factors)
+
+How a player's speed relates to where it faces. All three are selectable in **Match Setup → Tuning →
+MOVEMENT**, and apply identically to every player (so they never break the AI ≤ human boundary):
+
+- **Directional** *(default)* — speed scales with how aligned your movement is with your facing/aim:
+  **MoveForward** `1.2` straight ahead (moving toward your aim is 20% faster than base), **MoveSide**
+  `0.5` at 90° (strafing is half speed), **MoveBack** `0.2` straight back (backpedalling is very slow),
+  interpolated linearly through those anchors. The three factors are tunable.
+- **Standard** — omnidirectional: equal speed in every direction (the original feel; pick this to turn
+  the directional model off).
+- **WASD scheme** (only under Directional) — **Strafe**: WASD stay world-absolute, you just move slower
+  off-aim. **Locked**: WASD become relative to your aim (W = toward the cursor, S = back, A/D = strafe);
+  the sim rotates the keys against the authoritative facing, so only the local human is reframed.
 
 ### `PlayerStats` — body / motion
 
@@ -323,19 +345,18 @@ Exponential.
 - **Restitution** `0.21 / 0.24` (InvQuad) — bounciness on a *hard* contact; front `0.21` (lowered for a
   firmer front capture, kept just above the `0.20` floor so a head-on hard shot still deflects off a
   player rather than sticking at their feet); back `0.24`, springier behind.
-- **CaptureSpeed** `320 / 50` (Linear) — impact speed *below which the ball sticks*
-  (restitution 0) instead of bouncing. The threshold is **flat at the front peak `320` everywhere
+- **CaptureSpeed** `360 / 40` (Linear) — impact speed *below which the ball sticks*
+  (restitution 0) instead of bouncing. The threshold is **flat at the front peak `360` everywhere
   inside the reliable capture cone** (so a ball that sticks dead-on also sticks a touch off-centre),
-  then falls to the `50` floor across the soft band — so **past the cone**, off-front/side hits stick
+  then falls to the `40` floor across the soft band — so **past the cone**, off-front/side hits stick
   much less. A full-power shot (575) easily clears it, so an opponent never captures it — it deflects off.
 - **CenterPull** `770 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
   make contact.
-- **Stickiness** `450 / 100` (InvQuad) — capped adhesion holding a touching ball until a
-  shot/bump overcomes it; front `450` for a sticky baseline hold and the back hold `100` so a ball
-  behind the player clings harder.
-- **Control** `1200 / 440` (Linear) — tangential pull rolling a touching ball to the front. Baseline
-  front `1200`, back `440`; `TrapControlBonus` is left unchanged, so the **full-trap control scales
-  with the front** (full-trap front = 1200 × (1 + 2.5875888817) ≈ 4305).
+- **Stickiness** `350 / 30` (InvQuad) — capped adhesion holding a touching ball until a
+  shot/bump overcomes it; front `350` for the baseline sticky hold and a small `30` hold behind the player.
+- **Control** `1200 / 320` (Linear) — tangential pull rolling a touching ball to the front. Baseline
+  front `1200`, back `320`; with `TrapControlBonus` `2.2` the **full-trap front control** = 1200 ×
+  (1 + 2.2) = **3840**.
 - **Shoot** `shootForce / shootForce·0.3` (Linear; in-game `575 / 172.5`, +15% power) — shot power by angle.
 
 ### `PlayerStats` — scalar hold / damping
@@ -357,20 +378,20 @@ strength inside its half-angle, then fades** toward the back. Cones are written 
 **Ball-control cones** (full strength inside the half-angle, then the named angle curve decays to
 its "behind" value — see *angle curves* above for the endpoints):
 
-- **Capture cone — ±40.2° (`CaptureConeRadians`) + a 55° soft band (`CaptureConeSoft`).** Inside ±40.2°
-  (widened 34% from 30°) the ball reliably sticks (the capture-speed threshold is at its front peak,
-  **320**); across the next 55° (out to ~95.2°) that threshold decays to the side/back floor (**50**), so
+- **Capture cone — ±37.5° (`CaptureConeRadians`) + a 55° soft band (`CaptureConeSoft`).** Inside ±37.5°
+  (widened 25% from 30°) the ball reliably sticks (the capture-speed threshold is at its front peak,
+  **360**); across the next 55° (out to ~92.5°) that threshold decays to the side/back floor (**40**), so
   off-front touches bounce off instead of sticking. Off-front hits also **bounce livelier** (restitution
   ×`(1+(1-cone))`, up to 2×). Widened by a team **buff +3°** (`ConeBonusRadians`) and a held **trap
-  +3°** (`CaptureConeTrapBonus`); **narrowed by a team debuff −16°** (`ConeDebuffRadians` —
+  +20°** (`CaptureConeTrapBonus`); **narrowed by a team debuff −16°** (`ConeDebuffRadians` —
   asymmetric, so a marked opponent catches far less). *(A cone-weighted impulse split also exists
   but is off by default — `uniformImpulseScale = true`.)*
 - **Control cone — ±22° (`ControlConeRadians`, 44° total).** Full strength here for **two** forces
-  that then taper to the back: the **sticky hold** (Stickiness `450→100`, resists the ball
-  separating) and the **roll-to-front control** (Control `1200→440`, steers the ball onto the
+  that then taper to the back: the **sticky hold** (Stickiness `350→30`, resists the ball
+  separating) and the **roll-to-front control** (Control `1200→320`, steers the ball onto the
   front). Widened by your **own possession +5°** (`ControlConePossessionBonus`) and a **trap +2°**
   (`ControlConeTrapBonus`); not team-buff scaled. The roll-to-front *magnitude* additionally gets a
-  trap bonus (`TrapControlBonus`) and a possession bonus (`PossessionControlBonus`, +9% at full).
+  trap bonus (`TrapControlBonus`, ×3.2 at full trap) and a possession bonus (`PossessionControlBonus`, +9% at full).
 - **Centre-pull cone — ±5° (`CenterPullConeRadians`, 10° total).** Full-strength centre-pull spring
   (CenterPull `770→0`) that drags a near, not-yet-touching ball into contact. Widened by **own
   possession +1°/side** (`CenterPullConePossessionBonus`) and a **trap +2°/side**
@@ -470,7 +491,7 @@ decay time), **CenterPullGripFloor** `0.65`, **StickinessPossessionDebuff** `0.0
 **PossessionControlBonus** `0.09` (up to +9% control at full possession),
 **PossessionStealRate** `1.0` (possession/sec a marked holder is *denied/drained* at). The
 build/steal/mark **reach** is the **possession reach** (`possessionReach()` = `PossessionRange` `5`, NOT trap-extended, per acting player — a larger `PossessionRange` reaches further; see *the reach*);
-**PossessionSpeedFactor** / **PossessionAccelFactor** `0.925` (~7.5% slower). (A parallel
+**PossessionSpeedFactor** `0.8` (80% top speed, 20% slower) / **PossessionAccelFactor** `0.925`. (A parallel
 **control** build-up state once tracked whether the ball sat within a ~50° front cone, but it was
 never wired to any mechanic and has been removed; the AI keeps its own front cone — see
 *directional cones*.)
@@ -542,22 +563,22 @@ which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQua
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
   sticky touches that scale up as the charge builds (full-charge capture ≈ front × `CaptureBest`,
-  320 × 1.025 ≈ 328), so a fully-built possession receives firmly.
+  360 × 1.1 ≈ 396), so a fully-built possession receives firmly.
 - **Other team** → `OtherTeam·strength` (down to **−1.0**): capture down, bounce up (up to
   ×1.43) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
 - **Capture cone** → scales ASYMMETRICALLY with the coefficient (see `captureConeRadians`):
   the buff WIDENS the owning team's reliable cone a little (`ConeBonusRadians` ≈3° at full
   charge — biggest cone), while the debuff NARROWS the conceding team's more (`ConeDebuffRadians`
-  ≈16° at full enemy charge — capture cone shrinks to ~24.2°, well under the ~40.2° baseline). So a
+  ≈16° at full enemy charge — capture cone shrinks to ~21.5°, well under the ~37.5° baseline). So a
   debuffed opponent catches less off the dead-on line. Dead-on (angle 0) is always inside
   the cone, so straight-on shots/captures are unchanged — only off-axis catching shrinks.
 
 *Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−1.0`, and the multiplier endpoints
-(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.025`,
+(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.1`,
 **RestitutionWorst/Best** `1.43 / 0.844`. The capture multipliers are unchanged; the capture
-band front is `320`, so the buffed/debuffed *absolute* captures scale with it —
-buffed capture ≈ **328** (320 × 1.025), debuffed capture ≈ **201** (320 × 0.628).
+band front is `360`, so the buffed/debuffed *absolute* captures scale with it —
+buffed capture ≈ **396** (360 × 1.1), debuffed capture ≈ **226** (360 × 0.628).
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding
@@ -629,23 +650,38 @@ A left-click shot is governed by **one cone** (where it fires and aims) and **on
   weaker, and one right at the ±90° side has almost nothing. Only the power tapers; the aim stays
   full across the whole cone.
 
-### `PlayerStats` — trap ("good touch"), scaled by `trapCharge` 0→1
+### `PlayerStats` — trap ("good touch")
 
-- **TrapPullBonus** `1.0` — up to ×2 stronger centre-pull (trap/steal a loose ball); reduced from 1.5.
+The trap is an **energy bar** (`trapCharge`, 0→1, shown over every player) that **drains while held**
+and **regenerates at ~⅓ the drain rate** otherwise. Its effective strength (`trapAura`, 0→1) **ramps
+up gradually** (at a constant rate) to a peak set by the energy available when you press, holds while
+the bar lasts, then falls — at that *same* rate — to the **`TrapMinAura` floor** once the bar drains
+out *while still held* (a faint residual good-touch + glow, never nothing), and all the way to 0 on release. The bonuses below scale
+with that **effective strength** (`trapAura`), so a low-energy trap is weaker. All five timing knobs are
+editable in **Match Setup → Tuning → TRAP**.
+
+- **TrapDrainPerSecond** `0.8` — energy/sec the bar drains while held (a full bar lasts ~1.25s of trapping).
+- **TrapRegenPerSecond** `0.27` — energy/sec it refills when released (~⅓ of drain; full refill ~3.7s).
+- **TrapAuraRatePerSecond** `2.0` — the SINGLE constant (linear) rate the aura both rises to its peak
+  and fades back down at (~0.5s each way). Growing and shrinking use the *same* rate, so when the bar
+  runs out the big aura shrinks exactly as gradually as it grew — no fast initial drop.
+- **TrapMinAura** `0.06` — the residual strength a fully-drained but still-held trap holds at, instead
+  of collapsing to nothing (≈ the base pull-radius glow). `0` = the old fade-to-nothing behaviour.
+- **TrapPullBonus** `0.2` — up to +20% stronger centre-pull at full trap (trap/steal a loose ball).
 - **TrapRangeBonus** `6` — extends pull range by up to +6 (reduced from 10).
-- **TrapControlBonus** `2.5875888817` — stronger roll-to-front (snaps the ball to the front);
-  full-trap front control = 1200 × (1 + 2.5875888817) ≈ **4305** (left unchanged, so it scales with
-  the raised `Control.Front` baseline).
-- **TrapStickinessBonus** `0.5` — stiffens the sticky hold while trapping (`Stickiness ×
-  (1 + TrapStickinessBonus·trapCharge)`, up to +50% at full trap).
-- **TrapCaptureBonus** `60` — small capture-speed bump (+60 at full trap); the trap now relies
-  mainly on deadening the bounce rather than a big capture lift.
+- **TrapControlBonus** `2.2` — a **multiplier** on the roll-to-front control while trapping
+  (`Control × (1 + 2.2·trapAura)`), so full-trap front control = 1200 × (1 + 2.2) = **3840**.
+- **TrapStickinessBonus** `0.05` — stiffens the sticky hold a hair while trapping (`Stickiness ×
+  (1 + TrapStickinessBonus·trapAura)`, up to +5% at full trap).
+- **TrapCaptureBonus** `120` — capture-speed bump (+120 at full trap) so a trapping player absorbs
+  much firmer balls, on top of deadening the bounce.
 - **TrapRestitutionFactor** `0.4` — how strongly trap *deadens the bounce*: restitution is
-  scaled by `1 - min(1, trapCharge·TrapRestitutionFactor)`. At `0.4`, even a full trap only
+  scaled by `1 - min(1, trapAura·TrapRestitutionFactor)`. At `0.4`, even a full trap only
   damps the bounce to ~60%, so a hard shot clearly deflects off a trapping defender/keeper
   rather than dying at their feet. `0` = trap never affects bounce.
-- **TrapSpeedFactor** `0.5` / **TrapAccelFactor** `0.55` — speed/accel at full trap (trapping
-  is slow). **TrapRadiusBonus** `0` — grow while trapping (off).
+- **TrapSpeedFactor** `0.4` / **TrapAccelFactor** `0.4` — speed/accel while trapping (40% of a
+  non-trapping player). Applied as a **constant** the moment the trap is held (not scaled by the
+  trap aura). **TrapRadiusBonus** `0` — grow while trapping (off).
 
 ### World physics (`config.Tuning`) + collision restitution
 

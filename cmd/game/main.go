@@ -20,6 +20,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"phootball/internal/aifactory"
 	"phootball/internal/cliutil"
 	"phootball/internal/config"
 	"phootball/internal/control"
@@ -151,7 +152,7 @@ func vsAI(opts config.GameOptions, human bool) (*sim.Match, map[int]control.Cont
 		if p.PlayerID == humanID {
 			ctrls[p.PlayerID] = input.NewHuman()
 		} else {
-			ctrls[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
+			ctrls[p.PlayerID] = aifactory.New(p.PlayerID, skill)
 		}
 	}
 	return m, ctrls

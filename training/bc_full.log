@@ -1,0 +1,28 @@
+bc: device=cuda torch=2.12.1+cu130 preload=True
+bc: preloaded train=10188000 val=1188000 in 6.8s (11.8 GB obs)
+bc: train records=10188000 val records=1188000
+bc: model params=235715
+bc: ability weights=[0.2791514992713928, 8.0, 2.847451686859131, 8.0] cancel weights=[0.5002699494361877, 8.0]
+bc: epoch 0: loss=2.5697 val_acc=[0.6359, 0.898, 0.7558, 0.9711, 0.9978] score=0.7914 (18.6s)
+bc: epoch 1: loss=1.7579 val_acc=[0.6466, 0.9079, 0.8098, 0.9626, 0.9981] score=0.8041 (18.7s)
+bc: epoch 2: loss=1.5531 val_acc=[0.654, 0.9084, 0.8426, 0.9677, 0.9981] score=0.8131 (19.2s)
+bc: epoch 3: loss=1.4457 val_acc=[0.6593, 0.9111, 0.8557, 0.9722, 0.998] score=0.8186 (20.2s)
+bc: epoch 4: loss=1.3784 val_acc=[0.6625, 0.9137, 0.8644, 0.9685, 0.9991] score=0.8211 (20.4s)
+bc: epoch 5: loss=1.3306 val_acc=[0.6644, 0.916, 0.8662, 0.9757, 0.9986] score=0.8239 (20.1s)
+bc: epoch 6: loss=1.2941 val_acc=[0.6666, 0.9172, 0.8711, 0.978, 0.9987] score=0.8263 (19.6s)
+bc: epoch 7: loss=1.2639 val_acc=[0.6672, 0.9178, 0.8733, 0.9772, 0.998] score=0.8268 (20.6s)
+bc: epoch 8: loss=1.2379 val_acc=[0.6697, 0.9198, 0.8747, 0.9751, 0.9987] score=0.828 (20.0s)
+bc: epoch 9: loss=1.2151 val_acc=[0.6686, 0.9202, 0.877, 0.9757, 0.9988] score=0.8281 (20.2s)
+bc: epoch 10: loss=1.1951 val_acc=[0.6709, 0.9214, 0.8769, 0.9786, 0.9986] score=0.8298 (18.6s)
+bc: epoch 11: loss=1.1772 val_acc=[0.6718, 0.921, 0.8754, 0.9782, 0.9981] score=0.8298 (18.4s)
+bc: epoch 12: loss=1.1605 val_acc=[0.6716, 0.9237, 0.8785, 0.9799, 0.9989] score=0.8311 (18.6s)
+bc: epoch 13: loss=1.1452 val_acc=[0.6742, 0.924, 0.8804, 0.9763, 0.999] score=0.8317 (18.4s)
+bc: epoch 14: loss=1.1311 val_acc=[0.6736, 0.9258, 0.8805, 0.9793, 0.9988] score=0.8325 (18.4s)
+bc: epoch 15: loss=1.1195 val_acc=[0.6736, 0.9244, 0.8765, 0.9785, 0.9983] score=0.8314 (18.5s)
+bc: epoch 16: loss=1.1071 val_acc=[0.6746, 0.9271, 0.8821, 0.9786, 0.9992] score=0.8332 (18.6s)
+bc: epoch 17: loss=1.0966 val_acc=[0.6758, 0.9292, 0.883, 0.9773, 0.9986] score=0.834 (18.6s)
+bc: epoch 18: loss=1.0861 val_acc=[0.6744, 0.9273, 0.8868, 0.9807, 0.999] score=0.8343 (18.7s)
+bc: epoch 19: loss=1.0774 val_acc=[0.675, 0.9289, 0.8811, 0.9801, 0.9986] score=0.8339 (18.6s)
+bc: epoch 20: loss=1.068 val_acc=[0.6761, 0.928, 0.8855, 0.9779, 0.9984] score=0.8343 (18.6s)
+bc: epoch 21: loss=1.06 val_acc=[0.6748, 0.924, 0.8895, 0.9782, 0.9986] score=0.8337 (18.6s)
+bc: done; best score=0.8343; checkpoint=/home/jack/Desktop/hax/haxball-clone/training/checkpoints/bc_full.pt

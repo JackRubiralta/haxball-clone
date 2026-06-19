@@ -1,0 +1,16 @@
+=== 6v6 GATE (possession-reward run) ===
+ppo: GATE upd 200 score=0.026 win[norm/hard/imp]=0.00/0.00/0.00 poss_hard=0.26 pass_hard=1.00
+ppo: GATE upd 400 score=0.105 win[norm/hard/imp]=0.00/0.12/0.00 poss_hard=0.43 pass_hard=0.00
+ppo: GATE upd 600 score=0.057 win[norm/hard/imp]=0.00/0.00/0.00 poss_hard=0.57 pass_hard=0.00
+ppo: GATE upd 800 score=0.076 win[norm/hard/imp]=0.00/0.00/0.00 poss_hard=0.76 pass_hard=0.00
+=== ships: 2  upd: upd 905  t: t=1546s ===
+=== ent/rew ===
+rew/step=0.0011 pi=-0.006 v=0.003 ent=0.594
+rew/step=-0.0000 pi=-0.004 v=0.003 ent=0.494
+rew/step=-0.0004 pi=-0.005 v=0.005 ent=0.499
+=== league ===
+rule:easy 0.55@375
+rule:normal 0.45@875
+rule:hard 0.46@916
+rule:impossible 0.48@391
+PPO: running

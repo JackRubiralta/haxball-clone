@@ -15,13 +15,42 @@ better.
 # MISSION
 Go over **every** package and file and, for each:
 1. **Analyze** what it does and how it's structured.
-2. **Critique** it honestly: rate 1–5 and name concrete problems (say what's *good*, too).
+2. **Critique** it critically: rate 1–5 against an absolute bar and name concrete problems with
+   `file:line` and their cost. Approach it as a skeptic, not a fan (see *Be Critical*).
 3. **Improve** it: refactor, consolidate, rename, delete, or fix — default behavior-preserving,
    but *do* repair the latent bugs that consolidation exposes (see *Scope*).
 
 The single most important quality lever here is **subtraction, not addition**: the best change
 usually *removes* a duplicate, a lie, a dead branch, or a needless abstraction. Adding cleverness
 is how code gets worse. Prefer the smallest change that removes the problem.
+
+# BE CRITICAL (diagnose harshly, treat conservatively)
+The point of this audit is to find what's *wrong*, then fix it. Be a demanding reviewer — the kind
+whose approval means something. Then act on what you find: every critique that clears verification
+becomes a fix. Critique → improve → verify, area by area.
+
+- **Assume problems exist; go find the real ones.** "It compiles" and "tests pass" are the floor,
+  not a grade. If a file looks fine at a glance, look harder — read the call sites, the history,
+  the seams.
+- **Rate against an absolute bar; make top marks rare.**
+  - **5/5** — exemplary: single source of truth, honest names, right home, no dead weight; you'd
+    show it to a new hire as the model. *Rare.*
+  - **4/5** — solid, only minor nits.
+  - **3/5** — works, but has clear duplication / naming / placement debt.
+  - **2/5** — multiple real problems: confusing, duplicated, or misplaced.
+  - **1/5** — actively harmful: lies, traps, or duplication that *will* drift.
+  Most real code lands 2–4. If everything you review is a 4–5, you are not looking hard enough.
+- **No praise-padding, no sycophancy.** List a strength only where it's genuinely notable; omit it
+  otherwise. Don't excuse a smell as "fine for now," and don't soften "this is duplicated and will
+  drift" into "could be a little cleaner." Say the hard thing plainly.
+- **Make every critique concrete and falsifiable:** `file:line`, what's wrong, and the *cost* (who
+  it misleads, what breaks, what drifts). "Could be cleaner" is not a finding.
+- **Harsh in diagnosis, conservative in treatment.** Criticize like a maximalist; refactor like a
+  minimalist. A blunt critique never licenses over-engineering, churn, or deleting what you haven't
+  understood (see *Minimalism*, *Respect What's There*). The severity of a problem sets its
+  priority, not the size of the change.
+- **Critique drives every edit.** No silent changes — each fix traces to a written critique entry.
+  After a phase, re-critique if the fix exposed an adjacent problem.
 
 # THE BAR — learn from these three examples
 <example name="pure structural refactor (behavior-preserving)">
@@ -92,6 +121,24 @@ its value. High-quality is the *minimum* edit that removes a real problem — no
 - **Diff size is a cost.** A 4-file rename that buys clarity can be worth it; a 40-file rename for
   a marginally nicer word usually isn't. Weigh churn against benefit and prefer the smaller win.
 
+# RESPECT WHAT'S THERE (before you delete or "simplify")
+Minimalism says *don't add*; this says *don't remove what you don't understand*. The fastest way to
+wreck a careful codebase is to "clean up" a thing whose purpose you never learned.
+- **Chesterton's Fence.** Before deleting or collapsing anything that looks dead, redundant, or
+  weird, find out *why* it exists — read the surrounding comments and the git history, and check
+  for callers and string/reflection/tag/flag references. This codebase deliberately encodes
+  rationale in comments and sometimes **decouples values on purpose**; an apparent "duplicate" may
+  be load-bearing. Remove it only once you can state in one sentence why it is truly safe.
+- **Prove "dead" before deleting:** no compiler callers **and** no `grep` hits in comments, string
+  literals, struct tags, flag strings, golden/asset paths **and** it isn't part of a wire/format
+  contract **and** history shows it superseded. If you can't prove all four, leave it and write a
+  `DEFERRED:` note.
+- **A stale-looking comment may encode a hard-won invariant.** Don't delete a comment you don't
+  understand; correct it only after confirming it's actually wrong.
+- **Off-limits — never refactor:** `internal/sim/testdata/*.golden` (the feel-freeze), embedded
+  assets, and any generated or vendored code. Change these only via their documented regeneration
+  path, with explicit acknowledgement.
+
 # NAMING, FILES & FUNCTIONS (bring the codebase to these — Effective Go / Go Code Review Comments)
 Naming and structure are first-class refactor targets: honest, idiomatic names and well-placed,
 single-purpose units are most of what "readable" means. Fix violations as `[refactor]`s, prefer
@@ -145,6 +192,11 @@ the gob field name, keep the flag string) so the format is unchanged; otherwise 
 scope or an explicitly-acknowledged change. Never silently rename a serialized field or a flag.
 
 # METHOD (do this, in order; think before each phase, reflect after each verify)
+0. **Baseline.** Before changing anything, run the full gate and confirm it is **already green** —
+   so any later failure is provably yours, not pre-existing. Snapshot a baseline in `CODE_AUDIT.md`:
+   the test result, the golden status, and rough size metrics (per-package LOC, the biggest files,
+   obvious duplication) so you can report **honest deltas** later. Measure real removal, not
+   reformatting; never game the counts.
 1. **Map.** Build a model of every package and the dependency graph. Investigate before you act —
    never claim or change code you haven't opened. List the invariants you must not break (below).
 2. **Audit & score.** For each area, produce a critique entry (format in *Output*). For every
@@ -165,6 +217,9 @@ scope or an explicitly-acknowledged change. Never silently rename a serialized f
 7. **Verify, then checkpoint.** Run the full gate (*Verification*). Commit the green phase with a
    descriptive message so it can be rolled back. Then reflect: did quality actually rise, or did I
    just move code? Only proceed if the answer is the former.
+8. **On red, roll back — don't pile on.** If a phase fails the gate and the cause isn't a trivial,
+   obvious fix, `git reset --hard` to the last green checkpoint and re-plan a smaller step. Fixing a
+   broken refactor with more edits compounds risk; a clean restart from green is faster and safer.
 
 # SCOPE — classify every change as exactly one
 1. **`[refactor]` Pure refactor — behavior-preserving (default).** Renames, moves, dedup of
@@ -242,6 +297,11 @@ scope or an explicitly-acknowledged change. Never silently rename a serialized f
   (`--no-verify`) without asking. Never discard unfamiliar files that may be in-progress work.
 
 # DECISION DISCIPLINE
+- **Calibrate severity & confidence honestly.**
+  *Severity* — **high:** a correctness risk, a duplicate that will drift, or a name that actively
+  misleads; **med:** clear readability/structure debt; **low:** cosmetic.
+  *Confidence* — **high:** you've read every site and the change is mechanical/provable; **med:**
+  likely but with unknowns; **low:** a hypothesis.
 - **Act on high confidence; surface the rest.** Land high-confidence findings; for low-confidence
   ones, propose and ask rather than churn.
 - **Commit to an approach.** Once you've chosen the safe path for a phase, see it through; don't
@@ -254,9 +314,13 @@ scope or an explicitly-acknowledged change. Never silently rename a serialized f
   structured critique (the format below) with confidence. Reading many files in parallel is the
   fast path.
 - **Verify findings adversarially.** Before acting on any high/med-severity finding, have an
-  independent agent try to refute it — especially "this copy has drifted" claims and every rename
-  (confirm *all* call sites). Multi-agent review yields far more actionable findings than a single
-  pass; treat unverified claims as suspect.
+  independent agent try to **refute** it (default to "rejected" when unsure). The reviewer checks:
+  (1) is the claim true — re-read the cited code; (2) are *all* call sites and string/tag/flag
+  references covered; (3) is it correctly classed `[refactor]` vs `[fix]`, and behavior-preserving
+  where it claims to be; (4) does it leave every serialized field / JSON key / flag string
+  unchanged; (5) is there a **simpler** correct version, or is this over-engineered; (6) does the
+  pinning test actually pin the behavior. Multi-agent review yields far more actionable findings
+  than a single pass; treat unverified claims as suspect.
 - **Serialize the fixes.** Land refactor phases one at a time (they touch shared files and would
   conflict in parallel), re-running the gate between each.
 - **Keep durable state** (you may span many context windows): a structured findings ledger and a
@@ -267,7 +331,7 @@ scope or an explicitly-acknowledged change. Never silently rename a serialized f
 First, a **Critique Report** — for each package/area:
 ```
 ## <area>   rating: N/5   confidence: high|med|low
-Good: <what's already solid>
+Good: <only genuinely notable strengths — omit this line entirely if there's nothing; do not pad>
 Problems:
   - [SEV: high|med|low] <concrete issue> — <file:line> — <why it's a problem>
 Proposed fixes (ranked by impact × confidence):
@@ -279,6 +343,27 @@ Then execute the ranked fixes in phases. After each phase, append to `CODE_AUDIT
   pinning test);
 - the verify result (build/vet/test/race + headless + golden status) and the commit hash;
 - whether any golden was intentionally regenerated (and the exact diff/why).
+
+<example name="a filled critique entry + phase log (mirrors the difficultyPresets fix)">
+```
+## internal/menu   rating: 3/5   confidence: high
+Good: clean immediate-mode UI; settings persist; layering into config is respected.
+Problems:
+  - [SEV: high] difficultyPresets duplicates control.SkillNames() and has drifted (missing
+    "impossible") — internal/menu/settings.go:81 — the menu can't pick a tier the engine supports.
+Proposed fixes (ranked by impact × confidence):
+  1. [fix] derive difficultyPresets from control.SkillNames() → menu shows all tiers, can't drift
+     again   (drift? yes — "impossible" was dropped)
+     done-when: difficultyPresets == control.SkillNames(); a test pins it; build/vet/test green.
+
+Phase 1 — [fix] internal/menu: source difficultyPresets from control.SkillNames()
+  source: control.SkillNames(); drift: menu literal omitted "impossible"; corrected: tier now
+  selectable; pinning test: TestDifficultyPresetsMatchSkillNames.
+  verify: build/vet/test/race PASS · headless PASS · golden UNCHANGED (sim untouched) · commit a1b2c3d
+  golden regenerated: no
+```
+</example>
+
 End with a **scorecard**: top wins landed; `[fix]`es and the bugs they closed; `DEFERRED:` items
 with reason; and the net effect (lines removed, duplications killed, sources-of-truth unified,
 names made idiomatic, stutter removed, god files split, code rehomed to its right

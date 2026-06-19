@@ -1,0 +1,13 @@
+bc: device=cuda torch=2.12.1+cu130
+bc: train records=2844000 val records=252000
+bc: model params=154787
+bc: ability weights=[0.28582221269607544, 8.0, 2.305194854736328, 8.0] cancel weights=[0.500298023223877, 8.0]
+bc: epoch 0: loss=3.1208 val_acc=[0.5326, 0.8259, 0.7339, 0.9316, 0.99] score=0.7241 (60.8s)
+bc: epoch 1: loss=2.1537 val_acc=[0.5616, 0.8587, 0.7548, 0.9477, 0.9956] score=0.7489 (13.0s)
+bc: epoch 2: loss=1.9603 val_acc=[0.5771, 0.8649, 0.7676, 0.947, 0.9945] score=0.7581 (12.9s)
+bc: epoch 3: loss=1.8607 val_acc=[0.5853, 0.8713, 0.7718, 0.9632, 0.9948] score=0.7665 (13.3s)
+bc: epoch 4: loss=1.7929 val_acc=[0.5936, 0.8786, 0.7777, 0.9654, 0.9927] score=0.7725 (13.1s)
+bc: epoch 5: loss=1.7456 val_acc=[0.597, 0.8793, 0.7803, 0.9656, 0.9943] score=0.7745 (13.2s)
+bc: epoch 6: loss=1.7079 val_acc=[0.597, 0.8795, 0.7833, 0.9636, 0.9944] score=0.7747 (13.2s)
+bc: epoch 7: loss=1.6755 val_acc=[0.6015, 0.8838, 0.7867, 0.9573, 0.9931] score=0.7765 (13.3s)
+bc: done; best score=0.7765; checkpoint=/home/jack/Desktop/hax/haxball-clone/training/checkpoints/bc.pt

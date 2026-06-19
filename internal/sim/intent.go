@@ -40,4 +40,9 @@ type Intent struct {
 	// false: its facing is instant in the sim (its on-ball aim is smoothed in the control layer,
 	// and its off-ball and keeper aim is rate-limited there too -- see AI.capAim).
 	AimFromCursor bool
+	// MoveRelativeToFacing marks Move as being in the player's FACING frame rather than world space:
+	// the sim rotates it so +"up" drives toward Facing (W = forward, S = back, A/D = strafe). It is
+	// the "heading-locked" human control scheme (input.Human.SetMoveRelative). The AI leaves it
+	// false -- it sets Move directly in world space -- so its movement is never reframed.
+	MoveRelativeToFacing bool
 }

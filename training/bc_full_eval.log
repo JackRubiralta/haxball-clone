@@ -1,0 +1,8 @@
+=== BC full done ===
+bc: epoch 20: loss=1.068 val_acc=[0.6761, 0.928, 0.8855, 0.9779, 0.9984] score=0.8343 (18.6s)
+bc: epoch 21: loss=1.06 val_acc=[0.6748, 0.924, 0.8895, 0.9782, 0.9986] score=0.8337 (18.6s)
+bc: done; best score=0.8343; checkpoint=/home/jack/Desktop/hax/haxball-clone/training/checkpoints/bc_full.pt
+export: wrote internal/policy/weights/neural_v1.bin (941716 bytes), internal/policy/testdata/golden_forward.bin (12 parity vectors)
+ok  	phootball/internal/policy	0.005s
+=== eval BC full (20 seeds, 3,4, medium,large) ===
+{"weights":"internal/policy/weights/neural_v1.bin","seeds_per_cell":20,"sizes":[3,4],"fields":["medium","large"],"opponents":{"hard":{"opponent":"hard","matches":80,"nn_wins":1,"opp_wins":74,"draws":5,"win_rate":0.0125,"possession_pct":0.445753599414627,"pass_completion":0.1633986928104575,"shots_on_target_ratio":0.20588235294117646,"goals_for_avg":0.05,"goals_against_avg":1.65,"turnovers_avg":1.8125},"impossible":{"opponent":"impossible","matches":80,"nn_wins":0,"opp_wins":79,"draws":1,"win_rate":0,"possession_pct":0.3827894245031759,"pass_completion":0.1989130434782609,"shots_on_target_ratio":0.15,"goals_for_avg":0,"goals_against_avg":2.2375,"turnovers_avg":1.75},"nn":{"opponent":"nn","matches":80,"nn_wins":20,"opp_wins":20,"draws":40,"win_rate":0.25,"possession_pct":0.5,"pass_completion":0.32440476190476164,"shots_on_target_ratio":0.4,"goals_for_avg":0.5,"goals_against_avg":0.5,"turnovers_avg":1.25},"normal":{"opponent":"normal","matches":80,"nn_wins":10,"opp_wins":46,"draws":24,"win_rate":0.125,"possession_pct":0.4187839545898456,"pass_completion":0.1962962962962963,"shots_on_target_ratio":0.11805555555555557,"goals_for_avg":0.2,"goals_against_avg":0.9125,"turnovers_avg":1.6125}}}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 
+	"phootball/internal/aifactory"
 	"phootball/internal/cliutil"
 	"phootball/internal/config"
 	"phootball/internal/control"
@@ -52,7 +53,7 @@ func run(ctx context.Context, name string, args []string, stderr io.Writer) erro
 	skill, _ := control.SkillFromString(opts.Difficulty)
 	bots := make(map[int]netcode.Bot, len(match.Players))
 	for _, p := range match.Players {
-		bots[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
+		bots[p.PlayerID] = aifactory.New(p.PlayerID, skill)
 	}
 
 	server := netcode.NewServer(opts.Addr, match, bots, humanIDs)

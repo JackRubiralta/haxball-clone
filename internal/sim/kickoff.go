@@ -24,8 +24,9 @@ func (m *Match) resetKickoff(staged bool) {
 		p.moveHeading = geom.Vec{}
 		p.possession = 0
 		p.shootCharge = 0
-		p.trapCharge = 0
+		p.trapCharge = 1 // full trap energy bar at kickoff
 		p.trapAura = 0
+		p.trapPeak = 0
 		p.shootHeldPrev = false
 		p.shootCanceled = false
 		p.trapHeldPrev = false

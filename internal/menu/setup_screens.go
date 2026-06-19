@@ -143,11 +143,16 @@ func (a *App) setupTeams(f frame, col *colLayout) {
 				tc.HumanSlot = clampInt(tc.HumanSlot+dir(i), 1, tc.Size)
 				s.ClampDependents()
 			}
-		} else {
+		}
+		// The difficulty governs this side's AI players: the whole side when it's AI-controlled, or the
+		// human's AI team-mates when it's human-controlled. So show it whenever the side has at least one
+		// AI player -- always for an AI side, and for a human side with more than the single human slot --
+		// and hide it only for a lone human with no team-mates to govern.
+		if !tc.Human || tc.Size > 1 {
 			diff := indexOf(difficultyPresets, tc.Difficulty)
 			// No row label: the four tiers (easy/normal/hard/impossible) need the full half-column
-			// width so "impossible" fits its segment without crowding. The "Control" segment above
-			// already establishes this is the AI team.
+			// width so "impossible" fits its segment without crowding. The "Control"/"Human slot" rows
+			// above already establish whose difficulty this is.
 			if sel := f.segmented("", difficultyPresets, diff, c.x, c.row(), c.w); sel != diff {
 				tc.Difficulty = difficultyPresets[sel]
 			}
@@ -448,6 +453,10 @@ func (a *App) setupTuning(f frame, col *colLayout) {
 	a.tuneRow(f, col, "Capture bonus", &p.TrapCaptureBonus, 0, 300, 5, tfInt)
 	a.tuneRow(f, col, "Radius bonus", &p.TrapRadiusBonus, 0, 30, 1, tfInt)
 	a.tuneRow(f, col, "Restitution factor", &p.TrapRestitutionFactor, 0, 2, 0.05, tfDec2)
+	a.tuneRow(f, col, "Energy drain /s", &p.TrapDrainPerSecond, 0.1, 5, 0.05, tfDec2)
+	a.tuneRow(f, col, "Energy regen /s", &p.TrapRegenPerSecond, 0.05, 5, 0.05, tfDec2)
+	a.tuneRow(f, col, "Aura rate /s", &p.TrapAuraRatePerSecond, 0.5, 20, 0.5, tfDec1)
+	a.tuneRow(f, col, "Min aura (drained)", &p.TrapMinAura, 0, 0.5, 0.01, tfDec2)
 
 	f.sectionHeader("TEAM POSSESSION — TOUCH QUALITY", col.x, col.header(1), col.w)
 	a.tuneRow(f, col, "Own team (max)", &q.OwnTeamMax, 0, 2, 0.05, tfDec2)
@@ -476,6 +485,41 @@ func (a *App) setupTuning(f frame, col *colLayout) {
 	a.tuneRow(f, col, "Player wall bounce", &t.PlayerWallRestitution, 0, 1, 0.05, tfPct)
 	a.tuneRow(f, col, "Obstacle bounce", &t.ObstacleRestitution, 0, 1, 0.05, tfPct)
 	a.tuneRow(f, col, "Net bounce", &t.NetRestitution, 0, 1, 0.05, tfPct)
+
+	// Movement model (bottom of the tab). Default "Standard" is the current omnidirectional feel;
+	// "Directional" makes speed depend on facing (fast toward your aim, slow backward). When
+	// directional, a second toggle picks the WASD scheme: "Strafe" keeps world-absolute keys,
+	// "Locked" makes WASD relative to your aim (W = toward the cursor).
+	f.sectionHeader("MOVEMENT", col.x, col.header(1), col.w)
+	modelSel := 0
+	if t.MoveModel != config.MoveStandard {
+		modelSel = 1
+	}
+	if sel := f.segmented("Speed model", []string{"Standard", "Directional"}, modelSel, col.x, col.row(), col.w); sel != modelSel {
+		if sel == 0 {
+			t.MoveModel = config.MoveStandard
+		} else {
+			t.MoveModel = config.MoveDirectional // enable: default to the strafe (world-absolute) scheme
+		}
+	}
+	if t.MoveModel != config.MoveStandard {
+		schemeSel := 0
+		if t.MoveModel == config.MoveDirectionalLocked {
+			schemeSel = 1
+		}
+		if sel := f.segmented("WASD", []string{"Strafe", "Locked"}, schemeSel, col.x, col.row(), col.w); sel != schemeSel {
+			if sel == 0 {
+				t.MoveModel = config.MoveDirectional
+			} else {
+				t.MoveModel = config.MoveDirectionalLocked
+			}
+		}
+		// Per-direction speed multipliers (forward toward the aim is fastest). Only relevant under a
+		// directional model, so shown alongside the scheme toggle.
+		a.tuneRow(f, col, "Forward speed", &t.MoveForward, 0.1, 1.5, 0.05, tfDec2)
+		a.tuneRow(f, col, "Side speed", &t.MoveSide, 0.1, 1.5, 0.05, tfDec2)
+		a.tuneRow(f, col, "Back speed", &t.MoveBack, 0.1, 1.5, 0.05, tfDec2)
+	}
 }
 
 // winSummary describes the configured win condition in a single line for the Match Rules

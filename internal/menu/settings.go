@@ -7,6 +7,7 @@ package menu
 import (
 	"log/slog"
 
+	"phootball/internal/aifactory"
 	"phootball/internal/config"
 	"phootball/internal/control"
 	"phootball/internal/input"
@@ -352,10 +353,19 @@ func (s Settings) BuildMatch(practice, human bool) (*sim.Match, map[int]control.
 	field := sim.NewFieldFromGeometry(cfg.Geometry)
 	controllers := map[int]control.Controller{}
 
+	// newHuman builds the local controller with the chosen WASD scheme: the "heading-locked"
+	// movement model frames WASD relative to facing (the sim does the rotation). Standard and the
+	// "strafe" directional model both leave it world-absolute.
+	newHuman := func() *input.Human {
+		h := input.NewHuman()
+		h.SetMoveRelative(cfg.Tuning.MoveModel == config.MoveDirectionalLocked)
+		return h
+	}
+
 	if practice {
 		m := sim.BuildSolo(field)
 		for _, p := range m.Players {
-			controllers[p.PlayerID] = input.NewHuman()
+			controllers[p.PlayerID] = newHuman()
 		}
 		return m, controllers
 	}
@@ -381,9 +391,9 @@ func (s Settings) BuildMatch(practice, human bool) (*sim.Match, map[int]control.
 		skill, _ := control.SkillFromString(tc.Difficulty)
 		for _, p := range t.Players {
 			if p.PlayerID == humanID {
-				controllers[p.PlayerID] = input.NewHuman()
+				controllers[p.PlayerID] = newHuman()
 			} else {
-				controllers[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
+				controllers[p.PlayerID] = aifactory.New(p.PlayerID, skill)
 			}
 		}
 	}

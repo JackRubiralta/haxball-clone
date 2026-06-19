@@ -33,7 +33,8 @@ type EntityState struct {
 	Color       color.RGBA
 	Number      int
 	ShootCharge float64 // 0..1 shoot charge (players only)
-	TrapCharge  float64 // 0..1 trap charge (players only)
+	TrapCharge  float64 // 0..1 trap ENERGY bar (players only)
+	TrapAura    float64 // 0..1 effective trap strength / glow (players only; 0 when not trapping)
 }
 
 // Snapshot is the authoritative state the server broadcasts each tick. It carries
@@ -186,6 +187,7 @@ func SnapshotOf(m *sim.Match) Snapshot {
 			Number:      p.Number,
 			ShootCharge: sim.NormShootCharge(p.ShootCharge()),
 			TrapCharge:  p.TrapCharge(),
+			TrapAura:    p.TrapAura(),
 		})
 	}
 	return s

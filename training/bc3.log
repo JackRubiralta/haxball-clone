@@ -1,0 +1,6 @@
+bc: device=cuda torch=2.12.1+cu130
+bc: train records=10188000 val records=1188000
+bc: model params=333539
+bc: ability weights=[0.28981879353523254, 8.0, 2.0577661991119385, 8.0] cancel weights=[0.5003830790519714, 8.0]
+/usr/lib/python3.14/multiprocessing/resource_tracker.py:475: UserWarning: resource_tracker: There appear to be 38 leaked semaphore objects to clean up at shutdown: {'/mp-xxf6lfmf', '/mp-svngp959', '/mp-m2hvz_py', '/mp-ad_t9_y5', '/mp-ebkbj9u1', '/mp-hpchu1za', '/mp-l_2fyrpd', '/mp-2tv8udy4', '/mp-fu0mx2im', '/mp-pym341ma', '/mp-eh_gma9u', '/mp-d4b9o_3w', '/mp-ey15_g76', '/mp-_t_lgc3q', '/mp-gxt3ylqp', '/mp-4m6vkyf1', '/mp-grvppz45', '/mp-p6fewwgj', '/mp-93y5xohj', '/mp-aayifxgk', '/mp-g6q065wb', '/mp-ix8zu29s', '/mp-7m9fv0la', '/mp-5ohttvs6', '/mp-ln0r1yxo', '/mp-a2ikygxm', '/mp-avsx_hik', '/mp-bvlkpiop', '/mp-u_zprkq2', '/mp-4ztvoi8a', '/mp-exf0hl7f', '/mp-f7zryrzz', '/mp-_vyvgjvd', '/mp-gquj2swf', '/mp-twf5u2qm', '/mp-csy8rx2c', '/mp-w34wba_d', '/mp-v9_d4lkp'}
+  warnings.warn(

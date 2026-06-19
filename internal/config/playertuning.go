@@ -166,6 +166,19 @@ type PlayerTuning struct {
 	// never affects bounce.
 	TrapRestitutionFactor float64
 
+	// Trap ENERGY bar (the resource model). Holding the trap drains the 0..1 energy bar at
+	// TrapDrainPerSecond; releasing refills it at TrapRegenPerSecond (default ~1/3 of drain). The
+	// effective strength (trapAura, which drives every trap effect + the glow) ramps toward its
+	// energy-limited peak -- and back down -- at TrapAuraRatePerSecond, a constant LINEAR rate that is
+	// the SAME both ways, so the fade is exactly as gradual as the come-up (not a faster collapse).
+	TrapDrainPerSecond    float64
+	TrapRegenPerSecond    float64
+	TrapAuraRatePerSecond float64
+	// TrapMinAura is the floor the effective strength holds at while the trap is HELD with the
+	// energy bar fully drained -- so an empty-bar trap keeps a faint residual glow + weak good-touch
+	// rather than collapsing to nothing. Released, the aura still falls all the way to 0.
+	TrapMinAura float64
+
 	// TouchQuality folds the TEAM POSSESSION CHARGE into how cleanly a player takes an
 	// incoming ball (its capture speed and bounce). See the TouchQuality type.
 	TouchQuality TouchQuality

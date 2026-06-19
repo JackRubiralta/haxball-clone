@@ -141,8 +141,8 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			if approachSpeed > captureSpeed {
 				// Bounce livelier the further off-front it is; a held trap deadens the bounce
 				// (scaled by TrapRestitutionFactor and the trap's effective strength `trapAura`,
-				// which swells then weakens as the trap is over-held -- see entity.trapAuraShape),
-				// and the touch quality scales it too -- a clean touch deadens it, a cold one livens it.
+				// which rises to an energy-limited peak then collapses as the bar drains -- see
+				// applyIntent), and the touch quality scales it too -- a clean touch deadens it, a cold one livens it.
 				trapDeaden := 1 - math.Min(1, player.trapAura*player.Tuning.TrapRestitutionFactor)
 				restitution = player.Tuning.RestitutionAt(angle) * (1 + (1 - cone)) * trapDeaden
 				restitution *= player.Tuning.TouchQuality.RestitutionMul(quality)
@@ -334,8 +334,8 @@ func handleBallToPlayerAttraction(ball *Ball, player *Player, deltaTime float64)
 		// Both fade with retention, so a ball that is decisively breaking away is neither
 		// steered toward the front nor slowed -- it keeps the orbital momentum it has.
 		// Control (roll-to-front): FULL strength within the shared control cone (above), then the
-		// Control curve from that edge to the back. It still gets the trap and per-player
-		// possession MAGNITUDE boosts on top of the cone widening.
+		// Control curve from that edge to the back. It gets the trap and per-player possession
+		// MAGNITUDE boosts (both multipliers) on top of the cone widening.
 		strength := player.Tuning.ControlAt(controlCone, angle) *
 			(1 + player.Tuning.TrapControlBonus*player.trapAura) *
 			(1 + player.Tuning.PossessionControlBonus*player.possession)

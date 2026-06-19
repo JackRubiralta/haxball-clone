@@ -191,8 +191,11 @@ func TestStepDisarmsKickoffOnTouch(t *testing.T) {
 	// Drive the taker into the ball and strike: it starts a bit off the ball (inside the circle),
 	// so move toward the goal (the ball is just ahead) while charging, then release.
 	taker := m.kickoffTaker(m.KickoffSide())
+	// Face the attacking goal (the direction we move + the ball sits), so the move is "forward" under
+	// the directional movement model -- aiming at a stray point would face the taker the wrong way and
+	// make moving toward the ball a slow backpedal.
 	in := map[int]Intent{
-		taker.PlayerID: {Move: geom.NewVec(1, 0), Throttle: 1, ShootHeld: true, Aim: geom.NewVec(1, 0)},
+		taker.PlayerID: {Move: geom.NewVec(1, 0), Throttle: 1, ShootHeld: true, Aim: m.AttackingGoal(taker.Team).Center},
 	}
 	for i := 0; i < 30; i++ {
 		m.Step(in, 1.0/60.0)

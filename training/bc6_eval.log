@@ -1,0 +1,18 @@
+=== BC6 done ===
+bc: epoch 20: loss=0.7898 val_acc=[0.8594, 0.9285, 0.9529, 0.988, 0.9991] score=0.92 (17.2s)
+bc: epoch 21: loss=0.7797 val_acc=[0.8598, 0.9297, 0.9531, 0.9875, 0.9994] score=0.9203 (15.5s)
+bc: done; best score=0.9203; checkpoint=/home/jack/Desktop/hax/haxball-clone/training/checkpoints/bc6.pt
+export: wrote /tmp/bc6.bin (941716 bytes), parity skipped
+=== BC6 on 6v6 large vs IMPOSSIBLE (target config) ===
+  [size 6 seed 0 goal events]: [t606 GOAL creditSide=2 player=11] [t2043 GOAL creditSide=2 player=11] [t3024 GOAL creditSide=2 player=10]
+
+SIZE 6 vs impossible: NN wins 0 / AI wins 10 / draws 0
+  NN goals/match: team=0.00  (by NN players=0.00, via AI own-goals=0.00)  shots=1.50 onTarget=0.70
+  AI goals/match: team=2.40  (by AI players=2.40, via NN own-goals=0.00)
+  NN possession: 37.8%
+=== BC6 on 6v6 large vs HARD ===
+
+SIZE 6 vs hard: NN wins 0 / AI wins 8 / draws 2
+  NN goals/match: team=0.20  (by NN players=0.10, via AI own-goals=0.00)  shots=1.00 onTarget=0.70
+  AI goals/match: team=1.70  (by AI players=1.70, via NN own-goals=0.10)
+  NN possession: 20.8%

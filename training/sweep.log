@@ -1,0 +1,28 @@
+datagen: wrote training/shards/dataset_meta.json
+sweep: 24 shards, parallelism 12, ticks 1800
+ok  training/shards/shard_000.bin
+ok  training/shards/shard_008.bin
+ok  training/shards/shard_010.bin
+ok  training/shards/shard_004.bin
+ok  training/shards/shard_001.bin
+ok  training/shards/shard_006.bin
+ok  training/shards/shard_012.bin
+ok  training/shards/shard_011.bin
+ok  training/shards/shard_005.bin
+ok  training/shards/shard_002.bin
+ok  training/shards/shard_007.bin
+ok  training/shards/shard_013.bin
+ok  training/shards/shard_016.bin
+ok  training/shards/shard_020.bin
+ok  training/shards/shard_014.bin
+ok  training/shards/shard_018.bin
+ok  training/shards/shard_003.bin
+ok  training/shards/shard_022.bin
+ok  training/shards/shard_017.bin
+ok  training/shards/shard_023.bin
+ok  training/shards/shard_019.bin
+ok  training/shards/shard_009.bin
+ok  training/shards/shard_015.bin
+ok  training/shards/shard_021.bin
+sweep: done; shard dir size 3.5G
+sweep: shard count 24

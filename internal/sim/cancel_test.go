@@ -1,6 +1,10 @@
 package sim
 
-import "testing"
+import (
+	"testing"
+
+	"phootball/internal/geom"
+)
 
 // TestCancelChargeSuppressesKick verifies the right-click cancel: an in-progress shot
 // charge that is canceled drops to zero, does not rebuild while the shoot button stays
@@ -11,6 +15,9 @@ func TestCancelChargeSuppressesKick(t *testing.T) {
 	const dt = 1.0 / 60.0
 	m := BuildSolo(NewStandardField())
 	p := m.Players[0]
+	// The shoot charge now only builds while touching the ball; applyIntent does not integrate
+	// positions, so seating the ball at the player's feet keeps it in reach for the whole test.
+	m.Ball.Position = geom.NewVec(p.Position.X+p.Radius()+m.Ball.Radius()+0.5, p.Position.Y)
 
 	// Build a charge over 20 ticks.
 	for i := 0; i < 20; i++ {
@@ -25,8 +32,8 @@ func TestCancelChargeSuppressesKick(t *testing.T) {
 	if p.shootCharge != 0 || !p.shootCanceled {
 		t.Fatalf("cancel did not clear/latch the charge (charge=%.3f canceled=%v)", p.shootCharge, p.shootCanceled)
 	}
-	if p.trapCharge <= 0 {
-		t.Errorf("cancel suppressed trap; right-click should still settle the ball (trapCharge=%.3f)", p.trapCharge)
+	if p.trapAura <= 0 {
+		t.Errorf("cancel suppressed trap; right-click should still engage the trap (trapAura=%.3f)", p.trapAura)
 	}
 
 	// Hold shoot 20 more ticks: a canceled charge must NOT rebuild.

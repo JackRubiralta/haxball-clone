@@ -11,6 +11,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"phootball/internal/aifactory"
 	"phootball/internal/config"
 	"phootball/internal/control"
 	"phootball/internal/input"
@@ -138,7 +139,7 @@ func buildHostMatch(s Settings) (*sim.Match, map[int]netcode.Bot, []int) {
 	for ti, t := range []*sim.Team{m.Teams[teamHome], m.Teams[teamAway]} {
 		skill, _ := control.SkillFromString(s.Teams[ti].Difficulty)
 		for _, p := range t.Players {
-			bots[p.PlayerID] = control.NewAISkill(p.PlayerID, skill)
+			bots[p.PlayerID] = aifactory.New(p.PlayerID, skill)
 		}
 	}
 	humanIDs := m.ClaimableHumanIDs()
@@ -500,6 +501,7 @@ func (a *App) adaptSnapshot(snap netcode.Snapshot) render.SnapshotView {
 			Number:      e.Number,
 			ShootCharge: e.ShootCharge,
 			TrapCharge:  e.TrapCharge,
+			TrapAura:    e.TrapAura,
 		}
 	}
 	selfID, haveSelf := a.net.client.AssignedID()

@@ -289,6 +289,11 @@ const (
 	// aim or decision error, an almost-unbeatable keeper. Intended for testing and for
 	// showcasing clean passing/dribbling/flow rather than for a fair human match.
 	SkillImpossible
+	// SkillNeural is the neural-network controller (a trained net, not a scaled rule AI). It is
+	// appended LAST so the existing tier values are unchanged. It is constructed via
+	// aifactory.New (which branches to internal/control/neural), never via NewAISkill, so it does
+	// not use skillParams.
+	SkillNeural
 )
 
 // DefaultSkill is the tier used when none is specified: a strong, competitive AI.
@@ -332,6 +337,8 @@ func SkillFromString(s string) (Skill, bool) {
 		return SkillHard, true
 	case "impossible", "perfect":
 		return SkillImpossible, true
+	case "neural", "nn":
+		return SkillNeural, true
 	default:
 		return DefaultSkill, false
 	}
@@ -346,7 +353,8 @@ func ValidSkill(s string) bool {
 	return ok
 }
 
-// SkillNames returns the canonical tier names for help text and validation messages.
+// SkillNames returns the canonical tier names for help text, validation messages, and the menu
+// difficulty selector.
 func SkillNames() []string {
-	return []string{"easy", "normal", "hard", "impossible"}
+	return []string{"easy", "normal", "hard", "impossible", "neural"}
 }

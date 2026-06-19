@@ -509,6 +509,7 @@ func Frame(screen *ebiten.Image, m *sim.Match, cam *Camera, dt float64) Viewport
 			sim.NormShootCharge(p.ShootCharge()), p.TrapAura())
 	}
 	drawPossessionBarsAll(screen, m)
+	drawTrapBarsAll(screen, m)
 	zc := newCanvas(screen)
 	drawZoneIndicators(zc, m.Field, m.Rules)
 	vp := zc.viewport() // the camera transform, captured before the HUD's fit pass
@@ -782,7 +783,8 @@ type SnapshotEntity struct {
 	Radius                  float64
 	Color                   color.RGBA
 	Number                  int
-	ShootCharge, TrapCharge float64
+	ShootCharge, TrapCharge float64 // TrapCharge is the 0..1 trap ENERGY bar
+	TrapAura                float64 // 0..1 effective trap strength (the glow), 0 when not actively trapping
 }
 
 // SnapshotView is the render-agnostic projection of a server snapshot that FrameFromSnapshot
@@ -826,9 +828,17 @@ func FrameFromSnapshot(screen *ebiten.Image, v SnapshotView, field *sim.Field, s
 			ballPos = e.Position
 			BallAt(screen, e.Position, e.Radius)
 		} else {
-			PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapCharge)
+			PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapAura)
 			if v.HaveSelf && e.PlayerID == v.SelfPlayerID {
 				PlayerSelfMarker(screen, e.Position, e.Radius)
+			}
+		}
+	}
+	if ShowTrapBars {
+		tc := newCanvas(screen)
+		for _, e := range v.Entities {
+			if !e.IsBall {
+				drawTrapEnergyBar(tc, e.Position, e.Radius, e.TrapCharge)
 			}
 		}
 	}
@@ -1017,6 +1027,44 @@ func drawPossessionBars(c canvas, pos geom.Vec, radius, playerPoss, coef float64
 		mag = -mag
 	}
 	c.fillRect(x, y2, w*clamp01(mag), h, fill)
+}
+
+// ShowTrapBars toggles the trap-energy bar above each player (the right-click "good touch"
+// resource). On by default; drawn on both the local and networked render paths, over ALL players.
+var ShowTrapBars = true
+
+// trapBarFill is the cyan fill of the trap-energy bar.
+var trapBarFill = color.RGBA{80, 210, 230, 235}
+
+// drawTrapEnergyBar draws a small bar above a player showing its 0..1 trap ENERGY: full = ready,
+// draining while the trap is held, regenerating otherwise. Sits one slot ABOVE the possession test
+// bars so they never overlap.
+func drawTrapEnergyBar(c canvas, pos geom.Vec, radius, energy float64) {
+	if !ShowTrapBars {
+		return
+	}
+	const w, h, gap = 26.0, 3.0, 1.5
+	e := energy
+	if e < 0 {
+		e = 0
+	} else if e > 1 {
+		e = 1
+	}
+	x := pos.X - w/2
+	y := pos.Y - radius - 13 - (h + gap) // one slot above the possession bars
+	c.fillRect(x, y, w, h, color.RGBA{0, 0, 0, 130})
+	c.fillRect(x, y, w*e, h, trapBarFill)
+}
+
+// drawTrapBarsAll draws the trap-energy bar over every player of an already-drawn local match.
+func drawTrapBarsAll(screen *ebiten.Image, m *sim.Match) {
+	if !ShowTrapBars {
+		return
+	}
+	c := newCanvas(screen)
+	for _, p := range m.Players {
+		drawTrapEnergyBar(c, p.Position, p.Radius(), p.TrapCharge())
+	}
 }
 
 // drawShootCharge draws the power gauge as a 180deg arc over the FRONT hemisphere the player

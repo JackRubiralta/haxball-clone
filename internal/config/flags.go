@@ -241,7 +241,7 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	camera := fs.String("camera", "ball", "camera mode: ball (alias follow), player (alias active), or fit (whole pitch)")
 	mute := fs.Bool("mute", false, "silence all sound")
 	volume := fs.Float64("volume", 0.8, "master volume 0..1")
-	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, or impossible")
+	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, impossible, or neural")
 	if err := fs.Parse(args); err != nil {
 		return GameOptions{}, parseError(err)
 	}
@@ -331,7 +331,7 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	homeSize := fs.Int("home-size", 0, "players on the home (Blue) team (0 = use -team-size)")
 	awaySize := fs.Int("away-size", 0, "players on the away (Red) team (0 = use -team-size)")
 	tickRate := fs.Float64("tick-rate", 60, "simulation ticks per second (1..240)")
-	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, or impossible")
+	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, impossible, or neural")
 	if err := fs.Parse(args); err != nil {
 		return ServerOptions{}, parseError(err)
 	}

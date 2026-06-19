@@ -43,8 +43,9 @@ type Player struct {
 	touchCoef     float64  // -1..1 touch-quality coefficient this tick from the team possession charge
 	boostDrain    float64  // 0..1 per-player erosion of THIS player's team boost while an opponent is touching it (recovers off contact)
 	shootCharge   float64  // seconds the shoot button has been held this charge
-	trapCharge    float64  // 0..1 trap charge; built while the trap button is held
-	trapAura      float64  // 0..1 EFFECTIVE trap strength (stateful): humps while held (grow->peak->weaken), shrinks on release; drives BOTH the trap effect and its visual aura
+	trapCharge    float64  // 0..1 trap ENERGY bar (the resource): drains while the trap is held, regenerates at ~1/3 rate otherwise. (Name kept for wire/getter/NN stability; it is energy, not a charge.)
+	trapAura      float64  // 0..1 EFFECTIVE trap strength (stateful): rises to an energy-limited peak while held, holds, then shrinks to 0 once the bar drains out or on release; drives BOTH the trap effect and its visual aura
+	trapPeak      float64  // the peak trapAura rises to this press; captured on the trap rising edge = the energy available then (so a half-full bar gives a smaller, "not fully big" peak)
 	shootHeldPrev bool     // shoot-button state last tick, for release-edge detection
 	shootCanceled bool     // current shoot charge was canceled (by a trap-tap); suppress the release-edge kick
 	wantsPush     bool     // middle-click jab requested this tick (instant min-power radial push)
@@ -59,45 +60,38 @@ type Player struct {
 // Charge timing constants (seconds), shared by the sim and the renderer's gauges.
 const (
 	shootChargeMax   = 0.75 // seconds of hold for a full-power shot (faster charge)
-	trapChargeTime   = 1.25 // seconds of holding the trap button to reach full trap charge (~25% slower)
-	trapChargeDecay  = 3.2  // per-second decay of trap charge once released (~25% slower release/aura fade)
 	pushFlashSeconds = 0.4  // seconds for the middle-click push ring to expand outward and fade away
 )
 
-// Trap strength shape: how the held trap's EFFECTIVE strength (`trapAura`) tracks the raw charge.
-// This single level drives BOTH the trap effect (capture/restitution/pull/stickiness/control/
-// reach/slowdown) and the visual aura, so the two always match.
-const (
-	trapAuraPeak           = 0.55 // charge fraction at which the trap is strongest (its max)
-	trapAuraOverheldFloor  = 0.5  // strength once the trap is fully (over-)charged
-	trapAuraReleaseSeconds = 0.3  // seconds for the strength/aura to shrink to nothing after release
-)
-
-// trapAuraShape maps the raw trap charge to the trap's effective strength WHILE HELD: it swells
-// (ease-out) to full at trapAuraPeak, then -- as the trap is over-held toward full charge --
-// weakens to trapAuraOverheldFloor, so the longer the trap is held past its peak the weaker it
-// gets (and the smaller the on-screen circle). Drives both the effect and the visual aura.
-func trapAuraShape(charge float64) float64 {
-	if charge <= 0 {
-		return 0
+// trapAuraApproach moves the trap aura toward target at a constant (LINEAR) rate -- the SAME rate
+// whether growing or shrinking, so the fade is exactly as gradual as the come-up (no fast initial
+// drop when the bar runs out). Snaps to the target once within a step.
+func trapAuraApproach(cur, target, rate, dt float64) float64 {
+	step := rate * dt
+	switch {
+	case target > cur:
+		if cur += step; cur > target {
+			cur = target
+		}
+	case target < cur:
+		if cur -= step; cur < target {
+			cur = target
+		}
 	}
-	if charge <= trapAuraPeak {
-		x := charge / trapAuraPeak
-		return 1 - (1-x)*(1-x) // ease-out swell to the max at the peak
-	}
-	x := (charge - trapAuraPeak) / (1 - trapAuraPeak)
-	return 1 - (1-trapAuraOverheldFloor)*x // weaken from the max to the floor as it is over-held
+	return cur
 }
 
 // ShootCharge returns the seconds the shoot button has been held this charge.
 func (p *Player) ShootCharge() float64 { return p.shootCharge }
 
-// TrapCharge returns the current 0..1 trap charge.
+// TrapCharge returns the current 0..1 trap ENERGY (the resource bar): 1 = full, draining while the
+// trap is held and regenerating at ~1/3 the drain rate otherwise. (Named "Charge" for wire/getter
+// stability; it is the energy bar.)
 func (p *Player) TrapCharge() float64 { return p.trapCharge }
 
-// TrapAura returns the current 0..1 effective trap strength: while the trap is held it swells to
-// a max then weakens as the trap is over-held (see trapAuraShape), and shrinks to nothing after
-// release. Drives the trap effect and is exposed for the renderer's trap glow (so they match).
+// TrapAura returns the current 0..1 effective trap strength: while the trap is held it rises to a
+// peak bounded by the energy available when pressed, holds there, then shrinks to 0 once the energy
+// bar drains out (or on release). Drives the trap effect and the renderer's trap glow (so they match).
 func (p *Player) TrapAura() float64 { return p.trapAura }
 
 // PushFlash returns the current 1->0 push-press animation timer: 1 the tick a middle-click push is
@@ -164,6 +158,7 @@ func NewPlayer(id int, position geom.Vec, tuning config.PlayerTuning, team *Team
 		Tuning:       tuning,
 		Facing:       geom.NewVec(1, 0),
 		HomePosition: position,
+		trapCharge:   1, // start with a full trap energy bar
 	}
 }
 

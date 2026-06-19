@@ -1,0 +1,19 @@
+=== DAgger6 gen done; shards now: 33 ===
+bc: epoch 19: loss=0.6832 val_acc=[0.864, 0.9307, 0.9649, 0.9887, 0.9995] score=0.9242 (21.8s)
+bc: epoch 20: loss=0.676 val_acc=[0.8646, 0.931, 0.9647, 0.9858, 0.9995] score=0.9239 (24.9s)
+bc: epoch 21: loss=0.6699 val_acc=[0.8644, 0.9315, 0.9619, 0.9868, 0.9994] score=0.9237 (24.0s)
+bc: done; best score=0.9242; checkpoint=/home/jack/Desktop/hax/haxball-clone/training/checkpoints/bc7.pt
+export: wrote /tmp/bc7.bin (941716 bytes), parity skipped
+=== BC7 (DAgger r1) on 6v6 large vs IMPOSSIBLE ===
+
+SIZE 6 vs impossible: NN wins 0 / AI wins 9 / draws 1
+  NN goals/match: team=0.00  (by NN players=0.00, via AI own-goals=0.10)  shots=1.20 onTarget=0.60
+  AI goals/match: team=2.00  (by AI players=1.90, via NN own-goals=0.00)
+  NN possession: 33.6%
+=== BC7 vs HARD ===
+
+SIZE 6 vs hard: NN wins 0 / AI wins 9 / draws 1
+  NN goals/match: team=0.10  (by NN players=0.00, via AI own-goals=0.10)  shots=1.00 onTarget=0.80
+  AI goals/match: team=1.50  (by AI players=1.40, via NN own-goals=0.10)
+  NN possession: 25.0%
+BC7_CHAIN_DONE

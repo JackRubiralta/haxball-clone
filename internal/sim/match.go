@@ -264,7 +264,12 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 			p.shootCharge = 0
 			p.shootCanceled = true
 		}
-		if !p.shootCanceled {
+		// The charge only builds while the ball is at the player's feet: you wind a shot up on the
+		// ball, not in open space. Holding shoot away from the ball neither grows nor resets the
+		// charge -- it simply waits, so a charge built on the ball survives a brief loss of contact
+		// and still fires on release. This is the same touch test the dribble/possession use, so it
+		// applies identically to a human and the AI (which charges while the ball is at its front).
+		if !p.shootCanceled && m.touching(p) {
 			p.shootCharge += deltaTime
 			if p.shootCharge > shootChargeMax {
 				p.shootCharge = shootChargeMax
@@ -286,48 +291,73 @@ func (m *Match) applyIntent(p *Player, in Intent, deltaTime float64) {
 	p.wantsPush = in.Push && !p.pushHeldPrev
 	p.pushHeldPrev = in.Push
 
-	// Trap charge: build toward 1 while held, decay otherwise. (No sound on the trap/right-click
-	// rising edge -- the trap is silent by request.)
+	// Trap ENERGY bar + effective strength. The 0..1 energy (trapCharge) DRAINS linearly while the
+	// trap is held and REGENERATES at ~1/3 that rate when released. The effective strength (trapAura,
+	// which drives every trap effect AND the glow) EASES up (smooth come-up) to a PEAK captured on the
+	// press (= the energy available then, so a half-full bar gives "big but not fully big"), holds
+	// there while the bar has energy, then falls toward a TrapMinAura FLOOR once the bar drains out
+	// (a faint residual while still held) -- and all the way to 0 on release. (No sound on the rising
+	// edge -- the trap is silent by request.)
+	if in.Trap && !p.trapHeldPrev {
+		p.trapPeak = clampUnit(p.trapCharge) // capture the reachable peak at the moment of pressing
+	}
 	p.trapHeldPrev = in.Trap
+	tt := p.Tuning
 	if in.Trap {
-		p.trapCharge += deltaTime / trapChargeTime
-		if p.trapCharge > 1 {
-			p.trapCharge = 1
-		}
-	} else if p.trapCharge > 0 {
-		p.trapCharge -= trapChargeDecay * deltaTime
-		if p.trapCharge < 0 {
+		if p.trapCharge -= tt.TrapDrainPerSecond * deltaTime; p.trapCharge < 0 {
 			p.trapCharge = 0
 		}
-	}
-
-	// Effective trap strength (stateful): WHILE HELD it follows a hump of the charge -- swelling
-	// to full at the peak charge, then weakening as the trap is over-held; on RELEASE it shrinks
-	// straight to nothing and never re-swells (it is not recomputed from the decaying charge).
-	// This single level drives BOTH the trap effect (capture/pull/reach/slowdown/...) and the
-	// visual aura, so the on-screen glow always matches what the trap is actually doing.
-	if in.Trap {
-		p.trapAura = trapAuraShape(p.trapCharge)
-	} else if p.trapAura > 0 {
-		if p.trapAura -= deltaTime / trapAuraReleaseSeconds; p.trapAura < 0 {
-			p.trapAura = 0
+		// Aura target while held: the energy-limited peak, but never below TrapMinAura -- so once the
+		// bar drains out the aura settles at the floor (a faint residual good-touch + glow) instead of
+		// collapsing to nothing while you keep holding.
+		peak := 0.0
+		if p.trapCharge > 0 {
+			peak = p.trapPeak
 		}
+		target := max(peak, tt.TrapMinAura)
+		p.trapAura = trapAuraApproach(p.trapAura, target, tt.TrapAuraRatePerSecond, deltaTime)
+	} else {
+		if p.trapCharge += tt.TrapRegenPerSecond * deltaTime; p.trapCharge > 1 {
+			p.trapCharge = 1
+		}
+		// Released: the floor lifts and the aura eases all the way to 0 (regen resumes on the bar).
+		p.trapAura = trapAuraApproach(p.trapAura, 0, tt.TrapAuraRatePerSecond, deltaTime)
 	}
 
-	// Trapping and charging a shot both slow the player; charging slows it more. The trap term
-	// uses the humped trapAura (so the slowdown swells then eases as the trap is over-held, like
-	// the rest of its effect). Set unconditionally from the base so nothing drifts.
+	// Trapping and charging a shot both slow the player. The trap slow is CONSTANT while the trap is
+	// held (a flat factor the moment the button is down, NOT the humped aura), sized to match the
+	// FULL shoot-charge slow; the shoot slow ramps up with the charge. (The radius/other trap effects
+	// still follow the humped aura -- only the slowdown is constant.) Set from the base so nothing drifts.
 	p.Body.SetRadius(p.Tuning.Radius + p.Tuning.TrapRadiusBonus*p.trapAura)
 	shootCharge := NormShootCharge(p.shootCharge)
-	speedMul := (1 - p.trapAura*(1-p.Tuning.TrapSpeedFactor)) * (1 - shootCharge*(1-p.Tuning.ShootSpeedFactor))
-	accelMul := (1 - p.trapAura*(1-p.Tuning.TrapAccelFactor)) * (1 - shootCharge*(1-p.Tuning.ShootAccelFactor))
+	trapSpeedMul, trapAccelMul := 1.0, 1.0
+	if in.Trap {
+		trapSpeedMul = p.Tuning.TrapSpeedFactor
+		trapAccelMul = p.Tuning.TrapAccelFactor
+	}
+	speedMul := trapSpeedMul * (1 - shootCharge*(1-p.Tuning.ShootSpeedFactor))
+	accelMul := trapAccelMul * (1 - shootCharge*(1-p.Tuning.ShootAccelFactor))
 	// Possession penalty: a ball at the player's feet costs a little speed and accel.
 	if geom.Dist(p.Position, m.Ball.Position)-p.Radius()-m.Ball.Radius() < p.Tuning.TouchRange {
 		speedMul *= p.Tuning.PossessionSpeedFactor
 		accelMul *= p.Tuning.PossessionAccelFactor
 	}
+	// Movement model. Default MoveStandard is a no-op: Move stays world-absolute and speed is
+	// uniform in every direction (the original feel; the golden replay relies on this). Under a
+	// directional model, optionally reframe the human's WASD relative to facing ("heading-locked"),
+	// then scale top speed and acceleration by how aligned the move is with facing (fast ahead, slow
+	// back). This applies uniformly to every player, so it never breaks the AI<=human boundary.
+	moveDir := in.Move
+	if in.MoveRelativeToFacing {
+		moveDir = moveRelativeToFacing(moveDir, p.Facing)
+	}
+	if m.Tuning.MoveModel != config.MoveStandard {
+		d := directionalSpeedMul(moveDir, p.Facing, m.Tuning)
+		speedMul *= d
+		accelMul *= d
+	}
 	p.Body.MaxSpeed = p.Tuning.MaxSpeed * speedMul
-	p.Move(in.Move, in.Throttle*accelMul, deltaTime)
+	p.Move(moveDir, in.Throttle*accelMul, deltaTime)
 }
 
 // teamFor returns the team defending the given side.

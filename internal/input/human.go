@@ -16,7 +16,8 @@ import (
 // frame's Viewport (set by the App via SetViewport) so it can map the cursor into world
 // space without reading any render-package global.
 type Human struct {
-	vp render.Viewport
+	vp           render.Viewport
+	moveRelative bool // "heading-locked" scheme: WASD are relative to facing (the sim does the rotation)
 }
 
 // NewHuman creates a keyboard-and-mouse controller.
@@ -25,6 +26,12 @@ func NewHuman() *Human { return &Human{} }
 // SetViewport tells the controller which frame transform to invert the cursor with. The
 // App calls it each frame before gathering intents, passing the viewport it last drew.
 func (h *Human) SetViewport(vp render.Viewport) { h.vp = vp }
+
+// SetMoveRelative selects the WASD frame: false (default) keeps world-absolute keys; true is the
+// "heading-locked" scheme, where W steers toward the aim, S back, and A/D strafe. The controller
+// only flags Intent.MoveRelativeToFacing -- the sim performs the rotation against the authoritative
+// facing -- so the scheme has no effect under the Standard movement model.
+func (h *Human) SetMoveRelative(on bool) { h.moveRelative = on }
 
 // Intent reads WASD into a movement direction, the cursor into an aim point, and the three
 // mouse buttons into the ball abilities: held left = a charging shot (fired on release), held
@@ -80,13 +87,14 @@ func (h *Human) Intent(_ sim.View) sim.Intent {
 
 	cursorX, cursorY := ebiten.CursorPosition()
 	return sim.Intent{
-		Move:          move,
-		Throttle:      throttle,
-		Aim:           h.vp.ScreenToWorld(cursorX, cursorY),
-		AimFromCursor: true, // turn toward the cursor at TurnRate -- no instant snap of the disk
-		ShootHeld:     shootHeld,
-		Trap:          trapHeld,
-		CancelCharge:  cancelCharge,
-		Push:          pushHeld,
+		Move:                 move,
+		Throttle:             throttle,
+		Aim:                  h.vp.ScreenToWorld(cursorX, cursorY),
+		AimFromCursor:        true, // turn toward the cursor at TurnRate -- no instant snap of the disk
+		ShootHeld:            shootHeld,
+		Trap:                 trapHeld,
+		CancelCharge:         cancelCharge,
+		Push:                 pushHeld,
+		MoveRelativeToFacing: h.moveRelative,
 	}
 }

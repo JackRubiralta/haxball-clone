@@ -1,0 +1,19 @@
+bc: device=cuda torch=2.12.1+cu130
+bc: train records=3852000 val records=360000
+bc: model params=235715
+bc: ability weights=[0.2749021053314209, 8.0, 3.2058348655700684, 8.0] cancel weights=[0.5002171397209167, 8.0]
+bc: epoch 0: loss=2.9438 val_acc=[0.6589, 0.8881, 0.735, 0.9564, 0.9933] score=0.7924 (88.0s)
+bc: epoch 1: loss=1.8841 val_acc=[0.6892, 0.9004, 0.7561, 0.9692, 0.9965] score=0.8128 (18.2s)
+bc: epoch 2: loss=1.6907 val_acc=[0.6983, 0.908, 0.7815, 0.968, 0.9972] score=0.8216 (18.2s)
+bc: epoch 3: loss=1.5768 val_acc=[0.704, 0.9117, 0.7931, 0.976, 0.9961] score=0.8279 (17.9s)
+bc: epoch 4: loss=1.496 val_acc=[0.7096, 0.9142, 0.8093, 0.9736, 0.9977] score=0.8327 (18.3s)
+bc: epoch 5: loss=1.4334 val_acc=[0.7127, 0.9167, 0.8278, 0.974, 0.9937] score=0.8371 (18.2s)
+bc: epoch 6: loss=1.3826 val_acc=[0.7166, 0.9179, 0.8334, 0.9713, 0.9953] score=0.8392 (18.1s)
+bc: epoch 7: loss=1.3389 val_acc=[0.7191, 0.9143, 0.8399, 0.9757, 0.9972] score=0.8415 (18.1s)
+bc: epoch 8: loss=1.3013 val_acc=[0.7199, 0.9191, 0.8438, 0.9732, 0.9976] score=0.8429 (18.3s)
+bc: epoch 9: loss=1.2703 val_acc=[0.7223, 0.9179, 0.851, 0.9742, 0.9946] score=0.8447 (19.1s)
+bc: epoch 10: loss=1.2423 val_acc=[0.7227, 0.9186, 0.8572, 0.9703, 0.9972] score=0.8453 (19.4s)
+bc: epoch 11: loss=1.2189 val_acc=[0.7245, 0.9196, 0.8598, 0.9729, 0.9958] score=0.8471 (18.7s)
+bc: epoch 12: loss=1.1977 val_acc=[0.7249, 0.921, 0.863, 0.9796, 0.9965] score=0.8494 (18.4s)
+bc: epoch 13: loss=1.1796 val_acc=[0.7261, 0.9216, 0.8648, 0.974, 0.9964] score=0.8491 (19.1s)
+bc: done; best score=0.8494; checkpoint=/home/jack/Desktop/hax/haxball-clone/training/checkpoints/bc2.pt
