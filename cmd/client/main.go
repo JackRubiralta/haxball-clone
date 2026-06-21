@@ -97,6 +97,8 @@ func adapt(snap netcode.Snapshot) render.SnapshotView {
 			ShootCharge: e.ShootCharge,
 			TrapCharge:  e.TrapCharge,
 			TrapAura:    e.TrapAura,
+			Possession:  e.Possession,
+			TouchCoef:   e.TouchCoef,
 		}
 	}
 	return render.SnapshotView{

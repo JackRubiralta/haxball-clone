@@ -40,20 +40,20 @@ func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 		mv, th = a.steerReceive(p, ip)
 	}
 	in.Move, in.Throttle = mv, th
-	in.Aim = a.aimToward(p, p.ball) // face the ball (projected far so the facing is cache-stable)
+	// The presser faces the ball: in the directional move model its run is toward the ball anyway
+	// (≈ forward, so no speed penalty), and facing it is what lets it trap/settle a loose ball
+	// cleanly the moment it arrives.
+	in.Aim = a.aimToward(p, p.ball)
 
-	// Pre-charge a clearance: when about to reach a loose ball deep in our own third, start
-	// holding shoot WHILE closing in (charging needs no ball) so the clearance leaves with
-	// power the instant we touch it -- then release on contact. Approaching from our own
-	// side, the radial kick naturally goes upfield.
-	if a.shouldPrechargeClear(p) {
-		if p.iControl {
-			in.ShootHeld = false // contact: release the charged clear
-			a.kickCooldown = p.view.Tick() + a.tune.kickCooldownTicks
-			a.lastOnBall = actClear
-		} else {
-			in.ShootHeld = true // keep charging as we close in
-		}
+	// Deep in our own third under pressure: DRIVE straight in to win the ball, skipping the trap
+	// below -- the trap centre-pull would hold the ball at a standoff just outside touch range, so
+	// the presser could never gain control to clear it. Hold shoot as we drive in: it builds NO
+	// charge off the ball (the m.touching gate in Match.applyIntent), but the instant we touch, the
+	// charge winds up AND the shoot-contact keeps the ball glued to the front; onBall's clear path
+	// then lines it up and fires the charged boot. (There is no off-ball pre-charge -- holding shoot
+	// here never fires until onBall releases it, so it can't go off as a zero-charge tap.)
+	if a.shouldDriveInClear(p) {
+		in.ShootHeld = true
 		return in
 	}
 
@@ -72,6 +72,26 @@ func (a *AI) press(p perception, plan teamPlan) sim.Intent {
 		in.Trap = true
 	}
 	return in
+}
+
+// shouldDriveInClear reports whether the presser is about to win a loose ball deep in its own
+// third under pressure (a dangerous situation) and should drive straight in to control it for a
+// charged clearance, rather than trapping (which would hold the ball at a standoff out of touch
+// range). Gated on a short ETA so the player doesn't abandon a clean reception far from the ball.
+func (a *AI) shouldDriveInClear(p perception) bool {
+	if p.carrierEnemy {
+		return false // an opponent controls it: steal, don't barge in
+	}
+	frac := (p.ball.X - p.ownGoal.X) * p.attackX / p.view.Field().Width() // 0 own goal..1 enemy goal
+	if frac > a.tune.clearThird {
+		return false
+	}
+	if p.pressureOnCarry < a.tune.actPressure {
+		return false // uncontested in our third: control it and play out, don't hoof it away
+	}
+	reach := p.me.Radius() + p.ballRadius
+	eta := interceptTime(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
+	return eta <= a.tune.driveClearETA
 }
 
 // receivingPass reports that the ball is an in-flight pass this player should glide onto and
@@ -169,25 +189,6 @@ func (a *AI) contested(p perception) bool {
 	return false
 }
 
-// shouldPrechargeClear reports whether the presser is about to reach a loose ball deep in
-// its own third (a dangerous situation) and should pre-charge a clearance. It is gated on a
-// short ETA so the player doesn't wander pre-charged at half speed.
-func (a *AI) shouldPrechargeClear(p perception) bool {
-	if p.carrierEnemy {
-		return false // an opponent controls it: steal, don't swing at it
-	}
-	frac := (p.ball.X - p.ownGoal.X) * p.attackX / p.view.Field().Width() // 0 own goal..1 enemy goal
-	if frac > a.tune.clearThird {
-		return false
-	}
-	if p.pressureOnCarry < a.tune.actPressure {
-		return false // uncontested in our third: control it and play out, don't hoof it away
-	}
-	reach := p.me.Radius() + p.ballRadius
-	eta := interceptTime(p.me.Position(), p.me.Tuning().MaxSpeed, p.me.Tuning().TurnRate, p.me.Heading(), reach, p.ball, p.ballVel, p.friction, p.dt, a.tune)
-	return eta <= a.tune.prechargeETA
-}
-
 // kickoffStandoff returns a holding point just outside the centre circle on the defending
 // presser's side, so it is ready to pounce the instant the ball is played.
 func (a *AI) kickoffStandoff(p perception) geom.Vec {
@@ -203,6 +204,25 @@ func (a *AI) kickoffStandoff(p perception) geom.Vec {
 // keeps facing the ball so an arriving pass is received cleanly (with trap if it is coming).
 func (a *AI) offBall(p perception, plan teamPlan) sim.Intent {
 	in := a.abortCharge(p, sim.Intent{})
+
+	// COLLECT an incoming pass: if a ball our side is uncontested-collecting is in flight and we are
+	// the nearest of our side to it, GO GET IT (run onto its line and receive with trap) instead of
+	// holding a formation/support spot. The elected presser already does this in press(), but the
+	// intercept-TIME election sometimes picks a different (worse-placed) player, leaving the actual
+	// nearest man -- usually the intended receiver -- to keep repositioning and DRIFT off the spot the
+	// pass was aimed at. That is the measured "ball arrives a player-length from the open man" miss
+	// (about half of failed passes had the receiver moving AWAY from the ball at closest approach).
+	// Gated to the single nearest man, so it does not create a second chaser (no swarm).
+	if a.receivingPass(p) && a.nearestToBallOnMyside(p) {
+		ip := a.receivePoint(p)
+		mv, th := a.steerReceive(p, ip)
+		in.Move, in.Throttle = mv, th
+		in.Aim = a.aimToward(p, p.ball)
+		if a.wantTrapReceive(p) {
+			in.Trap = true
+		}
+		return in
+	}
 
 	target := idealPosition(p, a.tune)
 	supporting := false
@@ -220,6 +240,7 @@ func (a *AI) offBall(p perception, plan teamPlan) sim.Intent {
 	default:
 		a.holdSpotOK = false
 	}
+	target = a.avoidKeeperOnlyBox(p, target) // don't path into a keeper-only goal area we'd be evicted from
 
 	mv, th := a.steer(p, target, true)
 	// Spread off the ball: repel the MOVEMENT away from teammates that are too close (a boids
@@ -237,11 +258,61 @@ func (a *AI) offBall(p perception, plan teamPlan) sim.Intent {
 		}
 	}
 	in.Move, in.Throttle = mv, th
-	in.Aim = a.aimToward(p, p.ball)
+	// Facing: the player CLOSEST of our side to a loose ball is the backup behind the presser and
+	// must face the ball to settle a rebound/loose ball cleanly. Everyone else uses faceAim, which
+	// under the directional move model faces their TRAVEL direction while transiting (so they RUN at
+	// forward speed instead of the side/back crawl) and turns to face the ball just before receiving;
+	// under the standard model faceAim always faces the ball (speed-neutral, unchanged behaviour).
+	if p.ballLoose && a.nearestToBallOnMyside(p) {
+		in.Aim = a.aimToward(p, p.ball)
+	} else {
+		in.Aim = a.faceAim(p, in, p.ball)
+	}
 	if a.wantTrapReceive(p) {
 		in.Trap = true
 	}
 	return in
+}
+
+// avoidKeeperOnlyBox keeps an OUTFIELD player's movement target out of a goal area that only a
+// keeper may enter (the "only keeper in box" rule, config.Ruleset.GoalAreaKeeperOnly). Without this
+// the AI would path into a box it is immediately walled out of by the sim, leaving its man/marking
+// spot unmanned at the edge; clamping the target to the box FRONT face (never toward the goal line)
+// keeps the player stable just outside, goal-side of whatever it was covering. A no-op when the rule
+// is off or for the keeper, so default play is unchanged. The rule is a global, on-screen match
+// setting, so reading it stays within the AI<=human boundary. (Numeric box caps are left to the sim's
+// gentle eviction; only the explicit keeper-only rule is anticipated here.)
+func (a *AI) avoidKeeperOnlyBox(p perception, target geom.Vec) geom.Vec {
+	if !p.rules.GoalAreaKeeperOnly || p.me.Role() == sim.RoleKeeper {
+		return target
+	}
+	f := p.view.Field()
+	margin := p.me.Radius() + 4
+	for _, side := range []sim.Side{sim.SideLeft, sim.SideRight} {
+		box := f.GoalArea(side)
+		if !box.Contains(target) {
+			continue
+		}
+		if side == sim.SideLeft {
+			target.X = box.Max.X + margin // push out the front (midfield-facing) face, never toward the goal line
+		} else {
+			target.X = box.Min.X - margin
+		}
+	}
+	return target
+}
+
+// nearestToBallOnMyside reports whether this player is the closest of its own side to the ball.
+// Such a player is the backup behind the elected presser and must stay turned toward the ball to
+// settle a loose ball or rebound, so it faces the ball rather than its travel direction (faceAim).
+func (a *AI) nearestToBallOnMyside(p perception) bool {
+	myDist := geom.Dist(p.me.Position(), p.ball)
+	for _, q := range p.teammates {
+		if geom.Dist(q.Position(), p.ball) < myDist {
+			return false
+		}
+	}
+	return true
 }
 
 // teammatePush returns a steering vector that repels this player away from teammates within

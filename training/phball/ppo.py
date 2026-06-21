@@ -45,6 +45,10 @@ class MaskedPolicy:
         ds = []
         for h, lg in enumerate(logits):
             mh = mask[:, self.off[h]:self.off[h + 1]]
+            # Sanitize before masking so a transient non-finite logit can't crash Categorical (NaN ->
+            # a finite value, then masked illegal slots -> -1e9). The real NaN guard is the non-finite
+            # gradient skip in the trainer; this just keeps a single bad forward from killing the run.
+            lg = torch.nan_to_num(lg, nan=0.0, posinf=1e4, neginf=-1e9)
             lg = lg.masked_fill(~mh, -1e9)
             ds.append(torch.distributions.Categorical(logits=lg))
         return ds
@@ -56,6 +60,17 @@ class MaskedPolicy:
         actions = torch.stack([d.sample() for d in ds], dim=1)  # [B, H]
         logp = sum(ds[h].log_prob(actions[:, h]) for h in range(len(ds)))
         return actions, logp, value
+
+    @torch.no_grad()
+    def greedy(self, obs, mask):
+        """Argmax action per head (the masked mode) -- matches how the Go controller deploys
+        (decode argmaxes), so evaluation measures the actually-shipped policy, not a sample."""
+        logits, _ = self.model(obs)
+        acts = []
+        for h, lg in enumerate(logits):
+            mh = mask[:, self.off[h]:self.off[h + 1]]
+            acts.append(lg.masked_fill(~mh, -1e9).argmax(dim=1))
+        return torch.stack(acts, dim=1)
 
     def evaluate(self, obs, mask, actions):
         logits, value = self.model(obs)

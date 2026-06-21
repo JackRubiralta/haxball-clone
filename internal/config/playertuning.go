@@ -63,11 +63,11 @@ type PlayerTuning struct {
 	OrbitStick     float64 // inward hold proportional to the ball's orbital speed around the
 	// player, so a hard turn curves the ball around it instead of flinging it off (touching only)
 
-	// Front-cone capture (radians): the ball reliably sticks only within CaptureConeRadians
-	// of the facing direction; over the next CaptureConeSoft radians capture decays to the
-	// CaptureSpeed.Back floor, so side/back hits bounce off.
+	// Front-cone capture (radians): the ball reliably sticks at FULL strength within
+	// CaptureConeRadians of the facing, then the capture speed follows the CaptureSpeed curve from
+	// that edge out to the CaptureSpeed.Back floor at the back (exactly like the control and
+	// centre-pull cones), so side/back hits bounce off.
 	CaptureConeRadians float64
-	CaptureConeSoft    float64 // radians
 
 	// Control cone (radians): roll-to-front control is at FULL strength within ControlConeRadians
 	// of the facing direction, then follows the Control curve from that edge out to the back (so
@@ -307,19 +307,20 @@ func (s PlayerTuning) CenterPullCone(possession, trapAura float64) float64 {
 }
 
 // The curve SHAPE for each angle-dependent quantity is FIXED here (hardcoded, never a
-// tunable) -- only the front/back endpoints in the CurveSpec are data. RestitutionAt and
-// CaptureSpeedAt evaluate across the whole 0..pi arc; CenterPullAt/StickinessAt/ControlAt are
-// FULL strength within a cone (front..coneEdge) and then follow the curve from the cone edge
-// to the back, so coneEdge is passed in by the caller.
+// tunable) -- only the front/back endpoints in the CurveSpec are data. RestitutionAt evaluates
+// across the whole 0..pi arc; CaptureSpeedAt/CenterPullAt/StickinessAt/ControlAt are FULL
+// strength within a cone (front..coneEdge) and then follow the curve from the cone edge to the
+// back, so coneEdge is passed in by the caller.
 
 // RestitutionAt is the bounce restitution at `angle` (0 = front, pi = back): inverse-quadratic.
 func (s PlayerTuning) RestitutionAt(angle float64) float64 {
 	return InverseQuadraticCurve(s.Restitution.Front, s.Restitution.Back, 0, math.Pi, angle)
 }
 
-// CaptureSpeedAt is the capture speed at `angle`: linear front -> back.
-func (s PlayerTuning) CaptureSpeedAt(angle float64) float64 {
-	return LinearCurve(s.CaptureSpeed.Front, s.CaptureSpeed.Back, 0, math.Pi, angle)
+// CaptureSpeedAt is the capture speed at `angle`: full (the front peak) within the cone
+// (angle <= coneEdge), then linear from the cone edge to the back.
+func (s PlayerTuning) CaptureSpeedAt(coneEdge, angle float64) float64 {
+	return LinearCurve(s.CaptureSpeed.Front, s.CaptureSpeed.Back, coneEdge, math.Pi, angle)
 }
 
 // CenterPullAt is the centre-pull at `angle`: full within the cone (angle <= coneEdge), then

@@ -40,11 +40,13 @@ type Controller struct {
 	nTeam, nOpp                 int
 	mates, opps                 []sim.ObservedView
 
-	// cross-tick committed-shot state. A per-tick policy almost never sustains the ~45-tick hold
-	// a real charged shot needs, so when the policy decides to shoot while controlling the ball the
-	// controller COMMITS the shot: it holds the charge (turning toward goal at the human rate) to a
-	// target, then releases to fire -- exactly how the rule AI charges. This is what lets the net
-	// shoot like the algo AI instead of only dribbling the ball in.
+	// cross-tick shoot state (thin assist). A per-tick policy rarely sustains a charge cleanly, so
+	// once the net decides to shoot (with the ball under control) the engine HOLDS the charge at the
+	// human per-tick rate -- exactly as a human holds the mouse button -- for at least a useful
+	// minimum, then keeps holding while the net keeps asking and releases (fires) when the net stops
+	// or the full-power cap is hit. The net controls START, HOLD-DURATION (= shot power, so it can
+	// play soft short passes or hard long ones), RELEASE, and AIM (via the AimBin head, throughout) --
+	// the engine only guarantees the hold isn't broken by per-step flicker. No auto-aim: the net aims.
 	charging           bool
 	chargeStart        uint64
 	shootCooldownUntil uint64
@@ -181,81 +183,67 @@ func (c *Controller) ActionMaskBytes(view sim.View, me sim.SelfView) []byte {
 	return mask
 }
 
-// Committed-shot tuning.
+// Thin-assist shoot tuning. The net controls power via how long it holds shoot; these only bound
+// the hold so per-step flicker can't fizzle a charge and a stray charge can't run forever.
 const (
-	shootTargetSec     = 0.62 // release the charge at this many seconds held (strong shot; max 0.75)
-	maxChargeTicks     = 75   // give-up safety if the target charge isn't reached
-	shootCooldownTicks = 24   // ticks to wait after a shot before starting another
+	minChargeTicks     = 5    // a started shot holds at least this long (a useful soft tap/pass)
+	maxChargeTicks     = 46   // hard cap at ~full power (shootChargeMax 0.75s ~= 45 ticks)
+	shootCooldownTicks = 18   // ticks to wait after a shot/abort before starting another
 	shootStartGap      = 11.0 // surface gap to the ball needed to START a shot (ball under control)
 	shootAbortGap      = 28.0 // if the ball drifts past this gap mid-charge, the shot is aborted
 )
 
-// applyShootCommit turns the policy's shoot decision into a full charged, goal-aimed shot. When
-// the policy picks shoot while controlling the ball, the controller commits: it holds ShootHeld
-// (turning toward the attacking goal at the human turn-rate so the boundary holds) until the
-// charge reaches shootTargetSec, then releases to fire. A live charge is protected from per-tick
-// ability flicker; the ball drifting away or a give-up timeout aborts cleanly. This mirrors the
-// rule AI's charge controller and is what lets the net shoot rather than only dribble the ball in.
+// applyShootCommit is the thin shoot assist: the net decides WHEN to start a shot, how LONG to hold
+// it (= power, so soft passes vs hard shots), when to RELEASE, and WHERE to aim; the engine only
+// holds the charge at the human per-tick rate so a flickering per-step policy can't break it. Once
+// charging, it guarantees a minimum useful charge, then keeps holding while the net keeps asking
+// (in.ShootHeld) and releases (fires on the edge) when the net stops or the full-power cap is hit.
+// The net's aim (in.Aim, from the AimBin head) is preserved throughout -- there is no auto-aim.
 func (c *Controller) applyShootCommit(view sim.View, me sim.SelfView, in sim.Intent) sim.Intent {
 	tick := view.Tick()
 	gap := c.gapToBall(view, me)
-	charge := me.ShootCharge()
+	wantShoot := in.ShootHeld
+	wantCancel := in.CancelCharge
 
 	if c.charging {
+		held := tick - c.chargeStart
 		if gap > shootAbortGap { // lost the ball: drop the charge without firing
 			c.charging = false
+			c.shootCooldownUntil = tick + shootCooldownTicks
 			in.ShootHeld = false
 			in.CancelCharge = false
 			return in
 		}
-		if charge >= shootTargetSec || tick-c.chargeStart >= maxChargeTicks {
+		if held < minChargeTicks { // guarantee a useful charge regardless of per-step flicker
+			in.ShootHeld, in.Trap, in.Push, in.CancelCharge = true, false, false, false
+			return in
+		}
+		if wantCancel { // net aborts the shot WITHOUT firing (held+cancel => sim drops the charge)
 			c.charging = false
 			c.shootCooldownUntil = tick + shootCooldownTicks
-			in.ShootHeld = false // release edge fires the charged shot toward goal
-			return c.aimAtGoal(view, me, in)
+			in.ShootHeld, in.CancelCharge, in.Trap, in.Push = true, true, false, false
+			return in
 		}
-		// Keep charging: hold, aim at goal (rate-limited), suppress other abilities.
-		in.ShootHeld = true
-		in.Trap = false
-		in.Push = false
+		if wantShoot && held < maxChargeTicks { // net keeps charging -- longer hold = more power
+			in.ShootHeld, in.Trap, in.Push, in.CancelCharge = true, false, false, false
+			return in
+		}
+		// Release: the net let go (its chosen power) or hit the cap -> fire on the release edge.
+		c.charging = false
+		c.shootCooldownUntil = tick + shootCooldownTicks
+		in.ShootHeld = false
 		in.CancelCharge = false
-		return c.aimAtGoal(view, me, in)
+		return in
 	}
 
-	if in.ShootHeld && tick >= c.shootCooldownUntil && gap <= shootStartGap && !in.Trap && !in.Push {
+	if wantShoot && !wantCancel && tick >= c.shootCooldownUntil && gap <= shootStartGap && !in.Trap && !in.Push {
 		c.charging = true
 		c.chargeStart = tick
 		in.ShootHeld = true
-		return c.aimAtGoal(view, me, in)
+		return in
 	}
 	in.ShootHeld = false // not shooting: never accumulate a stray charge
 	return in
-}
-
-// aimAtGoal points the shot at an OPENING in the attacking goal -- the corner away from the
-// keeper -- rather than dead centre (where the keeper stands), so charged shots actually beat the
-// keeper, like the rule AI. Turn-rate limited so the facing rotates toward the target at the human
-// rate (no snap-aim -- the AI<=human boundary is preserved during the charge).
-func (c *Controller) aimAtGoal(view sim.View, me sim.SelfView, in sim.Intent) sim.Intent {
-	goal := view.AttackingGoalCenter(me)
-	half := view.Field().GoalHeight() * 0.18 // slightly off-centre to beat the keeper without losing the ball mid-turn
-	// Aim at the corner on the opposite side from the keeper (the open corner).
-	keeperY := goal.Y
-	best := math.Inf(1)
-	for _, o := range c.opps {
-		if o.Role() == sim.RoleKeeper {
-			if d := geom.Dist(o.Position(), goal); d < best {
-				best = d
-				keeperY = o.Position().Y
-			}
-		}
-	}
-	target := geom.NewVec(goal.X, goal.Y+half)
-	if keeperY > goal.Y {
-		target = geom.NewVec(goal.X, goal.Y-half)
-	}
-	in.Aim = target
-	return control.CapAim(in, me.Position(), me.Facing(), control.DefaultMaxTurnRad)
 }
 
 func (c *Controller) gapToBall(view sim.View, me sim.SelfView) float64 {

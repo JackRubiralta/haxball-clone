@@ -12,10 +12,10 @@ import (
 // and the Python model built from dataset_meta.json. All features come exclusively from the
 // View API, so the controller observes only what a human sees (the anti-cheat boundary).
 const (
-	SelfDim      = 16 // self block (the only place own velocity/heading/possession are read)
+	SelfDim      = 18 // self block (velocity/heading self-only; +trap aura & team buff/debuff)
 	BallDim      = 8  // ball block
 	GlobalDim    = 12 // global/context block
-	EntDim       = 12 // per-entity (teammate/opponent) row
+	EntDim       = 15 // per-entity (teammate/opponent) row (+trap aura, possession, team buff/debuff)
 	MaxTeammates = 10 // max teammates in the flat (datagen) layout (11-a-side -> 10)
 	MaxOpponents = 11 // max opponents in the flat (datagen) layout
 
@@ -161,6 +161,12 @@ func (c *Controller) fillSelf(view sim.View, me sim.SelfView, f egoFrame, gap fl
 	s[13] = float32(geom.Dist(me.Position(), view.DefendingGoalCenter(me)) * f.distScale)
 	s[14] = boolf(me.Role() == sim.RoleKeeper)
 	s[15] = float32(gap * f.distScale)
+	s[16] = float32(me.TrapAura())  // effective trap strength (the glow size a human sees)
+	s[17] = float32(me.TouchCoef()) // team buff(+)/debuff(-) coefficient (the green/red bar)
+	// NOTE: directional-movement alignment (facing.heading) + the other observation additions are
+	// batched into the one-time net-format retrain (TIKITAKA_AI_PROMPT.md A1/A7 step 7); until then
+	// directional efficiency is shaped by a forward-alignment REWARD term (reward.go), keeping the
+	// net format stable at 18 so the config-only curriculum recipe can be validated cheaply.
 }
 
 func (c *Controller) fillBall(me sim.SelfView, f egoFrame, ball sim.BallView, selfPos geom.Vec, gap float64) {
@@ -204,6 +210,9 @@ func (c *Controller) fillEntity(f egoFrame, o sim.ObservedView, me sim.SelfView,
 	dst[9] = float32(o.TrapCharge())
 	dst[10] = boolf(o.ID() == carrierID)
 	dst[11] = boolf(o.Role() == sim.RoleKeeper)
+	dst[12] = float32(o.TrapAura())  // effective trap strength (glow size)
+	dst[13] = float32(o.Possession()) // per-player possession (white bar)
+	dst[14] = float32(o.TouchCoef())  // team buff(+)/debuff(-) (green/red bar)
 }
 
 func clamp01(x float64) float64 {

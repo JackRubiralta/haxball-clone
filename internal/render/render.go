@@ -785,6 +785,8 @@ type SnapshotEntity struct {
 	Number                  int
 	ShootCharge, TrapCharge float64 // TrapCharge is the 0..1 trap ENERGY bar
 	TrapAura                float64 // 0..1 effective trap strength (the glow), 0 when not actively trapping
+	Possession              float64 // 0..1 per-player possession (the white bar)
+	TouchCoef               float64 // -1..1 team buff(+)/debuff(-) coefficient (the green/red bar)
 }
 
 // SnapshotView is the render-agnostic projection of a server snapshot that FrameFromSnapshot
@@ -831,6 +833,14 @@ func FrameFromSnapshot(screen *ebiten.Image, v SnapshotView, field *sim.Field, s
 			PlayerAt(screen, e.Position, e.Facing, e.Radius, e.Color, e.Number, e.ShootCharge, e.TrapAura)
 			if v.HaveSelf && e.PlayerID == v.SelfPlayerID {
 				PlayerSelfMarker(screen, e.Position, e.Radius)
+			}
+		}
+	}
+	if ShowPossessionBars {
+		pc := newCanvas(screen)
+		for _, e := range v.Entities {
+			if !e.IsBall {
+				drawPossessionBars(pc, e.Position, e.Radius, e.Possession, e.TouchCoef)
 			}
 		}
 	}

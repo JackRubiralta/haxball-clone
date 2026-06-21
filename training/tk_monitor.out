@@ -1,0 +1,58 @@
+[stopped@14]
+=== stages + gates + stuck ===
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 1400 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.24 < floor 2.0 at upd 1500 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.71 < floor 2.0 at upd 1600 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 1700 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 1800 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 1900 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.32 < floor 2.0 at upd 2000 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 2100 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 2200 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 2300 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.00 < floor 2.0 at upd 2400 -- fundamentals not emerging on this drill
+tikitaka: STUCK? 'rondo3v1' pass_per_min=0.16 < floor 2.0 at upd 2500 -- fundamentals not emerging on this drill
+tikitaka: STAGE 6 'rondo4v2' ent=0.009 B=56 apx=[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4] selfplay=False snaps=32
+tikitaka: STUCK? 'rondo4v2' pass_per_min=2.36 < floor 3.0 at upd 500 -- fundamentals not emerging on this drill
+=== eval panels (last 14) ===
+tikitaka: [s5:rondo3v1:u2000] score=0.528 poss=0.28 pass/min=0.3 realpass=1.00 ownT/O=0.00 crowd=0.29 gkbox=0.00 push/min=7.3 shots/min=3.7 gd/ep=1.00
+tikitaka: [s5:rondo3v1:u2100] score=0.527 poss=0.36 pass/min=0.0 realpass=0.00 ownT/O=0.16 crowd=0.23 gkbox=0.00 push/min=7.9 shots/min=5.6 gd/ep=0.93
+tikitaka: [s5:rondo3v1:u2200] score=0.542 poss=0.34 pass/min=0.0 realpass=0.00 ownT/O=0.02 crowd=0.24 gkbox=0.00 push/min=9.1 shots/min=5.7 gd/ep=1.60
+tikitaka: [s5:rondo3v1:u2300] score=0.521 poss=0.25 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.25 gkbox=0.00 push/min=6.8 shots/min=7.0 gd/ep=0.98
+tikitaka: [s5:rondo3v1:u2400] score=0.510 poss=0.37 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.17 gkbox=0.00 push/min=3.3 shots/min=3.3 gd/ep=0.00
+tikitaka: [s5:rondo3v1:u2500] score=0.476 poss=0.22 pass/min=0.2 realpass=1.00 ownT/O=0.17 crowd=0.34 gkbox=0.15 push/min=7.7 shots/min=6.7 gd/ep=0.88
+tikitaka: [s6:rondo4v2:u100] score=0.509 poss=0.15 pass/min=3.5 realpass=0.98 ownT/O=0.05 crowd=0.20 gkbox=0.00 push/min=4.7 shots/min=3.3 gd/ep=0.14
+tikitaka: [s6:rondo4v2:u200] score=0.483 poss=0.15 pass/min=3.6 realpass=0.98 ownT/O=0.24 crowd=0.27 gkbox=0.07 push/min=8.6 shots/min=3.1 gd/ep=0.31
+tikitaka: [s6:rondo4v2:u300] score=0.509 poss=0.19 pass/min=4.6 realpass=0.89 ownT/O=0.22 crowd=0.31 gkbox=0.00 push/min=8.7 shots/min=3.1 gd/ep=0.33
+tikitaka: [s6:rondo4v2:u400] score=0.477 poss=0.18 pass/min=3.1 realpass=0.88 ownT/O=0.27 crowd=0.39 gkbox=0.06 push/min=9.1 shots/min=3.1 gd/ep=0.33
+tikitaka: [s6:rondo4v2:u500] score=0.491 poss=0.22 pass/min=2.4 realpass=1.00 ownT/O=0.15 crowd=0.15 gkbox=0.00 push/min=3.9 shots/min=3.0 gd/ep=0.00
+tikitaka: [s6:rondo4v2:u600] score=0.500 poss=0.16 pass/min=3.9 realpass=0.89 ownT/O=0.16 crowd=0.24 gkbox=0.03 push/min=6.2 shots/min=3.2 gd/ep=0.26
+tikitaka: [s6:rondo4v2:u700] score=0.530 poss=0.17 pass/min=4.3 realpass=0.87 ownT/O=0.03 crowd=0.23 gkbox=0.00 push/min=5.6 shots/min=3.4 gd/ep=0.43
+tikitaka: [s6:rondo4v2:u800] score=0.482 poss=0.13 pass/min=3.9 realpass=0.89 ownT/O=0.17 crowd=0.24 gkbox=0.05 push/min=4.6 shots/min=3.1 gd/ep=0.26
+=== analyst notes ===
+  VERDICT: collect STUCK — agent not acquiring the rolling ball; fundamentals not emerging.
+  REC: if it stays flat by ~u500, soften collect gate (floor 2.0 -> ~1.0) and/or lower ent target
+       (0.012 is set but effective entropy stuck high -> reward signal too sparse). Consider
+       shaping reward for ball-approach distance, or guided kickstart toward the ball.
+=== Fri Jun 19 05:59:19 PM EDT 2026 ===
+STAGE 3 'hold' (just entered, ~u40). Prior stages PASSED gates: motor(u200 score=0.59 shots/min=4.3 gd/ep=0.55), collect(u300 poss=1.00 score=0.55 -- note a STUCK? flag at u200 poss=0.00 but recovered to gate), firsttouch(u300 poss=1.00 score=0.71 gd/ep=1.00 NEW BEST).
+VERDICT: improving -- fundamentals (motor/collect/firsttouch) learned, passing not expected yet (pass/min=0 normal pre-rondo). REC: none; watch 'hold' for possession-under-pressure and the rondo stages for pass_attempts emerging.
+=== Fri Jun 19 06:02:32 PM EDT 2026 ===
+STAGE 4 'carry' @u250. hold PASSED gate u500 (poss=0.48, but ownT/O=1.00 -- giving ball away in own third under pressure, a flag for later defense/possession stages). carry climbing well: u100 score=0.24 poss=0.32 -> u200 score=0.54 poss=0.61 gd/ep=0.29 NEW BEST, ownT/O dropped 0.87->0.00. crowd=0.49 (bunching). pass/min still 0 (expected, rondo not reached).
+VERDICT: improving. carry lesson (possession+goal-diff) is being learned. REC: none yet; the upcoming rondo3v1 (s5) is the real test -- watch for pass_attempts emerging. If pass/min & pass_attempts stay ~0 through rondo, recommend guided-bootstrapping pass kickstart.
+=== Fri Jun 19 06:05:56 PM EDT 2026 ===
+STAGE 5 'rondo3v1' @u640. *** PASSING NOT EMERGING *** carry passed gate earlier. rondo3v1 STUCK? flagged at u400, u500, u600: pass_per_min=0.16/0.00/0.08 vs floor 2.0. poss oscillates 0.22-0.56, score flat ~0.50 (NEW BESTs are marginal 0.514->0.544). entropy stuck high ~6.2-6.5 (policy basically not committing). gd/ep noisy. realpass=1.00 only on the rare tick a release happens -- so the agent CAN complete a pass but almost never attempts one; it hoards/dribbles and push-spams (push/min 3.5-6.7).
+VERDICT: STUCK / degenerate (ball-hoarding, no pass attempts). This is the failure mode the run guards against.
+REC: trigger the GUIDED-BOOTSTRAPPING pass kickstart for rondo stages -- seed pass_attempts via a shaped reward / scripted demonstrations so a release-toward-teammate gets positive credit (current reward likely rewards retention only -> local optimum of dribbling). Also: the high stuck entropy suggests the pass action's advantage is ~0; consider an explicit pass-attempt bonus or temporarily lowering ent target. Without a pass kickstart, rondo3v1->4v2->buildup will all stall on pass/min floors.
+=== errors ===
+STOPPED
+der-pressure and the rondo stages for pass_attempts emerging.
+=== Fri Jun 19 06:02:32 PM EDT 2026 ===
+STAGE 4 'carry' @u250. hold PASSED gate u500 (poss=0.48, but ownT/O=1.00 -- giving ball away in own third under pressure, a flag for later defense/possession stages). carry climbing well: u100 score=0.24 poss=0.32 -> u200 score=0.54 poss=0.61 gd/ep=0.29 NEW BEST, ownT/O dropped 0.87->0.00. crowd=0.49 (bunching). pass/min still 0 (expected, rondo not reached).
+VERDICT: improving. carry lesson (possession+goal-diff) is being learned. REC: none yet; the upcoming rondo3v1 (s5) is the real test -- watch for pass_attempts emerging. If pass/min & pass_attempts stay ~0 through rondo, recommend guided-bootstrapping pass kickstart.
+=== Fri Jun 19 06:05:56 PM EDT 2026 ===
+STAGE 5 'rondo3v1' @u640. *** PASSING NOT EMERGING *** carry passed gate earlier. rondo3v1 STUCK? flagged at u400, u500, u600: pass_per_min=0.16/0.00/0.08 vs floor 2.0. poss oscillates 0.22-0.56, score flat ~0.50 (NEW BESTs are marginal 0.514->0.544). entropy stuck high ~6.2-6.5 (policy basically not committing). gd/ep noisy. realpass=1.00 only on the rare tick a release happens -- so the agent CAN complete a pass but almost never attempts one; it hoards/dribbles and push-spams (push/min 3.5-6.7).
+VERDICT: STUCK / degenerate (ball-hoarding, no pass attempts). This is the failure mode the run guards against.
+REC: trigger the GUIDED-BOOTSTRAPPING pass kickstart for rondo stages -- seed pass_attempts via a shaped reward / scripted demonstrations so a release-toward-teammate gets positive credit (current reward likely rewards retention only -> local optimum of dribbling). Also: the high stuck entropy suggests the pass action's advantage is ~0; consider an explicit pass-attempt bonus or temporarily lowering ent target. Without a pass kickstart, rondo3v1->4v2->buildup will all stall on pass/min floors.
+=== errors ===
+STOPPED

@@ -150,9 +150,8 @@ func (a *App) setupTeams(f frame, col *colLayout) {
 		// and hide it only for a lone human with no team-mates to govern.
 		if !tc.Human || tc.Size > 1 {
 			diff := indexOf(difficultyPresets, tc.Difficulty)
-			// No row label: the four tiers (easy/normal/hard/impossible) need the full half-column
-			// width so "impossible" fits its segment without crowding. The "Control"/"Human slot" rows
-			// above already establish whose difficulty this is.
+			// No row label: the controller options (algo/neural) use the full half-column width. The
+			// "Control"/"Human slot" rows above already establish whose controller this is.
 			if sel := f.segmented("", difficultyPresets, diff, c.x, c.row(), c.w); sel != diff {
 				tc.Difficulty = difficultyPresets[sel]
 			}
@@ -413,7 +412,6 @@ func (a *App) setupTuning(f frame, col *colLayout) {
 
 	f.sectionHeader("CONES (degrees)", col.x, col.header(1), col.w)
 	a.tuneRow(f, col, "Capture cone", &p.CaptureConeRadians, 0, math.Pi, deg, tfDeg)
-	a.tuneRow(f, col, "Capture cone soft", &p.CaptureConeSoft, 0, math.Pi, deg, tfDeg)
 	a.tuneRow(f, col, "Control cone", &p.ControlConeRadians, 0, math.Pi, deg, tfDeg)
 	a.tuneRow(f, col, "Control cone +possession", &p.ControlConePossessionBonus, 0, math.Pi/2, deg, tfDeg)
 	a.tuneRow(f, col, "Capture cone +trap", &p.CaptureConeTrapBonus, 0, math.Pi/2, deg, tfDeg)

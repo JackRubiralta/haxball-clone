@@ -46,12 +46,59 @@ func (a *AI) keeper(p perception, plan teamPlan) sim.Intent {
 		return in
 	}
 
+	// Challenge: an enemy is carrying the ball in close to our goal. Don't just sit on the line and
+	// wait (the "keeper stays still" complaint) -- come OUT along the ball-to-goal line to narrow the
+	// shooting angle and pressure the shot, setting trap to smother it. The box clamp keeps the
+	// keeper from charging out so far it can't recover from a chip.
+	if a.keeperShouldChallenge(p) {
+		in := sim.Intent{Trap: true, Aim: a.aimToward(p, p.ball)}
+		mv, th := a.steer(p, a.keeperChallengeSpot(p), false)
+		in.Move, in.Throttle = mv, th
+		return in
+	}
+
 	// Otherwise hold the angle on the ball-goal line.
 	guard := a.keeperGuardSpot(p)
 	in := sim.Intent{}
 	mv, th := a.steer(p, guard, true)
 	in.Move, in.Throttle, in.Aim = mv, th, a.aimToward(p, p.ball)
 	return in
+}
+
+// keeperShouldChallenge reports whether an enemy is carrying the ball in close to our goal, so the
+// keeper should come out to narrow the angle rather than hold its line. Conservative: only a genuine
+// enemy carrier within keeperChallengeRange of our goal, and only when no team-mate is already
+// goal-side of the carrier to cover (else the keeper coming out just opens a gap behind it).
+func (a *AI) keeperShouldChallenge(p perception) bool {
+	if !p.carrierEnemy {
+		return false
+	}
+	f := p.view.Field()
+	box := f.GoalArea(p.me.Side())
+	depth := box.Max.X - box.Min.X
+	if geom.Dist(p.ball, p.ownGoal) > depth*a.tune.keeperChallengeRange+f.GoalHeight() {
+		return false
+	}
+	carrierToGoal := geom.Dist(p.ball, p.ownGoal)
+	for _, q := range p.teammates { // a team-mate already covering goal-side of the carrier? leave it to them
+		if q.Role() != sim.RoleKeeper && geom.Dist(q.Position(), p.ownGoal) < carrierToGoal-p.me.Radius() {
+			return false
+		}
+	}
+	return true
+}
+
+// keeperChallengeSpot is a point on the ball-to-goal line advanced OUT toward the carrier (to the
+// front of the goal area), so the keeper closes the angle. Clamped within the box like the guard spot.
+func (a *AI) keeperChallengeSpot(p perception) geom.Vec {
+	f := p.view.Field()
+	box := f.GoalArea(p.me.Side())
+	depth := box.Max.X - box.Min.X
+	spot := p.ownGoal.Add(geom.Unit(p.ball.Sub(p.ownGoal)).Scale(depth)) // out to the box front, on the ball line
+	mouthHalf := f.GoalHeight()/2 - p.me.Radius()
+	spot.Y = clampFloat(spot.Y, f.CenterSpot().Y-mouthHalf, f.CenterSpot().Y+mouthHalf)
+	spot.X = a.clampKeeperDepth(p, spot.X)
+	return spot
 }
 
 // keeperGuardSpot is a point on the ball-to-own-goal line, advanced off the line to cut
@@ -78,22 +125,19 @@ func (a *AI) keeperGuardSpot(p perception) geom.Vec {
 	return spot
 }
 
-// keeperSave positions the keeper at the ball's predicted goal-line crossing and sets trap
-// so the incoming shot is absorbed rather than parried back into play.
+// keeperSave positions the keeper at the ball's predicted goal-line crossing and sets trap so the
+// incoming shot is absorbed rather than parried. It holds near the line (coming OUT to challenge a
+// shot is handled by the challenge branch, which only fires when it's safe to do so) -- rushing out
+// to the earliest intercept on every save dragged the keeper out of position and hurt team play.
 func (a *AI) keeperSave(p perception) sim.Intent {
 	f := p.view.Field()
 	crossY := p.ball.Y
 	if dx := p.ownGoal.X - p.ball.X; (dx > 0) == (p.ballVel.X > 0) && p.ballVel.X != 0 {
-		t := dx / p.ballVel.X
-		crossY = p.ball.Y + p.ballVel.Y*t
+		crossY = p.ball.Y + p.ballVel.Y*(dx/p.ballVel.X)
 	}
-	// A keeper reads a central shot well but mis-judges the corners: add a skill-scaled
-	// mis-read that grows with ball speed AND with how far the shot crosses from goal centre.
-	// So a shot straight at the keeper is saved, while a firm, well-placed corner can beat it
-	// (it isn't a wall, but it isn't a sieve up the middle either).
+	// A keeper reads a central shot well but mis-judges the corners: a skill-scaled mis-read that
+	// grows with ball speed AND toward the corners, so a firm well-placed shot can beat it.
 	mouthHalf := f.GoalHeight()/2 - p.me.Radius()
-	// Mis-read grows toward the corners (central shots are read best) but keeps a floor, so
-	// even a central shot is saved most -- not all -- of the time.
 	edgeFrac := clampFloat(absFloat(crossY-f.CenterSpot().Y)/mouthHalf, 0.35, 1)
 	crossY += a.keeperMisread(p) * a.params.keeperError * clampFloat(geom.Norm(p.ballVel)/300, 0.6, 1.6) * edgeFrac
 	crossY = clampFloat(crossY, f.CenterSpot().Y-mouthHalf, f.CenterSpot().Y+mouthHalf)

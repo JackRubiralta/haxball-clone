@@ -32,29 +32,22 @@ import (
 	"phootball/internal/eval"
 	"phootball/internal/geom"
 	"phootball/internal/policy"
+	"phootball/internal/scenario"
 	"phootball/internal/sim"
 )
 
 const (
-	opReset  = 0x01
-	opStep   = 0x02
-	opObs    = 0x03
-	opClose  = 0x04
-	opClosed = 0x05
+	opReset     = 0x01
+	opStep      = 0x02
+	opObs       = 0x03
+	opClose     = 0x04
+	opClosed    = 0x05
+	opScenario  = 0x06 // RESET variant carrying a scenario/drill spec (see scenario.go)
+	opTelemetry = 0x07 // request the per-episode tiki-taka telemetry panel -> opTelemetryOut
+	opTeleOut   = 0x08
 )
 
-// Reward shaping constants. The sparse goal term dominates; every dense term is potential-based
-// or a tiny capped event bonus (see plan section 7).
-const (
-	gamma         = 0.99
-	phiWeight     = 0.05 // ball-progress potential weight
-	rPassDone     = 0.02
-	rTurnover     = -0.03
-	rShot         = 0.01
-	rShotOnTarget = 0.05
-	rPossess      = 0.004 // per-step reward for holding the ball (dense signal; capped by denseClamp)
-	denseClamp    = 0.15
-)
+const gamma = 0.99 // discount used by the potential-based ball-progress shaping
 
 var le = binary.LittleEndian
 
@@ -62,15 +55,36 @@ type env struct {
 	m          *sim.Match
 	controlled []int                      // controlled player IDs, sorted
 	ctrl       map[int]*neural.Controller // controlled (learner-driven) controllers
-	opp        map[int]control.Controller // opponent controllers (rule AI or frozen net)
+	opp        map[int]control.Controller // opponent controllers (rule AI / frozen net / scripted)
 	ctrlSide   sim.Side
 	ctrlTeam   *sim.Team
 	frameSkip  int
+	profile    rewardProfile
+
+	// drill identity, so a noScore drill can re-arrange itself if a stray ball crosses the line
+	scenKind  int
+	scenSeed  int64
+	isScen    bool
+	needRearm bool // a goal was scored in a noScore drill; restore the drill once celebration ends
+
+	// guided bootstrapping. teachers are built whenever the scenario has a teacher kind; they serve two
+	// roles: (1) per-state ADVICE for a BC/kickstart loss -- the durable imitation signal, returned in
+	// obs every step so Python can supervise the policy toward the teacher action at its own states;
+	// (2) optional annealed action-OVERRIDE -- if this episode was sampled as a demonstration, the
+	// teacher DRIVES the players and the executed action is reported (advice == executed then).
+	teachers        map[int]*scenario.Actor // controlled-player teachers (nil if scenario has none)
+	episodeOverride bool                    // this whole episode is a teacher demonstration (driving)
+	execIdx         map[int][5]int          // last executed head indices per controlled agent
+	adviceIdx       map[int][5]int          // teacher's recommended head indices this step ({-1..} = none)
 
 	prevGF, prevGA     int
 	prevShots, prevSOT int
 	prevProg           float64
-	lastCarrier        sim.Side
+
+	// per-tick tracking (updated inside the frame-skip loop) -> event reward + telemetry
+	trk   tracker
+	tele  telemetry
+	evRew float64 // discrete-event reward accumulated since the last obs()
 }
 
 func main() {
@@ -93,12 +107,20 @@ func main() {
 		case opReset:
 			e = handleReset(msg[1:])
 			writeMsg(w, e.obs())
+		case opScenario:
+			e = handleScenario(msg[1:])
+			writeMsg(w, e.obs())
 		case opStep:
 			if e == nil {
 				log.Fatal("env: STEP before RESET")
 			}
 			e.step(msg[1:])
 			writeMsg(w, e.obs())
+		case opTelemetry:
+			if e == nil {
+				log.Fatal("env: TELEMETRY before RESET")
+			}
+			writeMsg(w, e.telemetryMsg())
 		case opClose:
 			writeMsg(w, []byte{opClosed})
 			w.Flush()
@@ -164,7 +186,7 @@ func handleReset(p []byte) *env {
 		}
 	}
 
-	e := &env{ctrl: map[int]*neural.Controller{}, opp: map[int]control.Controller{}, ctrlSide: ctrlSide, frameSkip: frameSkip, lastCarrier: sim.SideNone}
+	e := &env{ctrl: map[int]*neural.Controller{}, opp: map[int]control.Controller{}, ctrlSide: ctrlSide, frameSkip: frameSkip}
 	em := eval.BuildWith(teamSize, seed, mutate, func(id int, side sim.Side) control.Controller {
 		if side == ctrlSide {
 			c := neural.New(id, embedded)
@@ -182,22 +204,42 @@ func handleReset(p []byte) *env {
 		e.opp[id] = oc
 		return oc
 	})
-	e.m = em.M
+	e.finishSetup(em.M, profileFull())
+	return e
+}
+
+// finishSetup completes env construction shared by handleReset and handleScenario: it enables
+// recording, sorts the controlled IDs, resolves the controlled team, installs the reward profile,
+// and primes the reward/telemetry baselines.
+func (e *env) finishSetup(m *sim.Match, profile rewardProfile) {
+	e.m = m
 	e.m.EnableRecording()
+	e.profile = profile
 	sort.Ints(e.controlled)
 	for _, t := range e.m.Teams {
-		if t.Side == ctrlSide {
+		if t.Side == e.ctrlSide {
 			e.ctrlTeam = t
 		}
 	}
-
-	// Prime obs + reward baselines.
 	e.featurizeControlled()
 	e.prevGF, e.prevGA = e.scores()
 	e.prevShots, e.prevSOT = e.shots()
 	e.prevProg = e.ballProgress()
-	return e
+	e.trk = newTracker(e.m, e.ctrlSide)
+	e.tele = telemetry{}
+	if e.execIdx == nil {
+		e.execIdx = make(map[int][5]int, len(e.controlled))
+		e.adviceIdx = make(map[int][5]int, len(e.controlled))
+	}
+	for _, id := range e.controlled {
+		e.execIdx[id] = [5]int{}
+		e.adviceIdx[id] = noAdvice
+	}
 }
+
+// noAdvice is the sentinel (all -1) reported when there is no teacher recommendation this step, so
+// the BC loss skips that sample.
+var noAdvice = [5]int{-1, -1, -1, -1, -1}
 
 // step applies the learner's action indices (with frame-skip action repeat), advances the sim,
 // and refreshes observations.
@@ -211,6 +253,13 @@ func (e *env) step(p []byte) {
 		}
 		idxByID[id] = idx
 	}
+	// Default the executed indices to what Python sent (identity); the override path below replaces
+	// them with the discretized teacher action for an overridden agent. Advice defaults to none.
+	for _, id := range e.controlled {
+		e.execIdx[id] = idxByID[id]
+		e.adviceIdx[id] = noAdvice
+	}
+	e.evRew = 0
 	for s := 0; s < e.frameSkip; s++ {
 		view := e.m.View()
 		intents := make(map[int]sim.Intent, len(e.controlled)+len(e.opp))
@@ -219,14 +268,64 @@ func (e *env) step(p []byte) {
 			if !ok {
 				continue
 			}
-			intents[id] = e.ctrl[id].ActFromIndices(view, me, idxByID[id])
+			// Teacher advice (BC label) is sampled on the first sub-tick from the state the policy
+			// acted on, whether or not this episode is an override demonstration.
+			if s == 0 && e.teachers[id] != nil {
+				if adv, ok := e.teachers[id].Advise(view); ok {
+					e.adviceIdx[id] = neural.Discretize(view, me, adv)
+				}
+			}
+			if e.episodeOverride && e.teachers[id] != nil {
+				// Teacher demonstration: drive the player with the validated scripted teacher
+				// (per-tick, exactly as cmd/teachercheck validated it), and report the discretized
+				// teacher action (sampled on the first sub-tick) for PPO to imitate.
+				ti := e.teachers[id].Intent(view)
+				intents[id] = ti
+				if s == 0 {
+					e.execIdx[id] = neural.Discretize(view, me, ti)
+				}
+			} else {
+				intents[id] = e.ctrl[id].ActFromIndices(view, me, idxByID[id])
+			}
 		}
 		for id, oc := range e.opp {
 			intents[id] = oc.Intent(view)
 		}
 		e.m.Step(intents, eval.DT)
+		// Per-tick: detect carrier/ability/positioning events, accumulate the dense event reward
+		// and the telemetry counters (so reward() only adds the sparse + potential-based terms).
+		e.evRew += e.trk.observe(e.m, &e.profile, &e.tele, intents, e.controlled)
+		e.maybeFlagRearm()
 	}
+	e.maybeRearm()
 	e.featurizeControlled()
+}
+
+// maybeFlagRearm notes that a goal was scored during a no-score drill, so the drill should be
+// restored. We don't re-arrange mid-celebration (the engine's post-goal kickoff would overwrite it);
+// maybeRearm does the restore once the celebration countdown has elapsed.
+func (e *env) maybeFlagRearm() {
+	if !e.isScen || !e.profile.noScore {
+		return
+	}
+	gf, ga := e.scores()
+	if gf != e.prevGF || ga != e.prevGA {
+		e.needRearm = true
+	}
+}
+
+// maybeRearm restores a no-score drill after a stray goal once the engine has finished its kickoff
+// handling. This closes the reward-hacking shortcut: a keep-away policy gains nothing from scoring
+// (goal weight is 0) and cannot even disrupt the drill by booting the ball into the net.
+func (e *env) maybeRearm() {
+	if !e.needRearm || e.m.Celebrating() {
+		return
+	}
+	scenario.Arrange(e.m, e.scenKind, e.ctrlSide, e.scenSeed)
+	gf, ga := e.scores()
+	e.prevGF, e.prevGA = gf, ga
+	e.prevProg = e.ballProgress() // re-baseline so the restore is not seen as ball progress
+	e.needRearm = false
 }
 
 // featurizeControlled refreshes each controlled controller's feature buffers (and velocity
@@ -242,43 +341,28 @@ func (e *env) featurizeControlled() {
 	}
 }
 
-// reward computes the shared team reward for this step: sparse goal term + potential-based
-// ball-progress shaping + tiny carrier-transition events, with the dense part clamped.
+// reward computes the shared team reward for this step from the active profile: the dominant
+// sparse goal term, potential-based ball-progress shaping, the recorder's shot events, and the
+// per-tick dense events accumulated by the tracker (possession, passing, turnovers, dawdle, crowd,
+// stay-back, GK-box, push/trap). The whole dense part is clamped below the ±1 goal so it can't be
+// farmed (the Google-Research-Football lesson).
 func (e *env) reward() float64 {
+	pr := &e.profile
 	gf, ga := e.scores()
-	sparse := float64((gf - e.prevGF) - (ga - e.prevGA))
+	sparse := pr.goal * float64((gf-e.prevGF)-(ga-e.prevGA))
 
 	prog := e.ballProgress()
-	shaped := gamma*phiWeight*prog - phiWeight*e.prevProg
+	shaped := pr.ballProg * (gamma*prog - e.prevProg) // potential-based: policy-invariant, can't be farmed
 
-	event := 0.0
-	if c := e.m.BallCarrier(); c != nil {
-		side := c.Team.Side
-		if e.lastCarrier != sim.SideNone && side != e.lastCarrier {
-			if side == e.ctrlSide {
-				event += rPassDone // we (re)gained possession
-			} else if e.lastCarrier == e.ctrlSide {
-				event += rTurnover // we lost it
-			}
-		}
-		if side == e.ctrlSide {
-			event += rPossess // dense per-step possession signal (sparse goals can't shape 6v6 large)
-		}
-		e.lastCarrier = side
-	}
-
-	// Shot events: directly incentivize getting shots away and on target, so high possession
-	// converts into goal threat (the sparse goal term alone is too rare to shape scoring). Tiny,
-	// and the whole dense term is clamped, so it can't outweigh actual goals.
 	sh, sot := e.shots()
-	event += rShot*float64(sh-e.prevShots) + rShotOnTarget*float64(sot-e.prevSOT)
+	shotR := pr.shot*float64(sh-e.prevShots) + pr.shotOnTgt*float64(sot-e.prevSOT)
 	e.prevShots, e.prevSOT = sh, sot
 
-	dense := shaped + event
-	if dense > denseClamp {
-		dense = denseClamp
-	} else if dense < -denseClamp {
-		dense = -denseClamp
+	dense := shaped + shotR + e.evRew
+	if dense > pr.denseClamp {
+		dense = pr.denseClamp
+	} else if dense < -pr.denseClamp {
+		dense = -pr.denseClamp
 	}
 
 	e.prevGF, e.prevGA = gf, ga
@@ -352,6 +436,17 @@ func (e *env) obs() []byte {
 		mask := e.ctrl[id].ActionMaskBytes(view, me)
 		b = appendU16(b, uint16(len(mask)))
 		b = append(b, mask...)
+		// Executed action indices (for guided bootstrapping): the action actually applied this step,
+		// which equals what Python sent unless this episode is a teacher demonstration.
+		ex := e.execIdx[id]
+		for h := 0; h < 5; h++ {
+			b = appendI32(b, int32(ex[h]))
+		}
+		// Teacher advice indices (the BC/kickstart label); all -1 when there is no teacher advice.
+		ad := e.adviceIdx[id]
+		for h := 0; h < 5; h++ {
+			b = appendI32(b, int32(ad[h]))
+		}
 	}
 	b = appendU32(b, uint32(e.m.Tick))
 	return b
@@ -459,6 +554,7 @@ func (c *cursor) u64() uint64 {
 	c.off += 8
 	return v
 }
+func (c *cursor) f32() float32 { return math.Float32frombits(c.u32()) }
 func (c *cursor) take(n int) []byte {
 	s := c.b[c.off : c.off+n]
 	c.off += n

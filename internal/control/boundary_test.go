@@ -12,8 +12,9 @@ import (
 // TestObservedViewCannotSeeHiddenState pins the type-level half of the AI<=human boundary:
 // a handle on ANOTHER player (from Opponents/Teammates/Squad/Carrier) is an ObservedView and
 // must NOT be assertable to SelfView, so the AI can never reach an opponent's hidden velocity,
-// steering heading, possession build, or tuning. Only the controller's own Me handle is a
-// SelfView.
+// steering heading, or tuning (the un-rendered state). Only the controller's own Me handle is a
+// SelfView. (Trap aura, possession, and the team buff/debuff ARE rendered for every player, so
+// they live on ObservedView and are legitimately observable.)
 func TestObservedViewCannotSeeHiddenState(t *testing.T) {
 	m, _ := aiMatch(4, 1, control.SkillHard, nil)
 	v := m.View()

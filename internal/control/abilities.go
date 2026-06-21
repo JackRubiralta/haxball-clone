@@ -72,23 +72,6 @@ func (a *AI) steerReceive(p perception, mp geom.Vec) (geom.Vec, float64) {
 	return a.avoid(p, dir), th
 }
 
-// aimProjectDist is how far an Aim point is projected from the player. The simulation faces
-// the player toward the Aim POINT, so projecting it far (well beyond the pitch) makes the
-// facing essentially a direction that barely shifts as the player shuffles around. This is
-// what stops the facing from JITTERING when an intent is reused across the reaction-delay
-// window: a near aim point would swing wildly as the player moved past it; a far one does not.
-const aimProjectDist = 1000
-
-// aimToward returns an Aim point that faces the player toward target from its current
-// position, projected far so it stays stable under reaction-delay caching.
-func (a *AI) aimToward(p perception, target geom.Vec) geom.Vec {
-	dir := geom.Unit(target.Sub(p.me.Position()))
-	if dir == (geom.Vec{}) {
-		dir = p.me.Facing()
-	}
-	return p.me.Position().Add(dir.Scale(aimProjectDist))
-}
-
 // launchAligned reports whether firing NOW would send the ball at target. The sim adds the
 // kick impulse to the ball's CURRENT velocity from the ball's own position, so the true launch
 // is (ballVel + shotImpulse) and it must point from the BALL toward the target (target - ball),
@@ -114,60 +97,6 @@ func (a *AI) launchAligned(p perception, target geom.Vec, charge, tolRad float64
 // but never a limp tap -- a higher floor keeps even close shots hard (harder to save).
 func (a *AI) desiredCharge(distToGoal float64) float64 {
 	return clampFloat(smoothstep(a.tune.tapRange, a.tune.fullRange, distToGoal), a.tune.minShootCharge, 1)
-}
-
-// updateRecovering applies HYSTERESIS to the "scoop the ball back to the front" state: the
-// player starts recovering once the ball drifts past the front control cone, and keeps recovering
-// until the ball is well back inside it (half the cone). Without this band the facing toggles
-// between the ball and the target every time the ball grazes the cone edge -- the turning jitter.
-// It returns whether the player is recovering.
-func (a *AI) updateRecovering(p perception) bool {
-	toBall := geom.Unit(p.ball.Sub(p.me.Position()))
-	if toBall == (geom.Vec{}) {
-		a.recovering = false
-		return false
-	}
-	ang := geom.AngleBetween(p.me.Facing(), toBall)
-	cone := a.tune.recoverConeRad
-	if ang > cone {
-		a.recovering = true
-	} else if ang < cone*0.5 {
-		a.recovering = false
-	}
-	return a.recovering
-}
-
-// aimKeepingBall returns the Aim point for a player CONTROLLING the ball that wants to end up
-// facing `want` (a travel heading, a shot target, a pass target...). It keeps the ball on
-// the front -- where the pull is strongest -- by rotating the facing SMOOTHLY rather than
-// snapping it (a snap flings the ball and looks like jitter). If the ball has drifted off the
-// front cone it first turns to face the BALL, scooping it back to the front (with hysteresis,
-// so it doesn't flip-flop at the arc edge), and only then turns on toward `want`. The turn
-// rate scales with how settled the ball is, since a loose ball lags a turning facing. This is
-// the single shared rule for dribbling, shooting, passing and clearing.
-func (a *AI) aimKeepingBall(p perception, want geom.Vec) geom.Vec {
-	toBall := geom.Unit(p.ball.Sub(p.me.Position()))
-	recovering := a.updateRecovering(p)
-	desiredFace := geom.Unit(want.Sub(p.me.Position()))
-	if recovering {
-		desiredFace = toBall // recover: face the ball first
-	}
-	if desiredFace == (geom.Vec{}) {
-		desiredFace = p.me.Facing()
-	}
-
-	turn := lerp(a.tune.minTurnRad, a.tune.maxTurnRad, a.ballSettled(p))
-	// Don't out-turn the ball: when turning the facing AWAY from the ball (toward the target),
-	// slow down as the ball drifts toward the edge of the front cone, so it stays glued and we
-	// never leave it behind -- leaving it behind is what restarts recovery and jitters the
-	// facing back and forth. (When recovering we are turning TOWARD the ball, so no cap.)
-	if !recovering && toBall != (geom.Vec{}) {
-		ballAng := geom.AngleBetween(p.me.Facing(), toBall)
-		cone := a.tune.recoverConeRad
-		turn *= clampFloat(1-ballAng/cone, 0.3, 1)
-	}
-	newFace := rotateToward(p.me.Facing(), desiredFace, turn)
-	return p.me.Position().Add(newFace.Scale(aimProjectDist)) // project far: cache-stable facing
 }
 
 // shootAt commits to (and continues) a charged shot at target. It faces the target and
@@ -292,7 +221,11 @@ func (a *AI) wantTrapReceive(p perception) bool {
 }
 
 // wantTrapSteal reports whether the player is close enough to an enemy-held ball that a
-// trap (stronger, longer centre-pull) could wrest it away.
+// trap (stronger, longer centre-pull) could wrest it away. The trap aura is a limited,
+// recharging resource, so a steal -- discretionary and often unsuccessful -- only fires when
+// the bar has enough energy left (trapStealMinEnergy); otherwise the bar is saved for the
+// high-value use of receiving an incoming pass cleanly.
 func (a *AI) wantTrapSteal(p perception) bool {
-	return p.carrierEnemy && p.gapToBall < p.me.Tuning().PullRange+a.tune.stealRange
+	return p.carrierEnemy && p.gapToBall < p.me.Tuning().PullRange+a.tune.stealRange &&
+		p.myTrap >= a.tune.trapStealMinEnergy
 }

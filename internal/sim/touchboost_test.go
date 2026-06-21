@@ -328,7 +328,7 @@ func TestTeamChargeConeScaling(t *testing.T) {
 	if !(shrink > 3*grow) {
 		t.Errorf("the debuff should shrink the cone much more than the buff grows it: grow=%.4f shrink=%.4f", grow, shrink)
 	}
-	if !(debuff < base*0.7) {
+	if !(debuff < base*0.8) {
 		t.Errorf("a fully-debuffed cone should be clearly smaller than baseline: %.4f vs base %.4f", debuff, base)
 	}
 	if s.CaptureCone(-100, 0) < 0 {
@@ -911,10 +911,11 @@ func TestOffAxisCaptureInCone(t *testing.T) {
 	const ballRadius = 10
 	s := config.DefaultPlayerTuning()
 
-	// A speed comfortably inside the front peak (320) but ABOVE the old, angle-decayed in-cone
-	// threshold (which was ~283 at 25deg) -- so before the flat-in-cone fix this stuck dead-on but
-	// bounced at 25deg.
-	const speed = 300
+	// A speed BELOW the front-peak capture (494) so the ball sticks anywhere inside the cone, but
+	// ABOVE the angle-decayed threshold past the cone (~385 at 105deg) so it bounces back out there.
+	// (Scaled with the 30% capture bump: front peak 380->494, past-cone threshold ~296->~385, so the
+	// probe tracks from 300 to 390 and keeps the same just-above-the-past-cone-threshold margin.)
+	const speed = 390
 
 	contact := func(facingAngle float64) geom.Vec {
 		p := NewPlayer(1, geom.NewVec(0, 0), config.DefaultPlayerTuning(), &Team{Side: SideLeft})

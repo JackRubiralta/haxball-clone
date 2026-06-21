@@ -55,6 +55,16 @@ type View interface {
 	BallFriction() float64
 	// Rules is the match ruleset (offside, box caps, win conditions).
 	Rules() config.Ruleset
+	// MoveModel is the active movement model (Standard = omnidirectional, Directional = speed scales
+	// with how aligned Move is with Facing). It is a global, on-screen match setting -- a human picks
+	// it in the menu and feels it -- so exposing it keeps the AI within the AI<=human boundary while
+	// letting it FACE its travel direction to move fast under the directional model.
+	MoveModel() config.MoveModel
+	// DirectionalSpeedMul returns the speed/acceleration multiplier a player would get moving in
+	// `move` while facing `facing` under the active model (1 under Standard; the front/side/back curve
+	// under Directional). It mirrors the sim's own movement curve so a controller can reason about the
+	// speed cost of facing away from its travel direction without duplicating the physics.
+	DirectionalSpeedMul(move, facing geom.Vec) float64
 }
 
 // BallView is a read-only handle to the ball.
@@ -65,12 +75,13 @@ type BallView interface {
 }
 
 // ObservedView is what a controller may know about ANOTHER player -- EXACTLY what a human
-// perceives from the rendered scene (see netcode.EntityState / render.go: position, facing,
-// radius, jersey number, role/side, and both charge gauges, which are drawn for every
-// player). It deliberately exposes NO hidden internal state -- not velocity, not the
-// rate-limited steering heading, not possession build-up, not the tuning block -- because
-// none of those are rendered, so neither the AI nor a human can read them off the screen.
-// This narrowing is the type-level half of the "AI can only do what a human can" boundary.
+// perceives from the rendered scene (see netcode.EntityState / render.go): position, facing,
+// radius, jersey number, role/side, the shoot/trap charge gauges, the trap AURA (drawn as the
+// glow whose size tracks its strength), the per-player POSSESSION bar, and the team buff/debuff
+// bar (TouchCoef) -- all drawn over every player by default. It deliberately exposes NO state a
+// human cannot see on screen -- not velocity, not the rate-limited steering heading, not the
+// tuning block -- so neither the AI nor a human can read those off the screen. This narrowing is
+// the type-level half of the "AI can only do what a human can" boundary.
 //
 // Keep this field set in lockstep with netcode.EntityState and what render.go draws.
 type ObservedView interface {
@@ -82,8 +93,11 @@ type ObservedView interface {
 	Position() geom.Vec
 	Facing() geom.Vec
 	Radius() float64
-	ShootCharge() float64 // rendered as a gauge for every player
-	TrapCharge() float64  // rendered as a gauge for every player
+	ShootCharge() float64 // rendered as the shoot-charge gauge for every player
+	TrapCharge() float64  // rendered as the trap-energy bar for every player
+	TrapAura() float64    // rendered as the trap glow, whose SIZE tracks its strength
+	Possession() float64  // rendered as the white per-player possession bar
+	TouchCoef() float64   // rendered as the green(+)/red(-) team buff/debuff bar
 
 	// Same reports whether other is this same player.
 	Same(other ObservedView) bool
@@ -98,10 +112,10 @@ type ObservedView interface {
 }
 
 // SelfView is the full handle a controller has on the player IT controls -- everything in
-// ObservedView plus the internal state a player knows about ITSELF: its velocity, its
-// rate-limited movement heading, its possession build-up, its tuning block, and its home
-// position. Only View.Me returns a SelfView; every other-player handle is an ObservedView, so
-// a non-self handle CANNOT be type-asserted up to SelfView -- the hidden state is unreachable.
+// ObservedView plus the internal state a player knows about ITSELF that is NOT rendered: its
+// velocity, its rate-limited movement heading, its tuning block, and its home position. Only
+// View.Me returns a SelfView; every other-player handle is an ObservedView, so a non-self handle
+// CANNOT be type-asserted up to SelfView -- that hidden state is unreachable.
 type SelfView interface {
 	ObservedView
 	Velocity() geom.Vec
@@ -110,7 +124,6 @@ type SelfView interface {
 	// vector before the player has moved (and just after a kickoff reset). A controller reads
 	// its OWN heading to account for the fact that it cannot redirect instantly.
 	Heading() geom.Vec
-	Possession() float64
 	// Tuning returns a copy of the player's own stat block (max speed, turn rate, shoot
 	// curve, ranges...). It is a value, so reading it cannot mutate the player.
 	Tuning() config.PlayerTuning
@@ -259,6 +272,15 @@ func (v matchView) NoiseSalt(id int) int64 {
 func (v matchView) BallFriction() float64 { return v.m.Ball.Friction }
 func (v matchView) Rules() config.Ruleset { return v.m.Rules }
 
+func (v matchView) MoveModel() config.MoveModel { return v.m.Tuning.MoveModel }
+
+func (v matchView) DirectionalSpeedMul(move, facing geom.Vec) float64 {
+	if v.m.Tuning.MoveModel == config.MoveStandard {
+		return 1
+	}
+	return directionalSpeedMul(move, facing, v.m.Tuning)
+}
+
 func (v ballView) Position() geom.Vec { return v.b.Position }
 func (v ballView) Velocity() geom.Vec { return v.b.Velocity }
 func (v ballView) Radius() float64    { return v.b.Radius() }
@@ -273,6 +295,9 @@ func (v observedView) Position() geom.Vec   { return v.p.Position }
 func (v observedView) Facing() geom.Vec     { return v.p.Facing }
 func (v observedView) ShootCharge() float64 { return v.p.shootCharge }
 func (v observedView) TrapCharge() float64  { return v.p.trapCharge }
+func (v observedView) TrapAura() float64    { return v.p.TrapAura() }
+func (v observedView) Possession() float64  { return v.p.possession }
+func (v observedView) TouchCoef() float64   { return v.p.TouchCoefficient() }
 func (v observedView) Radius() float64      { return v.p.Radius() }
 
 func (v observedView) Same(other ObservedView) bool { return unwrapPlayer(other) == v.p }
@@ -293,7 +318,6 @@ func (v observedView) BallAngleToFacing(b BallView) float64 {
 // never carries them and cannot be type-asserted up to SelfView.
 func (v selfView) Velocity() geom.Vec          { return v.p.Velocity }
 func (v selfView) Heading() geom.Vec           { return v.p.moveHeading }
-func (v selfView) Possession() float64         { return v.p.possession }
 func (v selfView) Tuning() config.PlayerTuning { return v.p.Tuning }
 func (v selfView) HomePosition() geom.Vec      { return v.p.HomePosition }
 

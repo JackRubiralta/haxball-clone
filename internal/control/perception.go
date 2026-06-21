@@ -3,6 +3,7 @@ package control
 import (
 	"math"
 
+	"phootball/internal/config"
 	"phootball/internal/geom"
 	"phootball/internal/sim"
 )
@@ -26,6 +27,7 @@ type perception struct {
 	gapToBall float64 // surface gap between me and the ball
 	iControl  bool    // ball is within my touch range
 	myCharge  float64 // my current shoot charge in seconds
+	myTrap    float64 // my trap-energy bar (0..1): the limited, recharging "aura" resource, rationed so it's available to receive an incoming pass cleanly. Own SelfView state (rendered for every player), so within the AI<=human boundary.
 
 	carrier      sim.ObservedView // who is in firm possession (nil if loose)
 	carrierMine  bool
@@ -42,7 +44,9 @@ type perception struct {
 	teamControls    bool    // our side has or is winning the ball (looser than firm possession)
 	ballRadius      float64
 	friction        float64
-	seed            uint64 // per-(match, self) NoiseSalt, mixed into AI noise so variety survives run-to-run without exposing the raw seed
+	rules           config.Ruleset   // the active match ruleset (box-occupancy caps etc.); a global, on-screen setting -- reading it is within the AI<=human boundary
+	moveModel       config.MoveModel // the active movement model (Standard/Directional); a global on-screen setting. Under Directional, facing the travel direction moves FAST while facing off-axis is penalised -- the AI reads this to face its run when moving and face the ball when receiving.
+	seed            uint64           // per-(match, self) NoiseSalt, mixed into AI noise so variety survives run-to-run without exposing the raw seed
 }
 
 // perceive builds the per-tick perception for player me from the match view.
@@ -71,6 +75,9 @@ func perceive(view sim.View, me sim.SelfView, dt float64) perception {
 	p.gapToBall = geom.Dist(me.Position(), p.ball) - me.Radius() - p.ballRadius
 	p.iControl = p.gapToBall < me.Tuning().TouchRange
 	p.myCharge = me.ShootCharge()
+	p.myTrap = me.TrapCharge()
+	p.rules = view.Rules()
+	p.moveModel = view.MoveModel()
 
 	if c, ok := view.Carrier(); ok {
 		p.carrier = c

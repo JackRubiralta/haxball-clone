@@ -502,6 +502,8 @@ func (a *App) adaptSnapshot(snap netcode.Snapshot) render.SnapshotView {
 			ShootCharge: e.ShootCharge,
 			TrapCharge:  e.TrapCharge,
 			TrapAura:    e.TrapAura,
+			Possession:  e.Possession,
+			TouchCoef:   e.TouchCoef,
 		}
 	}
 	selfID, haveSelf := a.net.client.AssignedID()

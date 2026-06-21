@@ -265,7 +265,9 @@ Previous values for knobs that were changed, kept here so they can be restored:
 
 - `PullRange`: `8` (now `5`)
 - `TrapRangeBonus`: `14` (now `6`)
-- `Restitution` (front / back): `0.08 / 0.35` (now `0.21 / 0.24` — front lowered so a touch grips, still >0.20 so head-on shots deflect)
+- `Restitution` (front / back): `0.08 / 0.35` → `0.21 / 0.24` (now `0.19 / 0.22` — baseline lowered another 0.02 so contacts grip a touch more)
+- `CaptureSpeed` (front / back): `494 / 182` (now a uniform `320 / 320` — a ball arriving slower than 320 along the contact normal sticks, faster bounces)
+- `CaptureConeRadians`: `65°` (now `50°` — the reliable-capture cone half-angle)
 
 ## Physics & player variables
 
@@ -342,14 +344,15 @@ Each is evaluated from the ball dead-in-front (0°) to directly-behind (180°). 
 (`curves.go`): Linear, Quadratic (eases in), InverseQuadratic (eases out), Smoothstep,
 Exponential.
 
-- **Restitution** `0.21 / 0.24` (InvQuad) — bounciness on a *hard* contact; front `0.21` (lowered for a
-  firmer front capture, kept just above the `0.20` floor so a head-on hard shot still deflects off a
-  player rather than sticking at their feet); back `0.24`, springier behind.
-- **CaptureSpeed** `360 / 40` (Linear) — impact speed *below which the ball sticks*
-  (restitution 0) instead of bouncing. The threshold is **flat at the front peak `360` everywhere
-  inside the reliable capture cone** (so a ball that sticks dead-on also sticks a touch off-centre),
-  then falls to the `40` floor across the soft band — so **past the cone**, off-front/side hits stick
-  much less. A full-power shot (575) easily clears it, so an opponent never captures it — it deflects off.
+- **Restitution** `0.19 / 0.22` (InvQuad) — bounciness on a *hard* contact; front `0.19` (kept low for a
+  firmer front capture so a contact grips rather than springing off the feet); back `0.22`, springier behind.
+- **CaptureSpeed** `320 / 320` (Linear) — impact speed *below which the ball sticks*
+  (restitution 0) instead of bouncing. The threshold is **flat at the front peak `320` everywhere
+  inside the reliable capture cone** (so a ball that sticks dead-on also sticks a touch off-centre —
+  and a clean in-cone catch now seats the ball's sideways glide too, so an off-centre catch sticks
+  like a dead-on one instead of sliding off), then falls toward the side/back floor past the cone, so
+  **past the cone** off-front/side hits stick much less. A full-power shot (575) still clears it even at
+  the team buff (×1.25 → 400), so an opponent never captures a blast — it deflects off.
 - **CenterPull** `770 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
   make contact.
 - **Stickiness** `350 / 30` (InvQuad) — capped adhesion holding a touching ball until a
@@ -364,7 +367,9 @@ Exponential.
 - **ControlDamping** `11` — bleeds sideways/orbital ball speed so it settles at the front.
 - **OrbitStick** `8` — centripetal anti-fling: inward pull ∝ the ball's *hold-induced* orbital
   speed, so a hard turn curves the ball around you instead of flinging it off (a fast stray ball
-  the hold did not create is left alone — see the Dribble note below).
+  the hold did not create is left alone *while dribbling* — see the Dribble note below). A clean
+  **capture** is the exception: catching a ball inside the capture cone seats its stray sideways
+  glide too, so an off-centre catch sticks like a dead-on one rather than sliding off the surface.
 - **SeatStrength** `14` — gently draws a touching ball flush to the surface (gap-proportional,
   so no jitter).
 
@@ -378,14 +383,15 @@ strength inside its half-angle, then fades** toward the back. Cones are written 
 **Ball-control cones** (full strength inside the half-angle, then the named angle curve decays to
 its "behind" value — see *angle curves* above for the endpoints):
 
-- **Capture cone — ±37.5° (`CaptureConeRadians`) + a 55° soft band (`CaptureConeSoft`).** Inside ±37.5°
-  (widened 25% from 30°) the ball reliably sticks (the capture-speed threshold is at its front peak,
-  **360**); across the next 55° (out to ~92.5°) that threshold decays to the side/back floor (**40**), so
-  off-front touches bounce off instead of sticking. Off-front hits also **bounce livelier** (restitution
-  ×`(1+(1-cone))`, up to 2×). Widened by a team **buff +3°** (`ConeBonusRadians`) and a held **trap
-  +20°** (`CaptureConeTrapBonus`); **narrowed by a team debuff −16°** (`ConeDebuffRadians` —
-  asymmetric, so a marked opponent catches far less). *(A cone-weighted impulse split also exists
-  but is off by default — `uniformImpulseScale = true`.)*
+- **Capture cone — ±50° (`CaptureConeRadians`).** Inside ±50° the ball reliably sticks: the
+  capture-speed threshold is at its front peak (**320**) and a clean catch **seats fully** — even an
+  off-centre catch within the cone has its sideways glide absorbed, so it sticks like a dead-on one
+  instead of sliding off. Past the cone the threshold follows the `CaptureSpeed` curve toward the
+  side/back floor (currently *flat*, since front == back == `320`), and off-front hits **bounce
+  livelier** (restitution ×`(1+(1-cone))`, up to 2× — no extra liveliness while that curve is flat).
+  Widened by a team **buff +5°** (`ConeBonusRadians`) and a held **trap +20°** (`CaptureConeTrapBonus`);
+  **narrowed by a team debuff −16°** (`ConeDebuffRadians` — asymmetric, so a marked opponent catches
+  far less). *(A cone-weighted impulse split also exists but is off by default — `uniformImpulseScale = true`.)*
 - **Control cone — ±22° (`ControlConeRadians`, 44° total).** Full strength here for **two** forces
   that then taper to the back: the **sticky hold** (Stickiness `350→30`, resists the ball
   separating) and the **roll-to-front control** (Control `1200→320`, steers the ball onto the
@@ -562,23 +568,23 @@ away the moment you move the ball on.
 which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQuality`, in
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
-  sticky touches that scale up as the charge builds (full-charge capture ≈ front × `CaptureBest`,
-  360 × 1.1 ≈ 396), so a fully-built possession receives firmly.
+  sticky touches that scale up as the charge builds — a **strengthened** buff: full-charge capture
+  ≈ front × `CaptureBest`, 320 × 1.25 ≈ **400**, so a fully-built possession receives much more firmly.
 - **Other team** → `OtherTeam·strength` (down to **−1.0**): capture down, bounce up (up to
   ×1.43) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
 - **Capture cone** → scales ASYMMETRICALLY with the coefficient (see `captureConeRadians`):
-  the buff WIDENS the owning team's reliable cone a little (`ConeBonusRadians` ≈3° at full
-  charge — biggest cone), while the debuff NARROWS the conceding team's more (`ConeDebuffRadians`
-  ≈16° at full enemy charge — capture cone shrinks to ~21.5°, well under the ~37.5° baseline). So a
-  debuffed opponent catches less off the dead-on line. Dead-on (angle 0) is always inside
-  the cone, so straight-on shots/captures are unchanged — only off-axis catching shrinks.
+  the buff WIDENS the owning team's reliable cone (`ConeBonusRadians` ≈5° at full charge — biggest
+  cone), while the debuff NARROWS the conceding team's more (`ConeDebuffRadians` ≈16° at full enemy
+  charge — capture cone shrinks to ~34°, well under the 50° baseline). So a debuffed opponent catches
+  less off the dead-on line. Dead-on (angle 0) is always inside the cone, so straight-on
+  shots/captures are unchanged — only off-axis catching shrinks.
 
 *Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−1.0`, and the multiplier endpoints
-(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.1`,
-**RestitutionWorst/Best** `1.43 / 0.844`. The capture multipliers are unchanged; the capture
-band front is `360`, so the buffed/debuffed *absolute* captures scale with it —
-buffed capture ≈ **396** (360 × 1.1), debuffed capture ≈ **226** (360 × 0.628).
+(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.25` (buff strengthened from
+`1.1`), **RestitutionWorst/Best** `1.43 / 0.75` (buff deadens a bounce more, from `0.844`). The
+capture band front is `320`, so the buffed/debuffed *absolute* captures scale with it —
+buffed capture ≈ **400** (320 × 1.25), debuffed capture ≈ **201** (320 × 0.628).
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding

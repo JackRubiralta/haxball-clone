@@ -206,21 +206,22 @@ func parseError(err error) error {
 
 // GameOptions is the parsed configuration for the local game command.
 type GameOptions struct {
-	Config     Config
-	Logging    Logging
-	Version    bool
-	TeamSize   int
-	HomeSize   int // resolved home (Blue) roster size (falls back to TeamSize)
-	AwaySize   int // resolved away (Red) roster size (falls back to TeamSize)
-	AIBoth     bool
-	Solo       bool
-	Duo        bool
-	Zoom       float64
-	Camera     string
-	Mute       bool
-	Volume     float64
-	Difficulty string          // AI difficulty tier name (see control.SkillFromString)
-	Set        map[string]bool // flag names the user EXPLICITLY passed (for "CLI overrides saved prefs only when set")
+	Config        Config
+	Logging       Logging
+	Version       bool
+	TeamSize      int
+	HomeSize      int // resolved home (Blue) roster size (falls back to TeamSize)
+	AwaySize      int // resolved away (Red) roster size (falls back to TeamSize)
+	AIBoth        bool
+	Solo          bool
+	Duo           bool
+	Zoom          float64
+	Camera        string
+	Mute          bool
+	Volume        float64
+	Difficulty    string          // AI difficulty tier name (see control.SkillFromString)
+	NeuralWeights string          // path to a neural-tier weights file to use instead of the embedded net
+	Set           map[string]bool // flag names the user EXPLICITLY passed (for "CLI overrides saved prefs only when set")
 }
 
 // ParseGame parses the local game command's flags.
@@ -241,7 +242,8 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	camera := fs.String("camera", "ball", "camera mode: ball (alias follow), player (alias active), or fit (whole pitch)")
 	mute := fs.Bool("mute", false, "silence all sound")
 	volume := fs.Float64("volume", 0.8, "master volume 0..1")
-	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, impossible, or neural")
+	difficulty := fs.String("difficulty", "algo", "AI controller: algo or neural")
+	neuralWeights := fs.String("neural-weights", "", "path to a neural-tier weights .bin to load instead of the embedded net (play vs a training checkpoint)")
 	if err := fs.Parse(args); err != nil {
 		return GameOptions{}, parseError(err)
 	}
@@ -288,20 +290,21 @@ func ParseGame(name string, args []string, stderr io.Writer) (GameOptions, error
 	}
 	homeResolved, awayResolved := setup.sizes()
 	return GameOptions{
-		Config:     cfg,
-		Logging:    *logging,
-		TeamSize:   *teamSize,
-		HomeSize:   homeResolved,
-		AwaySize:   awayResolved,
-		AIBoth:     *aiBoth,
-		Solo:       *solo,
-		Duo:        *duo,
-		Zoom:       *zoom,
-		Camera:     *camera,
-		Mute:       *mute,
-		Volume:     *volume,
-		Difficulty: *difficulty,
-		Set:        set,
+		Config:        cfg,
+		Logging:       *logging,
+		TeamSize:      *teamSize,
+		HomeSize:      homeResolved,
+		AwaySize:      awayResolved,
+		AIBoth:        *aiBoth,
+		Solo:          *solo,
+		Duo:           *duo,
+		Zoom:          *zoom,
+		Camera:        *camera,
+		Mute:          *mute,
+		Volume:        *volume,
+		Difficulty:    *difficulty,
+		NeuralWeights: *neuralWeights,
+		Set:           set,
 	}, nil
 }
 
@@ -331,7 +334,7 @@ func ParseServer(name string, args []string, stderr io.Writer) (ServerOptions, e
 	homeSize := fs.Int("home-size", 0, "players on the home (Blue) team (0 = use -team-size)")
 	awaySize := fs.Int("away-size", 0, "players on the away (Red) team (0 = use -team-size)")
 	tickRate := fs.Float64("tick-rate", 60, "simulation ticks per second (1..240)")
-	difficulty := fs.String("difficulty", "hard", "AI difficulty: easy, normal, hard, impossible, or neural")
+	difficulty := fs.String("difficulty", "algo", "AI controller: algo or neural")
 	if err := fs.Parse(args); err != nil {
 		return ServerOptions{}, parseError(err)
 	}

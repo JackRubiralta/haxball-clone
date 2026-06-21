@@ -51,8 +51,8 @@ func DefaultSettings() Settings {
 	s := Settings{
 		MatchSetup: ms,
 		Teams: [2]TeamControl{
-			teamHome: {Human: true, HumanSlot: 2, Difficulty: "hard", Size: 3},
-			teamAway: {Human: false, HumanSlot: 1, Difficulty: "hard", Size: 3},
+			teamHome: {Human: true, HumanSlot: 2, Difficulty: "algo", Size: 3},
+			teamAway: {Human: false, HumanSlot: 1, Difficulty: "algo", Size: 3},
 		},
 	}
 	s.syncSizes()
@@ -79,8 +79,8 @@ var (
 	// internal key for the medium pitch (shown as "Medium"); it sits in the middle and is the
 	// default. See setupPitch's parallel labels array.
 	fieldPresets = []string{"small", "standard", "large"}
-	// All AI tiers, sourced from control so the menu never drifts from the canonical set
-	// (currently easy/normal/hard/impossible). See control.SkillNames / SkillFromString.
+	// The user-facing AI controller options, sourced from control so the menu never drifts from the
+	// canonical set (currently algo/neural). See control.SkillNames / SkillFromString.
 	difficultyPresets = control.SkillNames()
 	cameraPresets     = []string{"ball", "player", "fit"}
 	controlPresets    = []string{"Human", "AI"}

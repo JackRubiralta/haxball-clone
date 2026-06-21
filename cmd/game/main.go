@@ -64,6 +64,9 @@ func run(ctx context.Context, name string, args []string, stderr io.Writer) erro
 	if err := cliutil.CheckDifficulty(opts.Difficulty); err != nil {
 		return err
 	}
+	if opts.NeuralWeights != "" {
+		aifactory.SetWeightsPath(opts.NeuralWeights) // play against a training checkpoint
+	}
 	logger, err := logging.New(stderr, opts.Logging.Level, opts.Logging.Format)
 	if err != nil {
 		return fmt.Errorf("logging: %w", err)

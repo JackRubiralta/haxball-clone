@@ -35,6 +35,8 @@ type EntityState struct {
 	ShootCharge float64 // 0..1 shoot charge (players only)
 	TrapCharge  float64 // 0..1 trap ENERGY bar (players only)
 	TrapAura    float64 // 0..1 effective trap strength / glow (players only; 0 when not trapping)
+	Possession  float64 // 0..1 per-player possession (players only; the white bar)
+	TouchCoef   float64 // -1..1 team buff(+)/debuff(-) coefficient (players only; the green/red bar)
 }
 
 // Snapshot is the authoritative state the server broadcasts each tick. It carries
@@ -89,9 +91,10 @@ type Snapshot struct {
 // ProtoVersion is the wire-protocol version. The client stamps it on its first message and the
 // server rejects a mismatch, so an old client cannot silently desync a new server. v2 added the
 // lobby/control messages (ClientFrame, MsgLobby/MsgReject/MsgHostClosed/MsgPong) and the Hello
-// IsHost/SessionToken fields. Hello and Reject keep a STABLE gob shape across versions so a
-// mismatched peer can still decode the rejection.
-const ProtoVersion = 2
+// IsHost/SessionToken fields. v3 added EntityState.Possession/TouchCoef (the possession/buff bars
+// already drawn locally, now shipped so networked clients render them too). Hello and Reject keep
+// a STABLE gob shape across versions so a mismatched peer can still decode the rejection.
+const ProtoVersion = 3
 
 // MsgKind tags an Envelope (the server->client message) as exactly one of its variants. NEVER
 // reorder/remove MsgHello/MsgSnapshot -- append only (gob has no Register here; wire stability
@@ -188,6 +191,8 @@ func SnapshotOf(m *sim.Match) Snapshot {
 			ShootCharge: sim.NormShootCharge(p.ShootCharge()),
 			TrapCharge:  p.TrapCharge(),
 			TrapAura:    p.TrapAura(),
+			Possession:  p.Possession(),
+			TouchCoef:   p.TouchCoefficient(),
 		})
 	}
 	return s

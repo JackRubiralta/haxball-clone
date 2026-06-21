@@ -11,6 +11,14 @@ type aiTuning struct {
 	arriveRadius float64 // movement deadzone so players settle on a target
 	slowRadius   float64 // start easing throttle within this distance of a target
 
+	// Directional-move facing (faceAim/shouldFaceAction). Under the directional model an off-ball
+	// player faces its TRAVEL direction to run fast, and turns to face the ball within a turn-time
+	// LEAD before receiving. Standard model is unaffected (facing is speed-neutral there).
+	faceActionGap    float64 // floor gap to the ball within which an off-ball player always faces it (turned in time for the touch)
+	faceLeadMargin   float64 // multiplier on the estimated turn-time lead distance; >1 turns toward the ball earlier (safer reception, less speed)
+	faceMoveThrottle float64 // only face the travel direction when moving with at least this throttle; below it (arriving/shuffling) face the ball -- avoids facing a jittery low-speed Move
+	faceReleaseBand  float64 // hysteresis: once facing the ball, keep facing it until the gap exceeds the lead distance times this band (>1), so the travel<->ball facing decision can't flip-flop and jitter
+
 	// Obstacle avoidance (anti-stuck steering).
 	avoidRadius  float64 // surface gap within which a body ahead deflects the heading
 	avoidLateral float64 // base strength of the sideways steer around a blocking body
@@ -45,16 +53,17 @@ type aiTuning struct {
 	slotJitter      float64 // small deterministic per-player slot noise (world units)
 
 	// Shooting.
-	shootRange       float64 // distance to goal under which shooting is considered at all
-	tapRange         float64 // at/under this range a tap (min charge) is enough
-	fullRange        float64 // at/over this range aim for a full-power charge
-	shootAlignRad    float64 // alignment tolerance (radians) the shot must reach before releasing
-	shootAlignMaxRad float64 // widest alignment tolerance (radians) once a shot has fully relaxed
-	cornerInset      float64 // base safety margin inside the goal opening the shot aims (world units)
-	cornerRangeInset float64 // extra aim margin added at max shooting range (world units), scaled by distance
-	shootBallSide    float64 // min alignment of ball-side with goal to commit a shot (else reposition)
-	shootOpenBonus   float64 // flat utility bonus for a clear (open) shot, so good chances are taken
-	minShootCharge   float64 // floor on a shot's charge so even close shots are hit firmly
+	shootRange         float64 // distance to goal under which shooting is considered at all
+	dribbleCommitRange float64 // distance to goal under which the dribbler commits at goal instead of peeling (kept independent of shootRange)
+	tapRange           float64 // at/under this range a tap (min charge) is enough
+	fullRange          float64 // at/over this range aim for a full-power charge
+	shootAlignRad      float64 // alignment tolerance (radians) the shot must reach before releasing
+	shootAlignMaxRad   float64 // widest alignment tolerance (radians) once a shot has fully relaxed
+	cornerInset        float64 // base safety margin inside the goal opening the shot aims (world units)
+	cornerRangeInset   float64 // extra aim margin added at max shooting range (world units), scaled by distance
+	shootBallSide      float64 // min alignment of ball-side with goal to commit a shot (else reposition)
+	shootOpenBonus     float64 // flat utility bonus for a clear (open) shot, so good chances are taken
+	minShootCharge     float64 // floor on a shot's charge so even close shots are hit firmly
 
 	// Passing.
 	passMinAdvance    float64 // a pass must move the ball at least this far goalward to rate
@@ -64,11 +73,14 @@ type aiTuning struct {
 	passForwardBonus  float64 // standing preference for a safe forward pass over dribbling
 	passSafetyMin     float64 // minimum lane-safety margin (seconds) to attempt a pass
 	passReceiverSpace float64 // receiver must have at least this much space to be worth a pass
+	passReleadGap     float64 // while a pass is charging/settling, re-aim it at the receiver's current spot once the committed aim is more than this far from it -- tracks a moving receiver so the ball is not fired at where it WAS (the "arrives a player-length off the open man" miss). Decoupled from passReceiverSpace so the aim can track tightly without changing the openness gate; not so tight that the aim never converges (timeout).
 	throughDist       float64 // how far ahead of a runner a through ball is played (world units)
 	passArriveSpeed   float64 // target ball speed at the receiver -- passes are calibrated to arrive this soft
 	passSpeedMin      float64 // clamp on a calibrated pass launch speed (min)
 	passSpeedMax      float64 // clamp on a calibrated pass launch speed (max)
 	passDistPenalty   float64 // small score penalty per unit of pass distance (favour simple safe balls)
+	passSettleSpeed   float64 // perpendicular ball-speed scale for the settle-before-pass penalty (the ball's sideways pace across the lane that makes a pass sail off target)
+	passSettleWeight  float64 // strength of the settle-before-pass penalty; the carrier takes a settling touch instead of firing a wild pass off a moving ball. 0 disables.
 	passLaunchVelComp float64 // 0..1: fraction of the ball's existing along-target velocity subtracted from the pass impulse, so the TOTAL launch (impulse ADDS to ball velocity in sim) lands on the calibrated speed instead of overshooting
 	// bestPass scoring weights (per unit of each term) for ranking pass candidates.
 	passAdvanceWeight float64 // weight on goalward advancement of the pass
@@ -76,6 +88,8 @@ type aiTuning struct {
 	passSafetyWeight  float64 // weight on the lane-safety margin
 	passOpenWeight    float64 // weight on how long the receive spot stays open
 	passRecycleCap    float64 // score ceiling for a non-forward (recycle) pass, so it never out-rates real progress
+	passAssistBonus   float64 // bonus for an ASSIST pass -- a (possibly square/cut-back) ball to a free man who is in a clear shooting position (within shootRange with an open goal lane). Lets the carrier square to the better-placed shooter in an overload instead of shooting into the keeper. Only fires in the final third with an open shooter (shootingThreat), so it is not a loose midfield recycle.
+	assistEdge        float64 // how much clearer (world units) the receiver's shot lane to goal must be than the carrier's OWN shot lane before an assist pass is offered -- so the carrier squares only when defenders have committed to it (its look blocked, the free man's open), never when it has the better shot itself
 	recycleFreely     bool    // offer a safe lateral/back (recycle) pass as a standing retention option, not only under pressure: velComp makes a back/lateral pass launch at the soft calibrated speed (only FORWARD passes hit the hot ~201 floor), so recycling to keep possession completes cleanly -- true tiki-taka. Capped by passRecycleCap so it never out-rates real forward progress (shots/scored guard against degenerate backward passing).
 
 	// Off-ball receiving movement.
@@ -142,14 +156,23 @@ type aiTuning struct {
 	trapReceiveFactor float64 // trap to receive once an incoming ball's closing speed exceeds capture*this
 	trapReceiveRange  float64 // surface gap within which the receiver sets trap for a clean touch
 	stealRange        float64 // trap to steal when within this gap of an enemy fresh-touch ball
-	prechargeETA      float64 // seconds-to-ball under which the presser pre-charges a clearance
+	driveClearETA     float64 // seconds-to-ball under which the presser drives in (no trap standoff) to win a deep ball for a charged clearance
+
+	// Trap energy budget (the trap "aura" is now a limited-time, recharging power -- a full bar
+	// gives ~1.25s of trap and refills in ~3.7s). The AI reads its OWN bar (SelfView.TrapCharge,
+	// rendered for every player, so within the AI<=human boundary) and rations it: it saves the
+	// bar for the high-value use (cleanly receiving an incoming pass) instead of draining it on
+	// speculative steals/scoops and arriving at a pass with nothing left.
+	trapStealMinEnergy float64 // min trap-energy bar to START a discretionary trap-steal off an enemy
+	trapHoldMinEnergy  float64 // below this, stop HOLDING trap for low-value reasons (scoop/big-turn/shield) so the bar can regen; a real incoming pass (wantTrapReceive) is exempt
 
 	// Goalkeeper.
-	keeperDepthMin    float64 // closest the keeper sits to its own goal line (world units)
-	keeperDepthMax    float64 // furthest out the keeper advances to cut the angle
-	keeperSweepBox    float64 // sweep loose balls within this multiple of the goal-area depth
-	keeperSaveSpeed   float64 // ball speed toward goal above which the keeper anticipates the save
-	keeperSweepMargin float64 // intercept-time margin the keeper must beat opponents by to sweep
+	keeperDepthMin       float64 // closest the keeper sits to its own goal line (world units)
+	keeperDepthMax       float64 // furthest out the keeper advances to cut the angle
+	keeperSweepBox       float64 // sweep loose balls within this multiple of the goal-area depth
+	keeperSaveSpeed      float64 // ball speed toward goal above which the keeper anticipates the save
+	keeperSweepMargin    float64 // intercept-time margin the keeper must beat opponents by to sweep
+	keeperChallengeRange float64 // come out to challenge an enemy carrier within this multiple of the goal-area depth (+goal height) of our own goal
 }
 
 // defaultAITuning returns the baseline behavioural tuning.
@@ -158,6 +181,11 @@ func defaultAITuning() aiTuning {
 	return aiTuning{
 		arriveRadius: 6,
 		slowRadius:   40,
+
+		faceActionGap:    150, // within ~150u of the ball an off-ball player faces it (ready to receive). 150 keeps ~92% of the directional speed gain (speedEff 0.62->0.78 vs 0.80 at 55) while facing the ball early enough to hold completion at the gate -- the gate-safe point on the speed/completion frontier.
+		faceLeadMargin:   2.0, // start turning toward the ball ~2x the bare turn-time early, so it's aligned before the touch
+		faceMoveThrottle: 0.0, // throttle gate OFF: gating face-travel on throttle flipped the facing as the throttle crossed the threshold and cost ~3% completion; the Move~0 check + the hysteresis band already keep it stable
+		faceReleaseBand:  1.5, // hysteresis band: once facing the ball, keep facing it until the gap exceeds 1.5x the lead distance, so the travel<->ball facing decision can't flip-flop and jitter
 
 		avoidRadius:  42,
 		avoidLateral: 0.9,
@@ -183,16 +211,17 @@ func defaultAITuning() aiTuning {
 		defendBias:      0.14,
 		slotJitter:      14,
 
-		shootRange:       360,
-		tapRange:         120,
-		fullRange:        260,
-		shootAlignRad:    0.06981317007977318, // 4deg: tighter lineup so corner shots fly true
-		shootAlignMaxRad: 0.10471975511965977, // 6deg: still relaxes to fire if the lineup drags
-		cornerInset:      4,
-		cornerRangeInset: 16,
-		shootBallSide:    -0.1,
-		shootOpenBonus:   0.6,
-		minShootCharge:   0.5,
+		shootRange:         440, // attacks should FINISH with a shot, not be dribbled into a turnover: on the large pitch 360 left the AI out of range through most of the attacking third (only ~3 shots/game, 15% of possessions ended by a shot). 440 covers the attacking third -> shots 3.1->5.1/game, shot-ended 15%->24%, completion HELD. Beyond ~480 completion falls (hopeful long shots).
+		dribbleCommitRange: 540, // distance to goal under which the dribbler stops peeling and drives at goal (the old shootRange*1.5). A DEDICATED constant so widening shootRange to shoot more doesn't also drag the dribble-commit zone (which would change carrying behavior and broke TestDribbleAvoidsWall).
+		tapRange:           120,
+		fullRange:          260,
+		shootAlignRad:      0.06981317007977318, // 4deg: tighter lineup so corner shots fly true
+		shootAlignMaxRad:   0.10471975511965977, // 6deg: still relaxes to fire if the lineup drags
+		cornerInset:        4,
+		cornerRangeInset:   16,
+		shootBallSide:      -0.1,
+		shootOpenBonus:     0.6,
+		minShootCharge:     0.5,
 
 		passMinAdvance:    40,
 		passRiskMargin:    0.12,
@@ -201,17 +230,22 @@ func defaultAITuning() aiTuning {
 		passForwardBonus:  0.5,
 		passSafetyMin:     0.16,
 		passReceiverSpace: 30,
+		passReleadGap:     14, // re-aim the charging pass once the committed spot is >14u (under a player-length) from the receiver's current position -- keeps the ball tracking a moving receiver so it does not arrive where the receiver WAS. Tighter than the old 30 (which let the aim lag ~a player-length).
 		throughDist:       110,
 		passArriveSpeed:   175, // a pass arrives gently here, well under the live ~276 capture, so it STICKS on the receiver's first touch instead of skidding through. Kept at 175 (not softened further): with the buffed capture a firm-ish ball already sticks, and a robust 30-seed sweep showed softening the LAUNCH actually LOWERS completion (a slower ball spends longer in the lane, so it is more interceptable -- see laneSafe). The soft FEEL of a short ball instead comes from the RECEIVER meeting it deeper on its path (receivePoint) where it has slowed. NOTE the hard launch floor: a charged kick can't fire slower than the ~201 tap (Shoot.Front*MinShootFactor=575*0.35), so a SHORT pass fires at that floor regardless of this value. (TestPassCompletionLargeMap's 6-seed metric is chaotic -- validate tuning over >=30 seeds.)
 		passSpeedMin:      150, // floor on the calibrated launch speed; moot below the ~201 tap floor (the kick can't fire slower than a tap), kept as a sane lower bound
 		passSpeedMax:      430,
 		passDistPenalty:   0.0004,
+		passSettleSpeed:   160, // ball perpendicular pace (u/s) at which the settle penalty is full
+		passSettleWeight:  0.0, // settle-before-pass OFF: re-tested under current physics and it FAILS the committed gate (measureKicks) -- 0.3->70.8%, 0.6->73.7% with goals down and fast breaks slowed -- even though the sweep's classifyMatch metric liked it. The committed gate is the authority; the two metrics diverge for this lever. Kept as a tunable.
 		passLaunchVelComp: 1.0, // fully compensate: the sim ADDS the impulse to the ball's current velocity, so a pass off a moving/dribbled ball would launch ~2-3x passSpeedFor (the dominant over-hit / too-fast-to-control cause). Subtracting the existing along-target pace makes the TOTAL launch match the calibrated arrive speed. Floored by the ~201 tap, so a very fast ball still can't be passed gently (settle first).
 		passAdvanceWeight: 0.009,
 		passSpaceWeight:   0.006,
 		passSafetyWeight:  0.5,
 		passOpenWeight:    0.4,
 		passRecycleCap:    1.12,
+		passAssistBonus:   0.45, // an assist into a clear shooting position beats a contested solo shot (~0.9) and the dribble baseline (1.0), but an uncontested open shot (scores 2.5+) still wins -- so the carrier squares only when its own look is boxed in
+		assistEdge:        45,   // the free man's shot lane must be ~1.5 player-widths clearer than the carrier's own before squaring it -- gates the assist to genuine overload moments, keeping it out of normal final-third play (gate-safe)
 		recycleFreely:     false, // OFF: a back/lateral pass off a forward-dribbled ball picks up the ball's perpendicular momentum and drifts off-line (under-hits), so freely recycling raised volume but LOWERED the completion rate over a 30-seed sweep. Kept as a tunable -- only the FORWARD-momentum case misfires; from a settled ball recycling is clean.
 
 		supportHoldBallMove:  50, // hold the receiving spot until the ball has moved ~50u from where it was picked (then re-pick) -- a stationary target so passes land true; best of a 30-seed sweep (+~5% completion, tighter variance, fewer total fails vs re-picking every tick)
@@ -264,16 +298,20 @@ func defaultAITuning() aiTuning {
 		recoverConeRad:      0.8726646259971648, // ~50deg: ball past this off-front -> scoop it back
 		dribbleWallAvoid:    3.0,
 
-		trapReceiveFactor: 0.4,
-		trapReceiveRange:  44,
+		trapReceiveFactor:   0.4,
+		trapReceiveRange:   44,
 		stealRange:        10,
-		prechargeETA:      0.33,
+		driveClearETA:     0.33,
 
-		keeperDepthMin:    24,
-		keeperDepthMax:    60,
-		keeperSweepBox:    1.1,
-		keeperSaveSpeed:   85, // anticipate the predictive save on more shots (was 110)
-		keeperSweepMargin: 0.12,
+		trapStealMinEnergy: 0.35, // a steal is discretionary and often fails -- don't spend the bar below this; save it for receiving
+		trapHoldMinEnergy:  0.12, // near-empty trap gives only the residual aura, so holding it just blocks the ~3.7s regen; let go and recharge
+
+		keeperDepthMin:       24,
+		keeperDepthMax:       60,
+		keeperSweepBox:       1.1,
+		keeperSaveSpeed:      85,  // anticipate the predictive save on a goalward ball; lowering it made the keeper treat receivable balls (firm back-passes / slow rolls) as shots-to-trap, mishandle them, and crater pass completion -- the "come out and be active" behaviour lives in the gated challenge branch instead
+		keeperChallengeRange: 1.4, // come out to challenge an enemy carrier within this multiple of the goal-area depth (+goal height) of our goal -- so the keeper narrows the angle instead of staying still
+		keeperSweepMargin:    0.12,
 	}
 }
 
@@ -298,6 +336,12 @@ const (
 
 // DefaultSkill is the tier used when none is specified: a strong, competitive AI.
 const DefaultSkill = SkillHard
+
+// SkillAlgo is the user-facing name for the algorithmic (rule-based) controller. The menu now
+// offers only "algo" and "neural" rather than a ladder of difficulty tiers, so "algo" maps to the
+// strongest rule tier (SkillHard). The lower tiers still exist internally for training/eval tools
+// (cmd/datagen, cmd/env) and remain accepted as CLI aliases, just not shown in the menu.
+const SkillAlgo = SkillHard
 
 // skillParams scales the AI's competence for a difficulty tier.
 type skillParams struct {
@@ -329,6 +373,8 @@ func SkillFromString(s string) (Skill, bool) {
 	switch s {
 	case "", "default":
 		return DefaultSkill, true
+	case "algo", "algorithmic":
+		return SkillAlgo, true
 	case "easy":
 		return SkillEasy, true
 	case "normal", "medium":
@@ -353,8 +399,10 @@ func ValidSkill(s string) bool {
 	return ok
 }
 
-// SkillNames returns the canonical tier names for help text, validation messages, and the menu
-// difficulty selector.
+// SkillNames returns the user-facing controller options for the menu, help text, and validation
+// messages: just the algorithmic ("algo") and neural controllers. The internal difficulty tiers
+// (easy/normal/hard/impossible) still exist and are accepted as CLI aliases by SkillFromString --
+// they are used by the training/eval tools -- but are no longer presented as a difficulty ladder.
 func SkillNames() []string {
-	return []string{"easy", "normal", "hard", "impossible", "neural"}
+	return []string{"algo", "neural"}
 }

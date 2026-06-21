@@ -1,0 +1,589 @@
+tikitaka: device=cuda params=334595 flat=355 heads=[9, 3, 16, 4, 2]
+tikitaka: STAGE 0 'motor' ent=0.012 B=14 apx=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] selfplay=False snaps=0
+tikitaka: s0 upd 10 rew/step=-0.0014 pi=-0.002 v=0.000 ent=6.746 t=3s
+tikitaka: s0 upd 20 rew/step=-0.0013 pi=-0.003 v=0.006 ent=6.665 t=6s
+tikitaka: s0 upd 30 rew/step=-0.0013 pi=-0.005 v=0.004 ent=6.737 t=8s
+tikitaka: s0 upd 40 rew/step=0.0006 pi=-0.003 v=0.005 ent=6.460 t=11s
+tikitaka: s0 upd 50 rew/step=0.0001 pi=-0.003 v=0.000 ent=6.691 t=13s
+tikitaka: s0 upd 60 rew/step=0.0007 pi=-0.003 v=0.004 ent=6.734 t=16s
+tikitaka: s0 upd 70 rew/step=-0.0010 pi=-0.003 v=0.000 ent=6.716 t=19s
+tikitaka: s0 upd 80 rew/step=-0.0013 pi=-0.002 v=0.000 ent=6.718 t=21s
+tikitaka: s0 upd 90 rew/step=-0.0004 pi=-0.002 v=0.004 ent=6.720 t=24s
+tikitaka: s0 upd 100 rew/step=-0.0003 pi=-0.002 v=0.000 ent=6.757 t=26s
+tikitaka: s0 upd 110 rew/step=0.0007 pi=-0.003 v=0.004 ent=6.708 t=29s
+tikitaka: s0 upd 120 rew/step=0.0026 pi=-0.001 v=0.012 ent=6.734 t=31s
+tikitaka: [s0:motor:u120] score=0.433 poss=0.15 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.06 gkbox=0.00 push/min=4.7 shots/min=4.4 gd/ep=0.00
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.433 -> training/checkpoints/latest_best.bin
+tikitaka: s0 upd 130 rew/step=-0.0013 pi=-0.003 v=0.000 ent=6.711 t=35s
+tikitaka: s0 upd 140 rew/step=-0.0005 pi=-0.003 v=0.003 ent=6.659 t=38s
+tikitaka: s0 upd 150 rew/step=-0.0003 pi=-0.001 v=0.005 ent=6.742 t=40s
+tikitaka: s0 upd 160 rew/step=-0.0001 pi=-0.002 v=0.001 ent=6.758 t=43s
+tikitaka: s0 upd 170 rew/step=0.0013 pi=-0.002 v=0.008 ent=6.761 t=45s
+tikitaka: s0 upd 180 rew/step=0.0026 pi=-0.003 v=0.011 ent=6.713 t=48s
+tikitaka: s0 upd 190 rew/step=-0.0010 pi=-0.004 v=0.000 ent=6.685 t=51s
+tikitaka: s0 upd 200 rew/step=-0.0013 pi=-0.006 v=0.000 ent=6.372 t=53s
+export: wrote training/snapshots/snap_s0_00200.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s0_00200.bin (total 1)
+tikitaka: s0 upd 210 rew/step=-0.0013 pi=-0.007 v=0.000 ent=6.457 t=57s
+tikitaka: s0 upd 220 rew/step=0.0003 pi=-0.004 v=0.001 ent=6.662 t=59s
+tikitaka: s0 upd 230 rew/step=-0.0003 pi=-0.003 v=0.000 ent=6.714 t=62s
+tikitaka: s0 upd 240 rew/step=-0.0009 pi=-0.002 v=0.004 ent=6.719 t=64s
+tikitaka: [s0:motor:u240] score=0.428 poss=0.13 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.11 gkbox=0.00 push/min=8.0 shots/min=4.9 gd/ep=0.07
+tikitaka: s0 upd 250 rew/step=-0.0005 pi=-0.002 v=0.003 ent=6.730 t=67s
+tikitaka: s0 upd 260 rew/step=-0.0020 pi=-0.002 v=0.004 ent=6.705 t=70s
+tikitaka: s0 upd 270 rew/step=-0.0006 pi=-0.006 v=0.000 ent=6.613 t=72s
+tikitaka: s0 upd 280 rew/step=-0.0005 pi=-0.001 v=0.000 ent=6.683 t=75s
+tikitaka: s0 upd 290 rew/step=0.0032 pi=-0.002 v=0.014 ent=6.721 t=77s
+tikitaka: s0 upd 300 rew/step=0.0004 pi=-0.002 v=0.001 ent=6.727 t=80s
+tikitaka: s0 upd 310 rew/step=-0.0009 pi=-0.002 v=0.000 ent=6.679 t=83s
+tikitaka: s0 upd 320 rew/step=-0.0014 pi=-0.002 v=0.000 ent=6.680 t=85s
+tikitaka: s0 upd 330 rew/step=-0.0006 pi=-0.002 v=0.002 ent=6.676 t=88s
+tikitaka: s0 upd 340 rew/step=0.0012 pi=-0.004 v=0.007 ent=6.662 t=90s
+tikitaka: s0 upd 350 rew/step=0.0020 pi=-0.004 v=0.011 ent=6.386 t=93s
+tikitaka: s0 upd 360 rew/step=0.0012 pi=-0.002 v=0.004 ent=6.599 t=95s
+tikitaka: [s0:motor:u360] score=0.443 poss=0.16 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.05 gkbox=0.00 push/min=5.1 shots/min=4.4 gd/ep=0.32
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.443 -> training/checkpoints/latest_best.bin
+tikitaka: s0 upd 370 rew/step=-0.0013 pi=-0.001 v=0.000 ent=6.678 t=99s
+tikitaka: s0 upd 380 rew/step=0.0012 pi=-0.003 v=0.007 ent=6.627 t=102s
+tikitaka: s0 upd 390 rew/step=0.0013 pi=-0.002 v=0.007 ent=6.664 t=104s
+tikitaka: s0 upd 400 rew/step=0.0004 pi=-0.004 v=0.001 ent=6.649 t=107s
+export: wrote training/snapshots/snap_s0_00400.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s0_00400.bin (total 2)
+tikitaka: s0 upd 410 rew/step=-0.0004 pi=-0.006 v=0.000 ent=6.517 t=110s
+tikitaka: s0 upd 420 rew/step=-0.0001 pi=-0.002 v=0.000 ent=6.595 t=113s
+tikitaka: s0 upd 430 rew/step=-0.0017 pi=-0.003 v=0.003 ent=6.647 t=115s
+tikitaka: s0 upd 440 rew/step=-0.0013 pi=-0.005 v=0.000 ent=6.667 t=118s
+tikitaka: s0 upd 450 rew/step=0.0003 pi=-0.008 v=0.006 ent=6.627 t=121s
+tikitaka: s0 upd 460 rew/step=0.0019 pi=-0.002 v=0.012 ent=6.525 t=123s
+tikitaka: s0 upd 470 rew/step=0.0025 pi=-0.004 v=0.010 ent=6.404 t=126s
+tikitaka: s0 upd 480 rew/step=0.0007 pi=-0.002 v=0.004 ent=6.575 t=129s
+tikitaka: [s0:motor:u480] score=0.645 poss=0.91 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.04 gkbox=0.00 push/min=4.4 shots/min=4.3 gd/ep=-0.04
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.645 -> training/checkpoints/latest_best.bin
+tikitaka: s0 upd 490 rew/step=-0.0014 pi=-0.003 v=0.000 ent=6.421 t=133s
+tikitaka: s0 upd 500 rew/step=0.0017 pi=-0.004 v=0.009 ent=6.371 t=136s
+tikitaka: s0 upd 510 rew/step=0.0007 pi=-0.003 v=0.004 ent=6.491 t=138s
+tikitaka: s0 upd 520 rew/step=0.0007 pi=-0.007 v=0.004 ent=6.546 t=141s
+tikitaka: s0 upd 530 rew/step=0.0013 pi=-0.003 v=0.008 ent=6.495 t=143s
+tikitaka: s0 upd 540 rew/step=-0.0001 pi=-0.002 v=0.003 ent=6.603 t=146s
+tikitaka: s0 upd 550 rew/step=-0.0010 pi=-0.002 v=0.000 ent=6.686 t=148s
+tikitaka: s0 upd 560 rew/step=-0.0014 pi=-0.005 v=0.001 ent=6.621 t=151s
+tikitaka: s0 upd 570 rew/step=-0.0005 pi=-0.004 v=0.003 ent=6.644 t=154s
+tikitaka: s0 upd 580 rew/step=-0.0006 pi=-0.008 v=0.001 ent=6.578 t=156s
+tikitaka: s0 upd 590 rew/step=-0.0004 pi=-0.008 v=0.000 ent=6.456 t=159s
+tikitaka: s0 upd 600 rew/step=0.0024 pi=-0.003 v=0.012 ent=6.322 t=161s
+export: wrote training/snapshots/snap_s0_00600.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s0_00600.bin (total 3)
+tikitaka: [s0:motor:u600] score=0.452 poss=0.19 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.11 gkbox=0.00 push/min=7.8 shots/min=7.8 gd/ep=0.29
+tikitaka: s0 upd 610 rew/step=-0.0006 pi=-0.002 v=0.002 ent=6.455 t=165s
+tikitaka: s0 upd 620 rew/step=0.0003 pi=-0.003 v=0.006 ent=6.693 t=168s
+tikitaka: s0 upd 630 rew/step=0.0029 pi=-0.002 v=0.015 ent=6.692 t=170s
+tikitaka: s0 upd 640 rew/step=0.0005 pi=-0.003 v=0.004 ent=6.642 t=172s
+tikitaka: s0 upd 650 rew/step=-0.0004 pi=-0.001 v=0.004 ent=6.753 t=175s
+tikitaka: s0 upd 660 rew/step=0.0016 pi=-0.003 v=0.008 ent=6.744 t=177s
+tikitaka: s0 upd 670 rew/step=-0.0019 pi=-0.002 v=0.004 ent=6.674 t=180s
+tikitaka: s0 upd 680 rew/step=-0.0007 pi=-0.006 v=0.003 ent=6.439 t=182s
+tikitaka: s0 upd 690 rew/step=0.0002 pi=-0.006 v=0.005 ent=6.452 t=184s
+tikitaka: s0 upd 700 rew/step=0.0028 pi=-0.005 v=0.013 ent=6.520 t=187s
+tikitaka: s0 upd 710 rew/step=0.0032 pi=-0.013 v=0.013 ent=6.176 t=189s
+tikitaka: s0 upd 720 rew/step=0.0003 pi=-0.003 v=0.005 ent=6.375 t=192s
+tikitaka: [s0:motor:u720] score=0.491 poss=0.34 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.07 gkbox=0.00 push/min=4.9 shots/min=4.4 gd/ep=0.14
+tikitaka: s0 upd 730 rew/step=-0.0013 pi=-0.004 v=0.000 ent=5.935 t=194s
+tikitaka: s0 upd 740 rew/step=0.0009 pi=-0.004 v=0.008 ent=5.754 t=197s
+tikitaka: s0 upd 750 rew/step=0.0012 pi=-0.003 v=0.007 ent=6.282 t=199s
+tikitaka: s0 upd 760 rew/step=0.0001 pi=-0.005 v=0.002 ent=6.329 t=201s
+tikitaka: s0 upd 770 rew/step=0.0006 pi=-0.001 v=0.005 ent=6.424 t=204s
+tikitaka: s0 upd 780 rew/step=0.0009 pi=-0.004 v=0.004 ent=6.590 t=206s
+tikitaka: s0 upd 790 rew/step=-0.0010 pi=-0.002 v=0.000 ent=6.647 t=209s
+tikitaka: s0 upd 800 rew/step=-0.0013 pi=-0.005 v=0.000 ent=6.510 t=211s
+export: wrote training/snapshots/snap_s0_00800.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s0_00800.bin (total 4)
+tikitaka: s0 upd 810 rew/step=0.0019 pi=-0.004 v=0.008 ent=6.248 t=214s
+tikitaka: s0 upd 820 rew/step=0.0008 pi=-0.004 v=0.004 ent=6.449 t=217s
+tikitaka: s0 upd 830 rew/step=-0.0003 pi=-0.004 v=0.001 ent=6.457 t=219s
+tikitaka: s0 upd 840 rew/step=0.0032 pi=-0.004 v=0.014 ent=6.473 t=221s
+tikitaka: [s0:motor:u840] score=0.519 poss=0.64 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.17 gkbox=0.00 push/min=5.5 shots/min=1.1 gd/ep=0.04
+tikitaka: s0 upd 850 rew/step=-0.0015 pi=-0.004 v=0.001 ent=6.367 t=224s
+tikitaka: s0 upd 860 rew/step=0.0008 pi=-0.004 v=0.005 ent=6.262 t=226s
+tikitaka: s0 upd 870 rew/step=-0.0005 pi=-0.005 v=0.001 ent=6.419 t=229s
+tikitaka: s0 upd 880 rew/step=0.0014 pi=-0.005 v=0.008 ent=6.459 t=231s
+tikitaka: s0 upd 890 rew/step=0.0028 pi=-0.003 v=0.011 ent=6.408 t=234s
+tikitaka: s0 upd 900 rew/step=0.0002 pi=-0.002 v=0.001 ent=6.611 t=236s
+tikitaka: s0 upd 910 rew/step=-0.0004 pi=-0.002 v=0.001 ent=6.649 t=238s
+tikitaka: s0 upd 920 rew/step=-0.0013 pi=-0.004 v=0.000 ent=6.503 t=241s
+tikitaka: s0 upd 930 rew/step=-0.0001 pi=-0.004 v=0.003 ent=6.553 t=243s
+tikitaka: s0 upd 940 rew/step=-0.0004 pi=-0.004 v=0.000 ent=6.323 t=245s
+tikitaka: s0 upd 950 rew/step=0.0013 pi=-0.003 v=0.008 ent=6.289 t=248s
+tikitaka: s0 upd 960 rew/step=0.0004 pi=-0.008 v=0.001 ent=6.202 t=250s
+tikitaka: [s0:motor:u960] score=0.538 poss=0.53 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.10 gkbox=0.00 push/min=4.6 shots/min=4.4 gd/ep=0.00
+tikitaka: s0 upd 970 rew/step=-0.0014 pi=-0.003 v=0.000 ent=6.463 t=253s
+tikitaka: s0 upd 980 rew/step=-0.0003 pi=-0.004 v=0.003 ent=6.589 t=255s
+tikitaka: s0 upd 990 rew/step=0.0011 pi=-0.006 v=0.008 ent=6.491 t=258s
+tikitaka: s0 upd 1000 rew/step=0.0017 pi=-0.005 v=0.008 ent=6.236 t=260s
+export: wrote training/snapshots/snap_s0_01000.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s0_01000.bin (total 5)
+tikitaka: s0 upd 1010 rew/step=0.0000 pi=-0.004 v=0.001 ent=6.253 t=264s
+tikitaka: s0 upd 1020 rew/step=0.0018 pi=-0.008 v=0.008 ent=6.422 t=266s
+tikitaka: s0 upd 1030 rew/step=-0.0010 pi=-0.004 v=0.001 ent=6.607 t=268s
+tikitaka: s0 upd 1040 rew/step=-0.0013 pi=-0.003 v=0.000 ent=6.665 t=271s
+tikitaka: s0 upd 1050 rew/step=-0.0002 pi=-0.003 v=0.003 ent=6.577 t=273s
+tikitaka: s0 upd 1060 rew/step=0.0041 pi=-0.004 v=0.017 ent=6.456 t=275s
+tikitaka: s0 upd 1070 rew/step=-0.0000 pi=-0.006 v=0.001 ent=6.451 t=278s
+tikitaka: s0 upd 1080 rew/step=0.0025 pi=-0.007 v=0.011 ent=6.305 t=280s
+tikitaka: [s0:motor:u1080] score=0.652 poss=0.93 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.06 gkbox=0.00 push/min=4.3 shots/min=4.3 gd/ep=0.00
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.652 -> training/checkpoints/latest_best.bin
+tikitaka: s0 upd 1090 rew/step=-0.0020 pi=-0.007 v=0.004 ent=6.441 t=284s
+tikitaka: s0 upd 1100 rew/step=0.0013 pi=-0.004 v=0.007 ent=6.547 t=286s
+tikitaka: s0 upd 1110 rew/step=0.0017 pi=-0.002 v=0.007 ent=6.620 t=289s
+tikitaka: s0 upd 1120 rew/step=-0.0003 pi=-0.004 v=0.001 ent=6.648 t=291s
+tikitaka: s0 upd 1130 rew/step=0.0000 pi=-0.003 v=0.001 ent=6.585 t=294s
+tikitaka: s0 upd 1140 rew/step=0.0013 pi=-0.003 v=0.011 ent=6.608 t=296s
+tikitaka: s0 upd 1150 rew/step=-0.0010 pi=-0.001 v=0.001 ent=6.691 t=298s
+tikitaka: s0 upd 1160 rew/step=-0.0014 pi=-0.001 v=0.001 ent=6.669 t=301s
+tikitaka: s0 upd 1170 rew/step=0.0018 pi=-0.007 v=0.009 ent=6.605 t=303s
+tikitaka: s0 upd 1180 rew/step=-0.0003 pi=-0.004 v=0.001 ent=6.513 t=306s
+tikitaka: s0 upd 1190 rew/step=0.0005 pi=-0.009 v=0.005 ent=6.589 t=308s
+tikitaka: s0 upd 1200 rew/step=0.0051 pi=-0.003 v=0.019 ent=6.608 t=310s
+export: wrote training/snapshots/snap_s0_01200.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s0_01200.bin (total 6)
+tikitaka: [s0:motor:u1200] score=0.539 poss=0.52 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.07 gkbox=0.00 push/min=4.4 shots/min=4.4 gd/ep=0.14
+export: wrote internal/policy/weights/neural_v1.bin (1336980 bytes), internal/policy/testdata/golden_forward.bin (12 parity vectors)
+tikitaka: stage 0 end -> embedded internal/policy/weights/neural_v1.bin (with parity)
+tikitaka: STAGE 1 'rondo' ent=0.01 B=49 apx=[3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4] selfplay=False snaps=6
+tikitaka: s1 upd 10 rew/step=0.0005 pi=-0.002 v=0.012 ent=6.660 t=318s
+tikitaka: s1 upd 20 rew/step=0.0014 pi=-0.003 v=0.010 ent=6.638 t=320s
+tikitaka: s1 upd 30 rew/step=0.0020 pi=-0.003 v=0.004 ent=6.577 t=323s
+tikitaka: s1 upd 40 rew/step=0.0024 pi=-0.003 v=0.017 ent=6.588 t=326s
+tikitaka: s1 upd 50 rew/step=0.0040 pi=-0.003 v=0.015 ent=6.555 t=328s
+tikitaka: s1 upd 60 rew/step=0.0041 pi=-0.003 v=0.009 ent=6.522 t=331s
+tikitaka: s1 upd 70 rew/step=0.0048 pi=-0.004 v=0.014 ent=6.500 t=334s
+tikitaka: s1 upd 80 rew/step=0.0017 pi=-0.004 v=0.018 ent=6.398 t=336s
+tikitaka: s1 upd 90 rew/step=-0.0004 pi=-0.003 v=0.015 ent=6.400 t=339s
+tikitaka: s1 upd 100 rew/step=0.0060 pi=-0.001 v=0.006 ent=6.494 t=342s
+tikitaka: s1 upd 110 rew/step=0.0039 pi=-0.003 v=0.012 ent=6.479 t=345s
+tikitaka: s1 upd 120 rew/step=0.0024 pi=-0.002 v=0.011 ent=6.490 t=347s
+tikitaka: [s1:rondo:u120] score=0.460 poss=0.08 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.20 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=1.00
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.460 -> training/checkpoints/latest_best.bin
+tikitaka: s1 upd 130 rew/step=0.0040 pi=-0.003 v=0.008 ent=6.460 t=351s
+tikitaka: s1 upd 140 rew/step=0.0029 pi=-0.002 v=0.009 ent=6.509 t=354s
+tikitaka: s1 upd 150 rew/step=0.0044 pi=-0.003 v=0.007 ent=6.398 t=357s
+tikitaka: s1 upd 160 rew/step=0.0039 pi=-0.003 v=0.007 ent=6.156 t=359s
+tikitaka: s1 upd 170 rew/step=0.0016 pi=-0.003 v=0.016 ent=6.233 t=362s
+tikitaka: s1 upd 180 rew/step=0.0042 pi=-0.002 v=0.013 ent=6.391 t=365s
+tikitaka: s1 upd 190 rew/step=0.0024 pi=-0.001 v=0.012 ent=6.440 t=367s
+tikitaka: s1 upd 200 rew/step=0.0000 pi=-0.002 v=0.016 ent=6.550 t=370s
+export: wrote training/snapshots/snap_s1_00200.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_00200.bin (total 7)
+tikitaka: s1 upd 210 rew/step=-0.0005 pi=-0.003 v=0.013 ent=6.593 t=374s
+tikitaka: s1 upd 220 rew/step=0.0028 pi=-0.001 v=0.015 ent=6.593 t=376s
+tikitaka: s1 upd 230 rew/step=0.0007 pi=-0.002 v=0.013 ent=6.548 t=379s
+tikitaka: s1 upd 240 rew/step=0.0032 pi=-0.002 v=0.009 ent=6.443 t=382s
+tikitaka: [s1:rondo:u240] score=0.460 poss=0.23 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.16 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=-1.00
+tikitaka: s1 upd 250 rew/step=0.0046 pi=-0.002 v=0.015 ent=6.469 t=385s
+tikitaka: s1 upd 260 rew/step=0.0027 pi=-0.002 v=0.008 ent=6.606 t=387s
+tikitaka: s1 upd 270 rew/step=0.0046 pi=-0.002 v=0.008 ent=6.599 t=390s
+tikitaka: s1 upd 280 rew/step=0.0035 pi=-0.002 v=0.008 ent=6.679 t=393s
+tikitaka: s1 upd 290 rew/step=0.0032 pi=-0.002 v=0.006 ent=6.656 t=395s
+tikitaka: s1 upd 300 rew/step=0.0079 pi=-0.001 v=0.011 ent=6.665 t=398s
+tikitaka: s1 upd 310 rew/step=0.0076 pi=-0.001 v=0.016 ent=6.620 t=401s
+tikitaka: s1 upd 320 rew/step=0.0035 pi=-0.003 v=0.011 ent=6.598 t=404s
+tikitaka: s1 upd 330 rew/step=0.0033 pi=-0.002 v=0.010 ent=6.620 t=406s
+tikitaka: s1 upd 340 rew/step=0.0039 pi=-0.002 v=0.020 ent=6.635 t=409s
+tikitaka: s1 upd 350 rew/step=0.0012 pi=-0.001 v=0.011 ent=6.665 t=412s
+tikitaka: s1 upd 360 rew/step=0.0065 pi=-0.001 v=0.012 ent=6.613 t=414s
+tikitaka: [s1:rondo:u360] score=0.475 poss=0.13 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.27 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=1.00
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.475 -> training/checkpoints/latest_best.bin
+tikitaka: s1 upd 370 rew/step=0.0054 pi=-0.002 v=0.009 ent=6.575 t=418s
+tikitaka: s1 upd 380 rew/step=-0.0004 pi=-0.001 v=0.010 ent=6.568 t=421s
+tikitaka: s1 upd 390 rew/step=0.0042 pi=-0.001 v=0.013 ent=6.545 t=424s
+tikitaka: s1 upd 400 rew/step=0.0019 pi=-0.002 v=0.012 ent=6.584 t=426s
+export: wrote training/snapshots/snap_s1_00400.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_00400.bin (total 8)
+tikitaka: s1 upd 410 rew/step=0.0012 pi=-0.002 v=0.014 ent=6.557 t=430s
+tikitaka: s1 upd 420 rew/step=0.0034 pi=-0.001 v=0.015 ent=6.565 t=433s
+tikitaka: s1 upd 430 rew/step=0.0033 pi=-0.001 v=0.007 ent=6.634 t=435s
+tikitaka: s1 upd 440 rew/step=0.0040 pi=-0.001 v=0.013 ent=6.593 t=438s
+tikitaka: s1 upd 450 rew/step=0.0045 pi=-0.001 v=0.008 ent=6.535 t=441s
+tikitaka: s1 upd 460 rew/step=-0.0006 pi=-0.001 v=0.014 ent=6.470 t=443s
+tikitaka: s1 upd 470 rew/step=0.0023 pi=-0.001 v=0.017 ent=6.529 t=446s
+tikitaka: s1 upd 480 rew/step=0.0036 pi=-0.001 v=0.009 ent=6.591 t=449s
+tikitaka: [s1:rondo:u480] score=0.588 poss=0.62 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.26 gkbox=0.10 push/min=4.0 shots/min=3.8 gd/ep=-0.14
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.588 -> training/checkpoints/latest_best.bin
+tikitaka: s1 upd 490 rew/step=0.0009 pi=-0.002 v=0.009 ent=6.601 t=453s
+tikitaka: s1 upd 500 rew/step=0.0037 pi=-0.001 v=0.011 ent=6.568 t=456s
+tikitaka: s1 upd 510 rew/step=0.0059 pi=-0.001 v=0.007 ent=6.557 t=458s
+tikitaka: s1 upd 520 rew/step=0.0023 pi=-0.002 v=0.008 ent=6.588 t=461s
+tikitaka: s1 upd 530 rew/step=0.0013 pi=-0.001 v=0.017 ent=6.597 t=464s
+tikitaka: s1 upd 540 rew/step=0.0046 pi=-0.002 v=0.005 ent=6.601 t=466s
+tikitaka: s1 upd 550 rew/step=0.0070 pi=-0.002 v=0.005 ent=6.593 t=469s
+tikitaka: s1 upd 560 rew/step=0.0055 pi=-0.002 v=0.010 ent=6.478 t=472s
+tikitaka: s1 upd 570 rew/step=0.0010 pi=-0.001 v=0.017 ent=6.418 t=474s
+tikitaka: s1 upd 580 rew/step=0.0040 pi=-0.001 v=0.010 ent=6.491 t=477s
+tikitaka: s1 upd 590 rew/step=0.0018 pi=-0.001 v=0.013 ent=6.480 t=480s
+tikitaka: s1 upd 600 rew/step=0.0044 pi=-0.001 v=0.015 ent=6.455 t=482s
+export: wrote training/snapshots/snap_s1_00600.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_00600.bin (total 9)
+tikitaka: [s1:rondo:u600] score=0.547 poss=0.46 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.11 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.00
+tikitaka: s1 upd 610 rew/step=0.0016 pi=-0.002 v=0.011 ent=6.609 t=486s
+tikitaka: s1 upd 620 rew/step=0.0035 pi=-0.002 v=0.009 ent=6.652 t=489s
+tikitaka: s1 upd 630 rew/step=0.0060 pi=-0.001 v=0.007 ent=6.616 t=492s
+tikitaka: s1 upd 640 rew/step=0.0043 pi=-0.002 v=0.014 ent=6.589 t=494s
+tikitaka: s1 upd 650 rew/step=0.0016 pi=-0.001 v=0.006 ent=6.534 t=497s
+tikitaka: s1 upd 660 rew/step=0.0036 pi=-0.001 v=0.011 ent=6.593 t=500s
+tikitaka: s1 upd 670 rew/step=0.0081 pi=-0.002 v=0.016 ent=6.593 t=502s
+tikitaka: s1 upd 680 rew/step=0.0028 pi=-0.003 v=0.012 ent=6.576 t=505s
+tikitaka: s1 upd 690 rew/step=0.0062 pi=-0.002 v=0.015 ent=6.598 t=508s
+tikitaka: s1 upd 700 rew/step=0.0029 pi=-0.002 v=0.011 ent=6.561 t=510s
+tikitaka: s1 upd 710 rew/step=0.0045 pi=-0.002 v=0.011 ent=6.584 t=513s
+tikitaka: s1 upd 720 rew/step=0.0016 pi=-0.002 v=0.017 ent=6.576 t=516s
+tikitaka: [s1:rondo:u720] score=0.621 poss=0.72 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.10 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.00
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.621 -> training/checkpoints/latest_best.bin
+tikitaka: s1 upd 730 rew/step=0.0027 pi=-0.001 v=0.007 ent=6.640 t=520s
+tikitaka: s1 upd 740 rew/step=0.0045 pi=-0.001 v=0.013 ent=6.570 t=523s
+tikitaka: s1 upd 750 rew/step=0.0029 pi=-0.001 v=0.013 ent=6.589 t=525s
+tikitaka: s1 upd 760 rew/step=0.0002 pi=-0.001 v=0.011 ent=6.570 t=528s
+tikitaka: s1 upd 770 rew/step=0.0024 pi=-0.002 v=0.010 ent=6.539 t=531s
+tikitaka: s1 upd 780 rew/step=0.0038 pi=-0.002 v=0.008 ent=6.493 t=533s
+tikitaka: s1 upd 790 rew/step=0.0037 pi=-0.002 v=0.009 ent=6.556 t=536s
+tikitaka: s1 upd 800 rew/step=0.0037 pi=-0.001 v=0.010 ent=6.637 t=539s
+export: wrote training/snapshots/snap_s1_00800.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_00800.bin (total 10)
+tikitaka: s1 upd 810 rew/step=-0.0001 pi=-0.001 v=0.005 ent=6.630 t=542s
+tikitaka: s1 upd 820 rew/step=0.0005 pi=-0.001 v=0.019 ent=6.563 t=545s
+tikitaka: s1 upd 830 rew/step=0.0006 pi=-0.001 v=0.023 ent=6.640 t=548s
+tikitaka: s1 upd 840 rew/step=0.0029 pi=-0.001 v=0.009 ent=6.591 t=550s
+tikitaka: [s1:rondo:u840] score=0.421 poss=0.24 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.11 gkbox=0.00 push/min=4.2 shots/min=0.0 gd/ep=0.00
+tikitaka: s1 upd 850 rew/step=0.0085 pi=-0.001 v=0.006 ent=6.541 t=554s
+tikitaka: s1 upd 860 rew/step=0.0021 pi=-0.001 v=0.017 ent=6.583 t=556s
+tikitaka: s1 upd 870 rew/step=0.0042 pi=-0.001 v=0.017 ent=6.565 t=559s
+tikitaka: s1 upd 880 rew/step=0.0043 pi=-0.001 v=0.011 ent=6.581 t=562s
+tikitaka: s1 upd 890 rew/step=0.0041 pi=-0.001 v=0.013 ent=6.554 t=564s
+tikitaka: s1 upd 900 rew/step=0.0036 pi=-0.001 v=0.013 ent=6.589 t=567s
+tikitaka: s1 upd 910 rew/step=0.0076 pi=-0.001 v=0.007 ent=6.612 t=570s
+tikitaka: s1 upd 920 rew/step=0.0033 pi=-0.001 v=0.010 ent=6.631 t=572s
+tikitaka: s1 upd 930 rew/step=-0.0000 pi=-0.001 v=0.015 ent=6.576 t=575s
+tikitaka: s1 upd 940 rew/step=0.0032 pi=-0.002 v=0.011 ent=6.490 t=578s
+tikitaka: s1 upd 950 rew/step=0.0022 pi=-0.002 v=0.008 ent=6.499 t=580s
+tikitaka: s1 upd 960 rew/step=0.0060 pi=-0.001 v=0.009 ent=6.543 t=583s
+tikitaka: [s1:rondo:u960] score=0.507 poss=0.56 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.16 gkbox=0.18 push/min=3.9 shots/min=0.1 gd/ep=0.00
+tikitaka: s1 upd 970 rew/step=0.0019 pi=-0.002 v=0.010 ent=6.619 t=586s
+tikitaka: s1 upd 980 rew/step=0.0045 pi=-0.001 v=0.012 ent=6.588 t=589s
+tikitaka: s1 upd 990 rew/step=0.0013 pi=-0.002 v=0.009 ent=6.526 t=592s
+tikitaka: s1 upd 1000 rew/step=0.0029 pi=-0.001 v=0.018 ent=6.597 t=594s
+export: wrote training/snapshots/snap_s1_01000.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_01000.bin (total 11)
+tikitaka: s1 upd 1010 rew/step=0.0030 pi=-0.002 v=0.013 ent=6.641 t=598s
+tikitaka: s1 upd 1020 rew/step=0.0061 pi=-0.002 v=0.010 ent=6.643 t=601s
+tikitaka: s1 upd 1030 rew/step=0.0041 pi=-0.001 v=0.014 ent=6.550 t=603s
+tikitaka: s1 upd 1040 rew/step=0.0039 pi=-0.001 v=0.010 ent=6.595 t=606s
+tikitaka: s1 upd 1050 rew/step=0.0041 pi=-0.002 v=0.024 ent=6.637 t=609s
+tikitaka: s1 upd 1060 rew/step=0.0006 pi=-0.003 v=0.009 ent=6.622 t=611s
+tikitaka: s1 upd 1070 rew/step=0.0030 pi=-0.004 v=0.008 ent=6.619 t=614s
+tikitaka: s1 upd 1080 rew/step=0.0045 pi=-0.002 v=0.013 ent=6.614 t=617s
+tikitaka: [s1:rondo:u1080] score=0.403 poss=0.45 pass/min=0.0 realpass=0.00 ownT/O=1.00 crowd=0.09 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.00
+tikitaka: s1 upd 1090 rew/step=0.0001 pi=-0.003 v=0.008 ent=6.542 t=620s
+tikitaka: s1 upd 1100 rew/step=0.0065 pi=-0.002 v=0.008 ent=6.533 t=622s
+tikitaka: s1 upd 1110 rew/step=0.0044 pi=-0.002 v=0.008 ent=6.565 t=625s
+tikitaka: s1 upd 1120 rew/step=0.0051 pi=-0.002 v=0.012 ent=6.476 t=628s
+tikitaka: s1 upd 1130 rew/step=0.0033 pi=-0.002 v=0.007 ent=6.480 t=630s
+tikitaka: s1 upd 1140 rew/step=0.0020 pi=-0.001 v=0.011 ent=6.575 t=633s
+tikitaka: s1 upd 1150 rew/step=0.0008 pi=-0.002 v=0.017 ent=6.573 t=636s
+tikitaka: s1 upd 1160 rew/step=0.0052 pi=-0.001 v=0.007 ent=6.540 t=639s
+tikitaka: s1 upd 1170 rew/step=0.0050 pi=-0.002 v=0.008 ent=6.590 t=641s
+tikitaka: s1 upd 1180 rew/step=0.0041 pi=-0.001 v=0.008 ent=6.626 t=644s
+tikitaka: s1 upd 1190 rew/step=0.0035 pi=-0.001 v=0.010 ent=6.625 t=647s
+tikitaka: s1 upd 1200 rew/step=0.0048 pi=-0.001 v=0.012 ent=6.590 t=649s
+export: wrote training/snapshots/snap_s1_01200.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_01200.bin (total 12)
+tikitaka: [s1:rondo:u1200] score=0.501 poss=0.29 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.09 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.07
+tikitaka: s1 upd 1210 rew/step=0.0042 pi=-0.001 v=0.010 ent=6.504 t=653s
+tikitaka: s1 upd 1220 rew/step=0.0045 pi=-0.001 v=0.014 ent=6.559 t=656s
+tikitaka: s1 upd 1230 rew/step=0.0023 pi=-0.001 v=0.017 ent=6.542 t=659s
+tikitaka: s1 upd 1240 rew/step=0.0035 pi=-0.002 v=0.006 ent=6.562 t=661s
+tikitaka: s1 upd 1250 rew/step=0.0018 pi=-0.001 v=0.010 ent=6.562 t=664s
+tikitaka: s1 upd 1260 rew/step=0.0059 pi=-0.001 v=0.007 ent=6.550 t=667s
+tikitaka: s1 upd 1270 rew/step=0.0008 pi=-0.001 v=0.015 ent=6.562 t=669s
+tikitaka: s1 upd 1280 rew/step=0.0031 pi=-0.001 v=0.011 ent=6.595 t=672s
+tikitaka: s1 upd 1290 rew/step=0.0041 pi=-0.001 v=0.005 ent=6.615 t=675s
+tikitaka: s1 upd 1300 rew/step=0.0041 pi=-0.001 v=0.010 ent=6.640 t=677s
+tikitaka: s1 upd 1310 rew/step=0.0056 pi=-0.001 v=0.007 ent=6.644 t=680s
+tikitaka: s1 upd 1320 rew/step=0.0041 pi=-0.001 v=0.010 ent=6.688 t=683s
+tikitaka: [s1:rondo:u1320] score=0.478 poss=0.38 pass/min=0.0 realpass=0.00 ownT/O=0.33 crowd=0.25 gkbox=0.00 push/min=5.8 shots/min=3.6 gd/ep=-0.04
+tikitaka: s1 upd 1330 rew/step=0.0042 pi=-0.001 v=0.013 ent=6.682 t=686s
+tikitaka: s1 upd 1340 rew/step=0.0018 pi=-0.001 v=0.014 ent=6.679 t=689s
+tikitaka: s1 upd 1350 rew/step=0.0029 pi=-0.001 v=0.013 ent=6.685 t=691s
+tikitaka: s1 upd 1360 rew/step=0.0032 pi=-0.001 v=0.010 ent=6.657 t=694s
+tikitaka: s1 upd 1370 rew/step=0.0059 pi=-0.002 v=0.008 ent=6.646 t=697s
+tikitaka: s1 upd 1380 rew/step=0.0024 pi=-0.001 v=0.017 ent=6.654 t=699s
+tikitaka: s1 upd 1390 rew/step=0.0022 pi=-0.001 v=0.008 ent=6.611 t=702s
+tikitaka: s1 upd 1400 rew/step=0.0002 pi=-0.001 v=0.019 ent=6.555 t=705s
+export: wrote training/snapshots/snap_s1_01400.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_01400.bin (total 13)
+tikitaka: s1 upd 1410 rew/step=0.0035 pi=-0.002 v=0.013 ent=6.566 t=708s
+tikitaka: s1 upd 1420 rew/step=0.0014 pi=-0.001 v=0.012 ent=6.592 t=711s
+tikitaka: s1 upd 1430 rew/step=0.0017 pi=-0.002 v=0.014 ent=6.575 t=714s
+tikitaka: s1 upd 1440 rew/step=0.0057 pi=-0.001 v=0.009 ent=6.554 t=716s
+tikitaka: [s1:rondo:u1440] score=0.436 poss=0.09 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.47 gkbox=0.20 push/min=7.6 shots/min=3.8 gd/ep=0.00
+tikitaka: s1 upd 1450 rew/step=0.0032 pi=-0.002 v=0.016 ent=6.560 t=719s
+tikitaka: s1 upd 1460 rew/step=0.0018 pi=-0.002 v=0.008 ent=6.516 t=722s
+tikitaka: s1 upd 1470 rew/step=0.0016 pi=-0.001 v=0.009 ent=6.512 t=725s
+tikitaka: s1 upd 1480 rew/step=0.0043 pi=-0.001 v=0.013 ent=6.473 t=727s
+tikitaka: s1 upd 1490 rew/step=0.0018 pi=-0.001 v=0.017 ent=6.362 t=730s
+tikitaka: s1 upd 1500 rew/step=0.0029 pi=-0.002 v=0.007 ent=6.311 t=733s
+tikitaka: s1 upd 1510 rew/step=0.0027 pi=-0.001 v=0.010 ent=6.514 t=735s
+tikitaka: s1 upd 1520 rew/step=0.0037 pi=-0.002 v=0.006 ent=6.572 t=738s
+tikitaka: s1 upd 1530 rew/step=0.0067 pi=-0.002 v=0.005 ent=6.531 t=741s
+tikitaka: s1 upd 1540 rew/step=0.0045 pi=-0.002 v=0.004 ent=6.598 t=743s
+tikitaka: s1 upd 1550 rew/step=0.0044 pi=-0.002 v=0.009 ent=6.530 t=746s
+tikitaka: s1 upd 1560 rew/step=0.0089 pi=-0.003 v=0.008 ent=6.493 t=749s
+tikitaka: [s1:rondo:u1560] score=0.598 poss=0.64 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.10 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.00
+tikitaka: s1 upd 1570 rew/step=0.0054 pi=-0.003 v=0.013 ent=6.553 t=752s
+tikitaka: s1 upd 1580 rew/step=0.0065 pi=-0.003 v=0.005 ent=6.373 t=755s
+tikitaka: s1 upd 1590 rew/step=0.0066 pi=-0.003 v=0.007 ent=6.444 t=757s
+tikitaka: s1 upd 1600 rew/step=0.0025 pi=-0.002 v=0.007 ent=6.504 t=760s
+export: wrote training/snapshots/snap_s1_01600.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_01600.bin (total 14)
+tikitaka: s1 upd 1610 rew/step=0.0040 pi=-0.002 v=0.010 ent=6.318 t=763s
+tikitaka: s1 upd 1620 rew/step=0.0067 pi=-0.003 v=0.011 ent=6.338 t=766s
+tikitaka: s1 upd 1630 rew/step=0.0019 pi=-0.003 v=0.011 ent=6.293 t=769s
+tikitaka: s1 upd 1640 rew/step=0.0029 pi=-0.002 v=0.011 ent=6.521 t=771s
+tikitaka: s1 upd 1650 rew/step=0.0037 pi=-0.001 v=0.008 ent=6.615 t=774s
+tikitaka: s1 upd 1660 rew/step=0.0009 pi=-0.001 v=0.014 ent=6.632 t=777s
+tikitaka: s1 upd 1670 rew/step=0.0034 pi=-0.002 v=0.009 ent=6.576 t=779s
+tikitaka: s1 upd 1680 rew/step=0.0010 pi=-0.002 v=0.016 ent=6.540 t=782s
+tikitaka: [s1:rondo:u1680] score=0.475 poss=0.19 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.20 gkbox=0.00 push/min=5.2 shots/min=3.8 gd/ep=0.04
+tikitaka: s1 upd 1690 rew/step=0.0029 pi=-0.002 v=0.017 ent=6.508 t=785s
+tikitaka: s1 upd 1700 rew/step=0.0035 pi=-0.002 v=0.021 ent=6.504 t=788s
+tikitaka: s1 upd 1710 rew/step=0.0037 pi=-0.001 v=0.013 ent=6.572 t=791s
+tikitaka: s1 upd 1720 rew/step=0.0051 pi=-0.002 v=0.006 ent=6.607 t=793s
+tikitaka: s1 upd 1730 rew/step=0.0036 pi=-0.002 v=0.015 ent=6.612 t=796s
+tikitaka: s1 upd 1740 rew/step=0.0049 pi=-0.002 v=0.007 ent=6.594 t=799s
+tikitaka: s1 upd 1750 rew/step=0.0048 pi=-0.002 v=0.011 ent=6.645 t=801s
+tikitaka: s1 upd 1760 rew/step=0.0032 pi=-0.003 v=0.009 ent=6.581 t=804s
+tikitaka: s1 upd 1770 rew/step=0.0014 pi=-0.004 v=0.012 ent=6.516 t=807s
+tikitaka: s1 upd 1780 rew/step=0.0032 pi=-0.003 v=0.007 ent=6.489 t=809s
+tikitaka: s1 upd 1790 rew/step=0.0022 pi=-0.004 v=0.013 ent=6.466 t=812s
+tikitaka: s1 upd 1800 rew/step=0.0056 pi=-0.004 v=0.008 ent=6.448 t=815s
+export: wrote training/snapshots/snap_s1_01800.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_01800.bin (total 15)
+tikitaka: [s1:rondo:u1800] score=0.464 poss=0.21 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.20 gkbox=0.00 push/min=6.0 shots/min=3.8 gd/ep=-0.68
+tikitaka: s1 upd 1810 rew/step=0.0053 pi=-0.003 v=0.009 ent=6.567 t=819s
+tikitaka: s1 upd 1820 rew/step=0.0048 pi=-0.003 v=0.004 ent=6.504 t=821s
+tikitaka: s1 upd 1830 rew/step=0.0055 pi=-0.002 v=0.012 ent=6.601 t=824s
+tikitaka: s1 upd 1840 rew/step=0.0066 pi=-0.002 v=0.009 ent=6.617 t=827s
+tikitaka: s1 upd 1850 rew/step=0.0017 pi=-0.002 v=0.009 ent=6.636 t=829s
+tikitaka: s1 upd 1860 rew/step=0.0019 pi=-0.003 v=0.013 ent=6.629 t=832s
+tikitaka: s1 upd 1870 rew/step=0.0036 pi=-0.002 v=0.013 ent=6.604 t=835s
+tikitaka: s1 upd 1880 rew/step=0.0042 pi=-0.002 v=0.022 ent=6.515 t=837s
+tikitaka: s1 upd 1890 rew/step=0.0032 pi=-0.004 v=0.014 ent=6.587 t=840s
+tikitaka: s1 upd 1900 rew/step=0.0041 pi=-0.001 v=0.015 ent=6.622 t=843s
+tikitaka: s1 upd 1910 rew/step=0.0017 pi=-0.001 v=0.013 ent=6.554 t=845s
+tikitaka: s1 upd 1920 rew/step=0.0040 pi=-0.001 v=0.006 ent=6.584 t=848s
+tikitaka: [s1:rondo:u1920] score=0.452 poss=0.12 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.27 gkbox=0.00 push/min=4.4 shots/min=3.8 gd/ep=0.00
+tikitaka: s1 upd 1930 rew/step=0.0030 pi=-0.001 v=0.009 ent=6.561 t=851s
+tikitaka: s1 upd 1940 rew/step=0.0047 pi=-0.001 v=0.010 ent=6.595 t=854s
+tikitaka: s1 upd 1950 rew/step=0.0038 pi=-0.002 v=0.010 ent=6.554 t=857s
+tikitaka: s1 upd 1960 rew/step=0.0003 pi=-0.002 v=0.012 ent=6.535 t=859s
+tikitaka: s1 upd 1970 rew/step=0.0046 pi=-0.001 v=0.008 ent=6.545 t=862s
+tikitaka: s1 upd 1980 rew/step=0.0041 pi=-0.002 v=0.011 ent=6.607 t=865s
+tikitaka: s1 upd 1990 rew/step=0.0070 pi=-0.001 v=0.007 ent=6.608 t=867s
+tikitaka: s1 upd 2000 rew/step=0.0044 pi=-0.003 v=0.012 ent=6.556 t=870s
+export: wrote training/snapshots/snap_s1_02000.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_02000.bin (total 16)
+tikitaka: s1 upd 2010 rew/step=0.0030 pi=-0.002 v=0.005 ent=6.574 t=873s
+tikitaka: s1 upd 2020 rew/step=0.0031 pi=-0.001 v=0.007 ent=6.613 t=876s
+tikitaka: s1 upd 2030 rew/step=0.0047 pi=-0.002 v=0.007 ent=6.594 t=879s
+tikitaka: s1 upd 2040 rew/step=0.0049 pi=-0.001 v=0.013 ent=6.653 t=882s
+tikitaka: [s1:rondo:u2040] score=0.454 poss=0.27 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.11 gkbox=0.12 push/min=3.9 shots/min=1.7 gd/ep=0.00
+tikitaka: s1 upd 2050 rew/step=0.0012 pi=-0.002 v=0.012 ent=6.640 t=885s
+tikitaka: s1 upd 2060 rew/step=0.0001 pi=-0.002 v=0.007 ent=6.604 t=887s
+tikitaka: s1 upd 2070 rew/step=0.0007 pi=-0.002 v=0.011 ent=6.593 t=890s
+tikitaka: s1 upd 2080 rew/step=0.0001 pi=-0.002 v=0.016 ent=6.577 t=893s
+tikitaka: s1 upd 2090 rew/step=0.0043 pi=-0.002 v=0.010 ent=6.626 t=895s
+tikitaka: s1 upd 2100 rew/step=0.0005 pi=-0.001 v=0.023 ent=6.617 t=898s
+tikitaka: s1 upd 2110 rew/step=0.0059 pi=-0.002 v=0.007 ent=6.575 t=901s
+tikitaka: s1 upd 2120 rew/step=0.0020 pi=-0.003 v=0.007 ent=6.481 t=903s
+tikitaka: s1 upd 2130 rew/step=-0.0002 pi=-0.002 v=0.011 ent=6.610 t=906s
+tikitaka: s1 upd 2140 rew/step=0.0026 pi=-0.002 v=0.007 ent=6.585 t=909s
+tikitaka: s1 upd 2150 rew/step=0.0013 pi=-0.003 v=0.011 ent=6.535 t=911s
+tikitaka: s1 upd 2160 rew/step=0.0024 pi=-0.002 v=0.011 ent=6.586 t=914s
+tikitaka: [s1:rondo:u2160] score=0.364 poss=0.32 pass/min=0.0 realpass=0.00 ownT/O=1.00 crowd=0.24 gkbox=0.13 push/min=3.8 shots/min=3.8 gd/ep=0.00
+tikitaka: s1 upd 2170 rew/step=-0.0034 pi=-0.003 v=0.010 ent=6.616 t=917s
+tikitaka: s1 upd 2180 rew/step=0.0025 pi=-0.002 v=0.011 ent=6.609 t=920s
+tikitaka: s1 upd 2190 rew/step=-0.0006 pi=-0.003 v=0.021 ent=6.604 t=923s
+tikitaka: s1 upd 2200 rew/step=-0.0005 pi=-0.002 v=0.015 ent=6.521 t=925s
+export: wrote training/snapshots/snap_s1_02200.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_02200.bin (total 17)
+tikitaka: s1 upd 2210 rew/step=0.0018 pi=-0.002 v=0.012 ent=6.564 t=929s
+tikitaka: s1 upd 2220 rew/step=0.0021 pi=-0.002 v=0.016 ent=6.559 t=932s
+tikitaka: s1 upd 2230 rew/step=0.0016 pi=-0.004 v=0.019 ent=6.614 t=934s
+tikitaka: s1 upd 2240 rew/step=0.0049 pi=-0.002 v=0.009 ent=6.634 t=937s
+tikitaka: s1 upd 2250 rew/step=0.0038 pi=-0.002 v=0.006 ent=6.560 t=940s
+tikitaka: s1 upd 2260 rew/step=-0.0001 pi=-0.001 v=0.022 ent=6.616 t=942s
+tikitaka: s1 upd 2270 rew/step=0.0016 pi=-0.002 v=0.012 ent=6.637 t=945s
+tikitaka: s1 upd 2280 rew/step=0.0031 pi=-0.001 v=0.006 ent=6.635 t=948s
+tikitaka: [s1:rondo:u2280] score=0.519 poss=0.36 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.14 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.00
+tikitaka: s1 upd 2290 rew/step=0.0006 pi=-0.001 v=0.012 ent=6.639 t=951s
+tikitaka: s1 upd 2300 rew/step=0.0043 pi=-0.001 v=0.011 ent=6.648 t=953s
+tikitaka: s1 upd 2310 rew/step=0.0028 pi=-0.002 v=0.005 ent=6.609 t=956s
+tikitaka: s1 upd 2320 rew/step=0.0058 pi=-0.002 v=0.008 ent=6.589 t=959s
+tikitaka: s1 upd 2330 rew/step=0.0043 pi=-0.002 v=0.018 ent=6.604 t=961s
+tikitaka: s1 upd 2340 rew/step=0.0002 pi=-0.002 v=0.022 ent=6.606 t=964s
+tikitaka: s1 upd 2350 rew/step=0.0054 pi=-0.003 v=0.004 ent=6.601 t=967s
+tikitaka: s1 upd 2360 rew/step=0.0043 pi=-0.002 v=0.008 ent=6.594 t=969s
+tikitaka: s1 upd 2370 rew/step=0.0034 pi=-0.002 v=0.010 ent=6.595 t=972s
+tikitaka: s1 upd 2380 rew/step=0.0072 pi=-0.002 v=0.009 ent=6.587 t=975s
+tikitaka: s1 upd 2390 rew/step=-0.0005 pi=-0.004 v=0.013 ent=6.560 t=977s
+tikitaka: s1 upd 2400 rew/step=0.0041 pi=-0.002 v=0.015 ent=6.561 t=980s
+export: wrote training/snapshots/snap_s1_02400.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_02400.bin (total 18)
+tikitaka: [s1:rondo:u2400] score=0.435 poss=0.12 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.13 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=-0.75
+tikitaka: s1 upd 2410 rew/step=0.0023 pi=-0.002 v=0.015 ent=6.583 t=984s
+tikitaka: s1 upd 2420 rew/step=0.0039 pi=-0.002 v=0.007 ent=6.559 t=987s
+tikitaka: s1 upd 2430 rew/step=0.0009 pi=-0.003 v=0.007 ent=6.573 t=989s
+tikitaka: s1 upd 2440 rew/step=0.0031 pi=-0.002 v=0.010 ent=6.569 t=992s
+tikitaka: s1 upd 2450 rew/step=0.0030 pi=-0.004 v=0.009 ent=6.559 t=995s
+tikitaka: s1 upd 2460 rew/step=0.0028 pi=-0.003 v=0.012 ent=6.497 t=997s
+tikitaka: s1 upd 2470 rew/step=0.0009 pi=-0.002 v=0.009 ent=6.365 t=1000s
+tikitaka: s1 upd 2480 rew/step=0.0032 pi=-0.002 v=0.009 ent=6.286 t=1003s
+tikitaka: s1 upd 2490 rew/step=0.0023 pi=-0.003 v=0.006 ent=6.257 t=1005s
+tikitaka: s1 upd 2500 rew/step=0.0010 pi=-0.002 v=0.012 ent=6.394 t=1008s
+tikitaka: s1 upd 2510 rew/step=0.0076 pi=-0.002 v=0.007 ent=6.584 t=1011s
+tikitaka: s1 upd 2520 rew/step=0.0028 pi=-0.004 v=0.013 ent=6.491 t=1013s
+tikitaka: [s1:rondo:u2520] score=0.681 poss=0.95 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.10 gkbox=0.08 push/min=3.8 shots/min=3.8 gd/ep=0.00
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.681 -> training/checkpoints/latest_best.bin
+tikitaka: s1 upd 2530 rew/step=-0.0014 pi=-0.003 v=0.008 ent=6.469 t=1017s
+tikitaka: s1 upd 2540 rew/step=0.0058 pi=-0.003 v=0.012 ent=6.518 t=1020s
+tikitaka: s1 upd 2550 rew/step=0.0001 pi=-0.003 v=0.010 ent=6.538 t=1022s
+tikitaka: s1 upd 2560 rew/step=0.0013 pi=-0.003 v=0.013 ent=6.484 t=1025s
+tikitaka: s1 upd 2570 rew/step=0.0004 pi=-0.002 v=0.009 ent=6.539 t=1028s
+tikitaka: s1 upd 2580 rew/step=0.0047 pi=-0.002 v=0.018 ent=6.566 t=1030s
+tikitaka: s1 upd 2590 rew/step=0.0047 pi=-0.002 v=0.009 ent=6.602 t=1033s
+tikitaka: s1 upd 2600 rew/step=0.0019 pi=-0.003 v=0.012 ent=6.578 t=1036s
+export: wrote training/snapshots/snap_s1_02600.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_02600.bin (total 19)
+tikitaka: s1 upd 2610 rew/step=0.0031 pi=-0.002 v=0.010 ent=6.576 t=1039s
+tikitaka: s1 upd 2620 rew/step=0.0054 pi=-0.003 v=0.007 ent=6.566 t=1042s
+tikitaka: s1 upd 2630 rew/step=0.0048 pi=-0.001 v=0.007 ent=6.566 t=1045s
+tikitaka: s1 upd 2640 rew/step=0.0030 pi=-0.002 v=0.013 ent=6.577 t=1047s
+tikitaka: [s1:rondo:u2640] score=0.527 poss=0.29 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.23 gkbox=0.00 push/min=7.5 shots/min=3.8 gd/ep=1.00
+tikitaka: s1 upd 2650 rew/step=0.0007 pi=-0.003 v=0.010 ent=6.522 t=1050s
+tikitaka: s1 upd 2660 rew/step=0.0072 pi=-0.002 v=0.006 ent=6.539 t=1053s
+tikitaka: s1 upd 2670 rew/step=0.0037 pi=-0.002 v=0.006 ent=6.531 t=1056s
+tikitaka: s1 upd 2680 rew/step=0.0067 pi=-0.002 v=0.005 ent=6.569 t=1058s
+tikitaka: s1 upd 2690 rew/step=0.0034 pi=-0.002 v=0.006 ent=6.558 t=1061s
+tikitaka: s1 upd 2700 rew/step=0.0018 pi=-0.002 v=0.011 ent=6.571 t=1064s
+tikitaka: s1 upd 2710 rew/step=0.0042 pi=-0.002 v=0.013 ent=6.515 t=1066s
+tikitaka: s1 upd 2720 rew/step=0.0017 pi=-0.002 v=0.023 ent=6.535 t=1069s
+tikitaka: s1 upd 2730 rew/step=0.0046 pi=-0.003 v=0.006 ent=6.504 t=1072s
+tikitaka: s1 upd 2740 rew/step=-0.0019 pi=-0.002 v=0.009 ent=6.492 t=1074s
+tikitaka: s1 upd 2750 rew/step=0.0008 pi=-0.002 v=0.013 ent=6.531 t=1077s
+tikitaka: s1 upd 2760 rew/step=0.0057 pi=-0.003 v=0.013 ent=6.466 t=1080s
+tikitaka: [s1:rondo:u2760] score=0.514 poss=0.31 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.19 gkbox=0.05 push/min=7.2 shots/min=4.0 gd/ep=0.18
+tikitaka: s1 upd 2770 rew/step=0.0020 pi=-0.003 v=0.015 ent=6.321 t=1083s
+tikitaka: s1 upd 2780 rew/step=0.0026 pi=-0.003 v=0.009 ent=6.352 t=1086s
+tikitaka: s1 upd 2790 rew/step=-0.0004 pi=-0.002 v=0.012 ent=6.400 t=1088s
+tikitaka: s1 upd 2800 rew/step=-0.0014 pi=-0.003 v=0.014 ent=6.446 t=1091s
+export: wrote training/snapshots/snap_s1_02800.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_02800.bin (total 20)
+tikitaka: s1 upd 2810 rew/step=0.0052 pi=-0.002 v=0.007 ent=6.532 t=1095s
+tikitaka: s1 upd 2820 rew/step=0.0018 pi=-0.003 v=0.012 ent=6.540 t=1097s
+tikitaka: s1 upd 2830 rew/step=0.0030 pi=-0.002 v=0.012 ent=6.577 t=1100s
+tikitaka: s1 upd 2840 rew/step=0.0055 pi=-0.002 v=0.009 ent=6.527 t=1102s
+tikitaka: s1 upd 2850 rew/step=0.0033 pi=-0.002 v=0.007 ent=6.572 t=1105s
+tikitaka: s1 upd 2860 rew/step=0.0069 pi=-0.002 v=0.008 ent=6.528 t=1108s
+tikitaka: s1 upd 2870 rew/step=0.0022 pi=-0.002 v=0.013 ent=6.522 t=1110s
+tikitaka: s1 upd 2880 rew/step=0.0008 pi=-0.002 v=0.018 ent=6.547 t=1113s
+tikitaka: [s1:rondo:u2880] score=0.642 poss=0.79 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.14 gkbox=0.00 push/min=4.4 shots/min=3.8 gd/ep=-0.07
+tikitaka: s1 upd 2890 rew/step=0.0051 pi=-0.002 v=0.004 ent=6.507 t=1116s
+tikitaka: s1 upd 2900 rew/step=0.0067 pi=-0.002 v=0.010 ent=6.461 t=1119s
+tikitaka: s1 upd 2910 rew/step=0.0036 pi=-0.002 v=0.015 ent=6.440 t=1122s
+tikitaka: s1 upd 2920 rew/step=0.0066 pi=-0.002 v=0.011 ent=6.302 t=1124s
+tikitaka: s1 upd 2930 rew/step=0.0085 pi=-0.003 v=0.006 ent=5.948 t=1127s
+tikitaka: s1 upd 2940 rew/step=0.0038 pi=-0.002 v=0.014 ent=6.314 t=1130s
+tikitaka: s1 upd 2950 rew/step=0.0033 pi=-0.002 v=0.010 ent=6.484 t=1132s
+tikitaka: s1 upd 2960 rew/step=-0.0004 pi=-0.002 v=0.010 ent=6.449 t=1135s
+tikitaka: s1 upd 2970 rew/step=0.0013 pi=-0.002 v=0.017 ent=6.481 t=1138s
+tikitaka: s1 upd 2980 rew/step=0.0022 pi=-0.002 v=0.013 ent=6.440 t=1140s
+tikitaka: s1 upd 2990 rew/step=0.0027 pi=-0.002 v=0.014 ent=6.461 t=1143s
+tikitaka: s1 upd 3000 rew/step=0.0030 pi=-0.003 v=0.008 ent=6.484 t=1146s
+export: wrote training/snapshots/snap_s1_03000.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s1_03000.bin (total 21)
+tikitaka: [s1:rondo:u3000] score=0.491 poss=0.25 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.09 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.00
+export: wrote internal/policy/weights/neural_v1.bin (1336980 bytes), internal/policy/testdata/golden_forward.bin (12 parity vectors)
+tikitaka: stage 1 end -> embedded internal/policy/weights/neural_v1.bin (with parity)
+tikitaka: STAGE 2 'possession' ent=0.006 B=70 apx=[4, 6, 4, 6, 4, 6, 4, 6, 4, 6, 4, 6, 4, 6] selfplay=True snaps=21
+tikitaka: s2 upd 10 rew/step=0.0058 pi=-0.001 v=0.016 ent=6.590 t=1176s
+tikitaka: s2 upd 20 rew/step=0.0044 pi=-0.001 v=0.019 ent=6.625 t=1202s
+tikitaka: s2 upd 30 rew/step=0.0036 pi=-0.001 v=0.014 ent=6.601 t=1227s
+tikitaka: s2 upd 40 rew/step=0.0088 pi=-0.001 v=0.005 ent=6.601 t=1253s
+tikitaka: s2 upd 50 rew/step=0.0091 pi=-0.001 v=0.005 ent=6.578 t=1279s
+tikitaka: s2 upd 60 rew/step=0.0086 pi=-0.001 v=0.010 ent=6.615 t=1304s
+tikitaka: s2 upd 70 rew/step=0.0043 pi=-0.001 v=0.012 ent=6.662 t=1330s
+tikitaka: s2 upd 80 rew/step=0.0109 pi=-0.001 v=0.006 ent=6.650 t=1355s
+tikitaka: s2 upd 90 rew/step=0.0050 pi=-0.001 v=0.014 ent=6.591 t=1381s
+tikitaka: s2 upd 100 rew/step=0.0093 pi=-0.001 v=0.014 ent=6.634 t=1407s
+tikitaka: s2 upd 110 rew/step=0.0105 pi=-0.001 v=0.010 ent=6.634 t=1433s
+tikitaka: s2 upd 120 rew/step=0.0097 pi=-0.001 v=0.017 ent=6.627 t=1458s
+tikitaka: [s2:possession:u120] score=0.676 poss=0.98 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.32 gkbox=0.21 push/min=3.5 shots/min=2.9 gd/ep=0.32
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.676 -> training/checkpoints/latest_best.bin
+tikitaka: s2 upd 130 rew/step=0.0113 pi=-0.001 v=0.006 ent=6.622 t=1490s
+tikitaka: s2 upd 140 rew/step=0.0071 pi=-0.003 v=0.006 ent=6.531 t=1516s
+tikitaka: s2 upd 150 rew/step=0.0075 pi=-0.001 v=0.009 ent=6.620 t=1541s
+tikitaka: s2 upd 160 rew/step=0.0084 pi=-0.001 v=0.008 ent=6.603 t=1567s
+tikitaka: s2 upd 170 rew/step=0.0080 pi=-0.001 v=0.007 ent=6.557 t=1593s
+tikitaka: s2 upd 180 rew/step=0.0110 pi=-0.001 v=0.010 ent=6.567 t=1618s
+tikitaka: s2 upd 190 rew/step=0.0132 pi=-0.001 v=0.009 ent=6.539 t=1644s
+tikitaka: s2 upd 200 rew/step=0.0114 pi=-0.001 v=0.005 ent=6.556 t=1669s
+export: wrote training/snapshots/snap_s2_00200.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s2_00200.bin (total 22)
+tikitaka: s2 upd 210 rew/step=0.0103 pi=-0.001 v=0.006 ent=6.499 t=1696s
+tikitaka: s2 upd 220 rew/step=0.0115 pi=-0.001 v=0.013 ent=6.492 t=1721s
+tikitaka: s2 upd 230 rew/step=0.0119 pi=-0.001 v=0.003 ent=6.428 t=1747s
+tikitaka: s2 upd 240 rew/step=0.0124 pi=-0.002 v=0.004 ent=6.409 t=1772s
+tikitaka: [s2:possession:u240] score=0.676 poss=1.00 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.29 gkbox=0.00 push/min=4.0 shots/min=2.8 gd/ep=0.00
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.676 -> training/checkpoints/latest_best.bin
+tikitaka: s2 upd 250 rew/step=0.0119 pi=-0.001 v=0.004 ent=6.298 t=1805s
+tikitaka: s2 upd 260 rew/step=0.0115 pi=-0.001 v=0.001 ent=6.378 t=1830s
+tikitaka: s2 upd 270 rew/step=0.0114 pi=-0.002 v=0.006 ent=6.274 t=1856s
+tikitaka: s2 upd 280 rew/step=0.0111 pi=-0.001 v=0.002 ent=6.274 t=1882s
+tikitaka: s2 upd 290 rew/step=0.0124 pi=-0.001 v=0.003 ent=6.276 t=1907s
+tikitaka: s2 upd 300 rew/step=0.0107 pi=-0.002 v=0.005 ent=6.363 t=1933s
+tikitaka: s2 upd 310 rew/step=0.0106 pi=-0.001 v=0.006 ent=6.315 t=1958s
+tikitaka: s2 upd 320 rew/step=0.0054 pi=-0.002 v=0.011 ent=6.282 t=1984s
+tikitaka: s2 upd 330 rew/step=0.0099 pi=-0.001 v=0.003 ent=6.555 t=2010s
+tikitaka: s2 upd 340 rew/step=0.0102 pi=-0.001 v=0.008 ent=6.527 t=2035s
+tikitaka: s2 upd 350 rew/step=0.0125 pi=-0.001 v=0.006 ent=6.470 t=2061s
+tikitaka: s2 upd 360 rew/step=0.0127 pi=-0.001 v=0.006 ent=6.450 t=2087s
+tikitaka: [s2:possession:u360] score=0.693 poss=0.97 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.20 gkbox=0.00 push/min=3.8 shots/min=3.8 gd/ep=0.07
+export: wrote training/checkpoints/latest_best.bin (1336980 bytes), parity skipped
+tikitaka: NEW BEST score=0.693 -> training/checkpoints/latest_best.bin
+tikitaka: s2 upd 370 rew/step=0.0110 pi=-0.001 v=0.004 ent=6.432 t=2121s
+tikitaka: s2 upd 380 rew/step=0.0101 pi=-0.001 v=0.003 ent=6.317 t=2146s
+tikitaka: s2 upd 390 rew/step=0.0112 pi=-0.001 v=0.004 ent=6.050 t=2172s
+tikitaka: s2 upd 400 rew/step=0.0103 pi=-0.002 v=0.009 ent=6.018 t=2197s
+export: wrote training/snapshots/snap_s2_00400.bin (1336980 bytes), parity skipped
+tikitaka: + snapshot training/snapshots/snap_s2_00400.bin (total 23)
+tikitaka: s2 upd 410 rew/step=0.0106 pi=-0.001 v=0.004 ent=6.087 t=2224s
+tikitaka: s2 upd 420 rew/step=0.0107 pi=-0.001 v=0.001 ent=5.823 t=2249s
+tikitaka: s2 upd 430 rew/step=0.0104 pi=-0.001 v=0.002 ent=6.117 t=2275s
+tikitaka: s2 upd 440 rew/step=0.0115 pi=-0.002 v=0.001 ent=6.258 t=2300s
+tikitaka: s2 upd 450 rew/step=0.0122 pi=-0.001 v=0.004 ent=6.271 t=2326s
+tikitaka: s2 upd 460 rew/step=0.0118 pi=-0.001 v=0.002 ent=6.206 t=2352s
+tikitaka: s2 upd 470 rew/step=0.0111 pi=-0.001 v=0.005 ent=6.273 t=2378s
+tikitaka: s2 upd 480 rew/step=0.0121 pi=-0.001 v=0.004 ent=6.183 t=2404s
+tikitaka: [s2:possession:u480] score=0.675 poss=0.99 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=0.14 gkbox=0.00 push/min=3.8 shots/min=2.5 gd/ep=0.00
+tikitaka: s2 upd 490 rew/step=0.0103 pi=-0.002 v=0.005 ent=5.995 t=2436s
+tikitaka: s2 upd 500 rew/step=0.0112 pi=-0.001 v=0.004 ent=6.139 t=2462s
+tikitaka: s2 upd 510 rew/step=0.0117 pi=-0.002 v=0.006 ent=6.246 t=2487s
+tikitaka: s2 upd 520 rew/step=0.0077 pi=-0.001 v=0.008 ent=6.034 t=2513s

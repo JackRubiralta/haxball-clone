@@ -1,0 +1,325 @@
+
+[2026-06-19 17:34:51] STAGE s1 'collect' u280
+  motor: passed gate at u200 (shots/min~4.4, gd/ep 0.29) — OK.
+  collect: score 0.269 FLAT u100->u280, poss=0.00, receive_per_min=0.00 (STUCK at u200, floor 2.0).
+  ent still ~6.5 (near-random policy), rew/step ~-0.0001.
+  VERDICT: collect STUCK — agent not acquiring the rolling ball; fundamentals not emerging.
+  REC: if it stays flat by ~u500, soften collect gate (floor 2.0 -> ~1.0) and/or lower ent target
+       (0.012 is set but effective entropy stuck high -> reward signal too sparse). Consider
+       shaping reward for ball-approach distance, or guided kickstart toward the ball.
+=== Fri Jun 19 05:59:19 PM EDT 2026 ===
+STAGE 3 'hold' (just entered, ~u40). Prior stages PASSED gates: motor(u200 score=0.59 shots/min=4.3 gd/ep=0.55), collect(u300 poss=1.00 score=0.55 -- note a STUCK? flag at u200 poss=0.00 but recovered to gate), firsttouch(u300 poss=1.00 score=0.71 gd/ep=1.00 NEW BEST).
+VERDICT: improving -- fundamentals (motor/collect/firsttouch) learned, passing not expected yet (pass/min=0 normal pre-rondo). REC: none; watch 'hold' for possession-under-pressure and the rondo stages for pass_attempts emerging.
+=== Fri Jun 19 06:02:32 PM EDT 2026 ===
+STAGE 4 'carry' @u250. hold PASSED gate u500 (poss=0.48, but ownT/O=1.00 -- giving ball away in own third under pressure, a flag for later defense/possession stages). carry climbing well: u100 score=0.24 poss=0.32 -> u200 score=0.54 poss=0.61 gd/ep=0.29 NEW BEST, ownT/O dropped 0.87->0.00. crowd=0.49 (bunching). pass/min still 0 (expected, rondo not reached).
+VERDICT: improving. carry lesson (possession+goal-diff) is being learned. REC: none yet; the upcoming rondo3v1 (s5) is the real test -- watch for pass_attempts emerging. If pass/min & pass_attempts stay ~0 through rondo, recommend guided-bootstrapping pass kickstart.
+=== Fri Jun 19 06:05:56 PM EDT 2026 ===
+STAGE 5 'rondo3v1' @u640. *** PASSING NOT EMERGING *** carry passed gate earlier. rondo3v1 STUCK? flagged at u400, u500, u600: pass_per_min=0.16/0.00/0.08 vs floor 2.0. poss oscillates 0.22-0.56, score flat ~0.50 (NEW BESTs are marginal 0.514->0.544). entropy stuck high ~6.2-6.5 (policy basically not committing). gd/ep noisy. realpass=1.00 only on the rare tick a release happens -- so the agent CAN complete a pass but almost never attempts one; it hoards/dribbles and push-spams (push/min 3.5-6.7).
+VERDICT: STUCK / degenerate (ball-hoarding, no pass attempts). This is the failure mode the run guards against.
+REC: trigger the GUIDED-BOOTSTRAPPING pass kickstart for rondo stages -- seed pass_attempts via a shaped reward / scripted demonstrations so a release-toward-teammate gets positive credit (current reward likely rewards retention only -> local optimum of dribbling). Also: the high stuck entropy suggests the pass action's advantage is ~0; consider an explicit pass-attempt bonus or temporarily lowering ent target. Without a pass kickstart, rondo3v1->4v2->buildup will all stall on pass/min floors.
+
+
+=== [iter 0 @ 22:47:00Z] s5 rondo3v1 startup ===
+python PID 47781 alive. Warm-resumed from tikitaka.pt.best.
+s5 upd 10->110: rew/step ~0.01 flat, ent 6.28->3.06 (collapsing healthily),
+ovr 0.73->0.58 (annealing as designed). pi~-0.03, v~0.01.
+No eval panel yet. pass/min unknown.
+VERDICT: healthy warmup; need first eval to judge pass emergence.
+
+=== [iter 1 @ 22:49:24Z] s5 rondo3v1 u120-u470 ===
+Eval panels (ovr annealing 0.57->0.21):
+ u120 ovr.57: score .500 poss .53 pass/min 0.0 realpass 0 push 7.6 shots 6.2 gd 1.29 NEW BEST
+ u240 ovr.39: score .439 poss .37 pass/min 0.0 realpass 0 push 6.3 shots 4.3 gd 0.93
+ u360 ovr.21: score .404 poss .30 pass/min 0.0 realpass 0 push 3.3 shots 0.0 gd 0.00
+ent 6.28->~2.0 (collapsed). ovr now 0.05.
+ALERT: pass/min FLAT 0.0 the whole time; greedy eval NEVER produces a pass.
+As ovr drops, poss/score/shots all DECAY -> teacher override was carrying it;
+policy did not internalize passing. crowd~0.15, gkbox rising (.02->.22 = drifting to box).
+VERDICT: passing NOT emerging; classic override-carry collapse.
+RECOMMEND: add behavior-clone/KL-to-teacher term that PERSISTS (not just action
+override), or slow override_anneal AND add explicit pass-shaping reward; otherwise
+s5 will not pass the pass/min gate.
+
+=== [iter 2 @ 22:51:47Z] s5 rondo3v1 u600-u960 (ovr=0.00 fully annealed) ===
+STUCK? markers firing every eval: pass_per_min=0.00 < floor 2.0 at u600/720/840/960.
+Eval (ovr=0):
+ u720: score .555 poss .69 pass/min 0.0 realpass 0 push 10.0 shots 10.0 gd 3.00
+ u840: score .573 poss .76 pass/min 0.0 realpass 0 push 7.1  shots 7.1  gd 1.21
+ u960: score .567 poss .73 pass/min 0.0 realpass 0 push 7.4  shots 7.4  gd 1.43
+NOTE: with override OFF, poss RECOVERED to .69-.76 (vs .30 mid-anneal) and shots/gd
+healthy -- policy CAN keep the ball. ent rebounded 2.0->~4.5 (re-broadening).
+BUT realpass/pass_per_min PINNED at 0.0: it dribbles+shoots, never emits the discrete
+PASS action the metric counts. shots==push (it just blasts).
+VERDICT: STUCK on passing specifically. The teacher override taught nothing durable;
+policy found a no-pass hoard+shoot local optimum that scores fine but fails the gate.
+RECOMMEND: (1) verify teachers actually emit the pass action class (teachercheck) -
+if realpass stays 0 even under ovr=0.75, the pass-action mapping is broken;
+(2) add direct reward on realpass / penalize shots without a prior pass in rondo;
+(3) raise ent floor is NOT the issue. Root-cause the pass-action plumbing first.
+
+=== [iter 3 @ 22:54:18Z] s5 rondo3v1 u1200-u1490 (ovr=0) ===
+NEW BEST chain: score .500->.505->.607 (poss .84 at u1200!). Eval:
+ u1200: score .607 poss .84 pass/min 0.0 realpass 0 push 10 shots 10 gd 3.00 NEW BEST
+ u1320: score .576 poss .75 pass/min 0.0 realpass 0 push 9.8 shots 9.8 gd 2.86
+ u1440: score .583 poss .77 pass/min 0.0 realpass 0 push 10 shots 10 gd 3.00
+STUCK? fires every eval. ent ~4.5 stable, rew/step ~0.013.
+KEY (cross-checked whole log): realpass hit 1.00 ONCE and pass/min 0.2 once -> the
+pass-action plumbing WORKS, passing is just never reinforced. shots/min==push/min
+exactly => agent equates "push ball" with "shoot", no distinct pass behavior.
+VERDICT: stably STUCK. Score optimizes hoard+shoot+possession; pass GATE unreachable
+because the v4 profile gives NO gradient toward the pass action (goal=0 removed the
+only thing that incidentally chained touches).
+RECOMMEND (actionable):
+ 1. Add explicit positive reward for realpass / receive events in rondo profile.
+ 2. Make the STUCK floor ABORT-and-fall-back instead of grinding 1500 upds at pass=0.
+ 3. The annealed override is the wrong tool here (no durable transfer); replace with a
+    persistent KL/BC-to-teacher term OR reward-shape passes directly.
+
+=== [iter 4 @ 22:56:39Z] s5 rondo3v1 u1800-u2000 (ovr=0) -- FINAL ===
+ u1800: score .606 poss .84 pass/min 0.0 push 10 shots 10 gd 3.00
+ u1920: score .635 poss .93 pass/min 0.0 push 10 shots 10 gd 3.00 NEW BEST
+ u2000: snapshot; poss trending ~0.9.
+still in STAGE 5 after 2000 upds; no GATE met, no STAGE 6, no abort. ent ~4.8 stable.
+VERDICT (definitive): policy converged to a near-PERFECT HOARDER (poss .93) that
+NEVER passes. pass/min==0.0 for 2000 upds; score rises ONLY via possession/shots.
+The v4 fix (goal=0) removed the exploit but left NO incentive to pass, so the gate
+is structurally unreachable on this profile. Hoarding is the new local optimum.
+FINAL REC: stop relying on score; the pass GATE needs a DIRECT realpass/receive
+reward term. Override-annealing demonstrably yields zero durable pass transfer.
+Monitoring loop ending (~13 min, 5 reads, python PID 47781 healthy throughout).
+
+=== [iter 1 @ '"$(date -u +%H:%M:%SZ)"'] BC-kickstart run, s5 rondo3v1 u10-u130 ===
+ (ts 23:07:06Z) warm-resume from .best hoarder; bc loss active.
+ u120 eval: score .430 poss .36 pass/min 1.0 realpass 1.00 push 0.0 shots .1 gd .07
+ bc coef decaying 0.99->0.81 (u130), ovr 0.39->0.30, ent 5.4->1.6 (collapsing fast).
+ NEW BEST score=.430 at u120. pass/min=1.0 already >0 (vs prior run's flat 0).
+ VERDICT: early-positive -- BC is transferring passing (0->1.0). Watch persistence as bc->0.15 floor.
+
+=== [iter 2 @ 23:13:48Z] s5 rondo3v1 u670-u960 ===
+ bc at FLOOR (0.15), ovr=0 fully annealed, ent crashed to ~0.7 (deterministic).
+ pass/min trajectory: u120=1.0 -> u720=0.8 -> u840=0.1 -> u960=0.0  (COLLAPSING)
+ poss climbing 0.53->0.87 (hoarding returning); realpass 1.00 then 0.00 at u960.
+ push/min spiking to 3.2 at u960 (shoving, not passing). shots/min ~0.
+ NEW BEST score=.591 @u720 (poss-driven). STUCK? floor(2.0) firing u720/840/960.
+ No GATE, no STAGE 6. python PID 56476 alive, no traceback.
+ VERDICT: BC bought passing transiently (peak 1.0) but it does NOT persist -- as bc
+   decays to 0.15 floor + ovr->0, policy reverts to the hoarder optimum, pass/min->0.
+ REC: raise bc floor well above 0.15 (try 0.4-0.6) AND/OR add direct realpass reward;
+   0.15 floor is too weak to hold passing against the hoard gradient.
+
+=== [iter 3 @ 23:16:58Z] s5 u1510 -> GATE MET -> STAGE 6 rondo4v2 u10-u240 ===
+ BIG REVERSAL of iter2's collapse: between u960 and u1560 passing RECOVERED.
+ s5 u1560: score .717 poss .90 pass/min 5.5 realpass 1.00 shots/min 8.1 -> "GATE met at upd 1560"
+   -> embedded neural_v1.bin w/ parity, advanced to STAGE 6 'rondo4v2'.
+ STAGE 6 (4v2, ovr re-armed 0.39->0.21, bc re-decaying): passing HOLDING:
+   u120 pass/min 2.7 realpass .92 poss .53 ; u240 pass/min 4.1 realpass .97 poss .67.
+ 2 NEW BEST in s6 (.492, .555). python PID 56476 alive, no traceback.
+ ANOMALY: bc loss occasionally prints 186012.x (u10, u110, u220) -- spurious spike,
+   likely a single-state teacher-logprob blowup; not derailing training but worth a clamp.
+ VERDICT: STRONG POSITIVE. BC DID produce durable passing -- it survived the bc->floor
+   decay (transient dip ~u840-960) then locked in, cleared the gate, and is carrying into s6.
+ REC: keep current bc schedule (floor 0.15 sufficed); add a clamp/guard on bc loss to kill
+   the 186012 spikes. Watch s6 as ovr->0 again to confirm pass/min stays >=5.
+
+=== [iter 4 @ 23:19:49Z] STAGE 6 rondo4v2 u380-u680 ===
+ ovr annealed 0.10->0.00 (~u500), bc back at 0.15 floor. ent low ~0.5 (deterministic).
+ pass/min easing as ovr->0: u240=4.1 -> u480=3.1 -> u600=2.1 (STUCK? floor 3.0 @u600).
+ poss u480 .84 -> u600 .45 ; realpass holding .90-.97 ; shots ~0.2 ; gd ~0.
+ NEW BEST .599 @u480. python PID 56476 alive, no traceback.
+ VERDICT: MIXED -- mirrors s5 pattern: passing peaks while ovr/bc active, then dips as
+   both decay to floor. In 4v2 (harder) it's hovering RIGHT AT the 3.0 floor, not 0 like
+   the old hoarder, so BC left a durable residual -- but not comfortably above gate.
+ REC: this is the weak spot -- bc floor 0.15 holds pass/min ~2-3 but not >=5. To clear s6
+   gate reliably, raise bc floor to ~0.30, OR slow the ovr anneal in later stages. Watch
+   whether it recovers past u680 like s5 did (s5 dipped at u960 then rallied to gate by u1560).
+
+=== [iter 5 @ 23:21:55Z] STAGE 6 rondo4v2 u760-u1060 (ovr=0, bc=floor) ===
+ pass/min PLATEAUED at the floor: u840=3.1 u960=2.9 -- STUCK? floor 3.0 @u960.
+ realpass strong .93-.97 (genuine medium/long, not tap). poss eroding .50->.27.
+ score sliding .45->.41 ; shots ticking up to 1.3 ; no hoarding (poss low, not high).
+ No new STAGE, no new BEST this window. python PID 56476 alive, no traceback.
+ VERDICT: PARTIAL SUCCESS / PLATEAU. BC gave a DURABLE passer (pass/min holds ~3, not 0
+   like old run; realpass high) BUT in 4v2 it's stuck just under the 3.0 gate-floor with
+   ovr=0 + bc=0.15. Not collapsing to hoard; just not climbing past gate.
+ REC (firm): raise bc floor 0.15->0.30 for stage>=6, OR lower s6 gate/floor, OR extend
+   ovr anneal length in harder stages. The 0.15 floor is calibrated for 3v1, too weak for 4v2.
+
+=== [iter 6 @ 23:23:15Z] STAGE 6 rondo4v2 u1000-u1290 (ovr=0, bc=floor 0.15) ===
+ BREAKOUT past the plateau -- pass/min CLIMBING with ovr=0 + bc=floor:
+   u960=2.9 -> u1080=4.9 -> u1200=5.9 (above the 5.0 gate target!).
+ realpass excellent .96-.98 (true medium/long). poss low .27-.38 (NOT hoarding).
+ shots/min variable (3.1 then 0.5). score ~.50, gd ~0. ent stable ~0.45.
+ No traceback (grep=0). python PID 56476 alive. STUCK markers stopped after u960.
+ VERDICT: REVISES iter5 -- not a plateau; RL is now self-sustaining/improving passing
+   BEYOND the BC floor. This is the strongest signal yet that BC seeded a real skill the
+   policy now owns. Likely to clear s6 gate (need poss>=0.5 too -- poss is the lagging metric).
+ NOTE: poss low (.27) is now the gate risk, not passing. Possession may need its own nudge.
+ REC: passing is solved by BC-seed; watch possession>=0.5 half of the gate -- if it lags,
+   add a small possession-retention reward rather than touching bc.
+
+=== [iter 7 @ 23:24:18Z] STAGE 6 rondo4v2 u1200-u1480 (ovr=0, bc=floor) ===
+ pass/min oscillating high but volatile: u1200=5.9 u1320=3.9 u1440=4.4 ; realpass 1.00 (perfect).
+ POSSESSION CRASHED: poss .27->.11(u1320,crowd .92)->.28 -- this is now the GATE BLOCKER.
+ Policy passes beautifully but cannot RETAIN -- in 4v2 the 2 defenders strip it post-pass.
+ score ~.40-.49, shots 1-2/min, gd ~0. ent ~0.45. No STAGE 7. python 56476 alive, no TB.
+ VERDICT: confirms iter6 -- PASSING half of the gate is SOLVED (pass/min>=5 achievable,
+   realpass 1.0). The gate is now gated by POSSESSION>=0.5, which BC never targeted.
+   The pass-vs-retain tension: aggressive passing in 4v2 sheds possession.
+ REC (key): the pass GATE is effectively met on passing; to clear s6 add/raise a possession
+   -retention term in the rondo4v2 reward (or relax poss>=0.5 gate for the harder drill).
+   Do NOT touch bc -- passing is durable. Possession is the new front.
+
+=== [iter 8 @ 23:25:30Z -- FINAL] STAGE 6 rondo4v2 u1480-u1690 ===
+ pass/min STILL CLIMBING: u1560=4.8 u1680=7.1 (>> 5.0 gate target). realpass .98-1.00.
+ NEW BEST score=.603 @u1680. python PID 56476 alive, zero tracebacks all run.
+ POSSESSION remains the wall: poss .12-.31, crowd ~0.9 (ball stripped after each pass in 4v2).
+ Gate met count = 1 (only s5 rondo3v1 @u1560). s6 NOT cleared -> no STAGE 7 (poss<0.5).
+ ---------------- RUN SUMMARY (BC-kickstart verdict) ----------------
+ 1) Did BC produce DURABLE passing?  YES, decisively. pass/min went 0->1->(dip)->5.5 in s5
+    (cleared gate, embedded neural_v1.bin) and 2.7->7.1 in s6 with ovr=0 AND bc at the 0.15
+    floor. realpass ~1.0 (true medium/long). This is the OPPOSITE of the prior run where
+    pass/min stayed 0.0 for 2000 upds. The BC/kickstart fix WORKS where action-override failed.
+ 2) Did it advance stages?  YES: s5 rondo3v1 GATE met @u1560 -> STAGE 6 rondo4v2. Did NOT
+    reach STAGE 7 within this window -- blocked by the possession half of the s6 gate.
+ 3) Collapse-on-decay?  Only a transient dip (s5 u840-960, s6 u600); each time passing
+    RECOVERED and exceeded the gate. The 0.15 floor was sufficient to prevent reversion to
+    the old hoarder; RL then self-improved passing beyond the floor. Floor need NOT be raised.
+ KEY TUNING REC: passing is SOLVED. The remaining blocker is POSSESSION>=0.5 in 4v2 -- the
+    policy passes great but cannot retain vs 2 defenders (crowd ~0.9). Add a possession-
+    retention reward term to rondo4v2 (or relax poss gate for harder drills). Also clamp the
+    bc loss to kill the spurious 186012 spikes seen at s6 u10/u110/u220.
+ Monitoring loop ended (~20 min, 8 reads, python PID 56476 healthy throughout, no traceback).
+
+=== 2026-06-19 ANALYST SESSION (self-play watch) ===
+[t1 ~loop1] s6 rondo4v2 GATED at u1800: score=0.795 poss=0.54 pass/min=12.4 realpass=1.00 ownT/O=0.00 crowd=0.82 gkbox=0.00. Shipped neural_v1.bin (with parity).
+  -> STAGE 7 'buildup' started (selfplay=True, 52 snaps, no BC). s7 u50 ent~0.37-0.63, rew/step climbing 0.008->0.016.
+  Verdict: passing problem confirmed solved; self-play league now live. Watching for possession_pct rise + own_third_turnover low.
+
+[t2 ~loop2] STAGE 7 'buildup' selfplay, u160. First eval u120: score=0.568(NEW BEST) poss=0.99 pass/min=0.6 realpass=1.00 ownT/O=0.71 crowd=0.87 gkbox=0.00 push=0 shots=0.
+  ent climbing 0.37->1.31 (no BC anchor, free exploration). rew/step ~0.012-0.016.
+  Concern: possession maxed (0.99) but ownT/O=0.71 HIGH and pass/min crashed to 0.6 -> early buildup = hoarding in own third, not circulating. shots=0 (expected for buildup stage).
+  Verdict: stage healthy-ish (poss is the gate), but watch ownT/O drop + pass/min recover as it learns to play out. Too early to call hoard regression.
+
+[t3 ~loop3] STAGE 7 'buildup' u270. Eval u240: score=0.600(NEW BEST) poss=0.95 pass/min=1.4 realpass=0.93 ownT/O=0.75 crowd=0.73(down from 0.87) push/min=3.0 shots/min=2.9 gd/ep=0.32.
+  Progress vs u120: push & shots emerged (3.0/2.9, was 0/0), crowd dropping -> ball being moved forward not hoarded. ent very high ~1.3-1.65 (free self-play exploration). rew/step ~0.015.
+  Still: ownT/O high (0.75), pass/min low (1.4) -- circulation not yet there. realpass dipped 1.00->0.93.
+  Verdict: buildup trending right (poss high + ball progression appearing). No regression/STUCK. Watch ownT/O fall + pass/min climb before gate.
+
+[t4 ~loop4] STAGE 7 'buildup' u380. Eval u360: score=0.620(NEW BEST) poss=0.94 pass/min=2.1 realpass=1.00 ownT/O=0.64 crowd=0.87 push/min=2.7 shots/min=0.6 gd/ep=0.21.
+  Clear trend: ownT/O 0.71->0.75->0.64 (falling), pass/min 0.6->1.4->2.1 (climbing), realpass back 1.00. Score monotone up 0.568->0.600->0.620.
+  Flag: ent now ~2.0 (rose 0.37->2.0 over stage); crowd bounced back 0.87. Watch ent doesn't stay pinned high (would mean undertrained/noisy policy).
+  Verdict: buildup converging the right way, no regression. Tiki-taka qualities (possession + circulation + low turnover) emerging on schedule.
+
+[t5 ~loop5] STAGE 7 'buildup' u480. *** REGRESSION ***. Eval u480: score=0.554 (DOWN from 0.620) poss=1.00 pass/min=0.2 realpass=1.00 ownT/O=0.50 crowd=0.99 push/min=0.0 shots/min=0.0 gd/ep=0.00.
+  pass/min crashed 2.1->0.2, crowd 0.87->0.99 (whole team bunched on ball), push & shots back to 0 -> reverted to pure HOARD.
+  ent now pinned ~2.3-2.4 and STILL RISING across whole stage (started 0.37). High-entropy degenerate possession: holds ball, no circulation.
+  Verdict: buildup self-play collapsing into hoard with runaway entropy. The u360 (score 0.620) is the good checkpoint; latest_best won't overwrite (0.554<0.620) so best is safe.
+  REC: entropy coef looks too high for buildup self-play (no BC anchor lets ent run to 2.4). Consider lowering ent_coef and/or adding a pass/min or progression floor to the buildup reward so possession isn't rewarded without ball movement.
+
+[t6 ~loop6] STAGE 7 'buildup' u600 (no new eval since u480). ent kept climbing 2.4->2.7; v-loss collapsing to ~0.001-0.002, pi near 0 -> critic learning nothing, degenerate high-entropy policy. rew/step ~0.02 (hoarding is well-rewarded).
+  Confirms t5 regression: buildup self-play stuck in possession-hoard local optimum, entropy runaway. ~7min between evals (eval every ~120 upd, ~120s/eval x... slow self-play).
+  Verdict: stage NOT advancing toward tiki-taka; possession reward dominates with nothing forcing ball progression. Best checkpoint remains u360 (0.620).
+  REC (firmer): for buildup self-play, (a) reduce ent_coef or add entropy annealing, (b) gate/reward must require pass/min>=floor AND ownT/O low, not just possession; possession alone is gameable by hoarding.
+
+[t7 ~loop7] STAGE 7 'buildup' GATED at u600 -- BUT ON A DEGENERATE PANEL: score=0.614 poss=0.98 pass/min=0.0 realpass=0.00 crowd=1.00 push=0 shots=0. Gate = possession only, so the HOARD policy passed it. Shipped neural_v1.bin, advanced to STAGE 8 'possession' (selfplay, snaps=55, B=84/6-aside).
+  *** GATE DESIGN BUG: buildup gate rewards possession with ZERO passing/progression. The embedded neural_v1.bin is now a crowd-on-ball hoarder. ***
+  s8 'possession' starts with ent already ~2.5-2.7 (inherited runaway), v-loss ~0.001 (dead critic), pi~0.
+  Verdict: curriculum is advancing but quality DEGRADED at buildup; tiki-taka NOT preserved through s7. Possession stage may inherit the hoard.
+  REC (urgent): add a pass/min (>=~3) AND non-crowd (crowd<~0.8) requirement to the buildup gate so possession-hoard can't pass; cap/anneal entropy. Roll back embedded weights to s6 (rondo4v2, score 0.795) which had real passing if s8 doesn't recover.
+
+[t8 ~loop8 FINAL] STAGE 8 'possession' u130. Eval u120: score=0.620(NEW BEST) poss=1.00 pass/min=0.0 realpass=0.00 ownT/O=0.00 crowd=1.02 push=0 shots=0.
+  The buildup hoard fully propagated into possession stage. crowd=1.02 (whole team on ball), ZERO passing. ent runaway now ~2.8-3.05 (started 0.37 in s7), v-loss dead ~0.001-0.003, pi~0. Policy collapsed.
+  Verdict: CURRICULUM REACHED s8/11 but TIKI-TAKA QUALITIES LOST since s7. Possession metric is 100% gameable by hoarding and both self-play stages exploit it. Real passing died at s7 u360->u480.
+  RECOMMENDATIONS for next round:
+   1) Fix buildup+possession GATES & rewards: require pass/min>=floor (~3-4) AND crowd<~0.8 AND ownT/O low -- possession alone must NOT pass.
+   2) Entropy: anneal/cap ent_coef for no-BC self-play stages (it ran 0.37->3.0 unchecked; dead critic v~0.001).
+   3) Keep a light BC/anchor or a passing-reward term into the self-play stages so circulation isn't unlearned.
+   4) Roll back embedded neural_v1.bin to the s6 rondo4v2 checkpoint (score 0.795, pass/min 12.4, realpass 1.0) which is the last genuinely tiki-taka policy.
+=== END SESSION ===
+
+=== 2026-06-19 ~20:00 [read 1/9] CLEAN full-curriculum run, baseline ===
+STAGE 0 'motor' u290, python alive (pid 72389). selfplay=False, snaps=48.
+ent~6.5 (very high, fresh policy exploring), ovr=0.00, bc=0.000*0.00 (no anchor on motor).
+Evals: u120 score=0.426 poss=0.12 crowd=0.08 shots/min=4.3; u240 score=0.550 poss=1.00 crowd=0.98 shots/min=0.0.
+STUCK? warning at u240: shots_per_min<floor 1.0 (motor drill, fundamentals not emerging yet).
+Verdict: still very early (50s wall-clock). Policy oscillating between disperse(u120) and hoard-the-ball(u240). Normal for fresh motor stage. Watch point (buildup/possession anchor) far off.
+
+=== 2026-06-19 ~20:04 [read 2/9] ===
+python alive (pid 72389). No tracebacks/errors.
+STAGE 0 'motor' GATE MET at u1080 -> embedded neural_v1.bin. Now STAGE 1 'collect' u80.
+Motor evals: u600 score=0.55 shots/min=4.3 crowd=0.04; u960 score=0.67; u1080 score=0.52 gd/ep=0.29. Motor done in ~282s wall.
+STAGE 1 'collect': BC ANCHOR LIVE -> ovr~0.42-0.49, bc=3.97->1.21 (coef~0.9, loss falling = policy imitating teacher). ent dropping 6.5->1.5 (good, focusing). rew/step rising 0.004->0.010.
+Verdict: healthy. Curriculum advancing on schedule, BC anchor engaged correctly on collect. Self-play possession watch point still ahead (stages buildup/possession).
+
+=== 2026-06-19 ~20:08 [read 3/9] *** RUN CRASHED - STOPPING EARLY *** ===
+python DEAD (pgrep empty). Fatal NaN.
+Progress before crash:
+  - STAGE 0 motor: GATE met u1080.
+  - STAGE 1 collect: GATE met u240 (fast). evals u120/u240 score~0.62 poss=1.00 crowd~0.85 (BC anchor active, ovr~0.4-0.5).
+  - STAGE 2 firsttouch: reached u300 then CRASHED. evals u120 score=0.79 pass/min=7.5 realpass=1.00 crowd=0.73; u240 score=0.70 pass/min=3.8 crowd=0.37. Passing was EMERGING nicely (realpass=1.0).
+CRASH: ValueError NaN logits (2688,9) in PPO evaluate -> ppo.py:73 _dists -> Categorical(logits=lg). At s2 u300, t=516s.
+  Warning signs in run-up: rew/step turned negative (~-0.01), pi-loss spiking (0.232, 0.179), v-loss bursts (1.002), bc loss erratic (3.4-6.2) while ent very low (~0.5). Classic gradient blowup -> NaN.
+VERDICT: The self-play possession FIX was NOT reached/tested this run. Crash is a numerical-stability bug in firsttouch (early stage), unrelated to the buildup anchor fix.
+RECOMMENDATIONS:
+  1. Add NaN/inf guards: gradient clipping (clip grad norm ~0.5-1.0) and check torch.isfinite(logits) before Categorical; skip/zero bad minibatches.
+  2. firsttouch's BC coef (~0.6-0.7) combined with low ent (0.5) + spiking pi/v loss suggests too-large LR or BC pulling against PPO -> lower LR or anneal BC faster, and clamp logits.
+  3. Resume from snap_s2_00200.bin (last good snapshot) rather than scratch once guards added.
+
+=== [2026-06-19] tiki-taka run analysis (live) ===
+[read 1] python alive (PID 76401). STAGE 0 'motor' u120.
+  ent=6.75 (high, expected for fresh policy), bc=0.000*0.00 (no BC in motor stage), rew/step~0.
+  eval u120: score=0.426 poss=0.12 pass/min=0.0 crowd=0.04 push/min=4.3 shots/min=4.3.
+  NEW BEST 0.426. No grad-skips, no crash. Verdict: healthy cold start, far from crash point (firsttouch u300).
+
+[read 2] python PID 76401 ELAPSED=01:18 (FRESH restart since read1 — log t= aligns at ~73s).
+  cmdline: --start-stage 0 --lr 2.0e-4 --override-p0 0.5 --bc-coef0 0.8 --bc-floor 0.15 --bc-anneal 700.
+  Now STAGE 0 'motor' u280. ent~6.59 (slowly decaying from 6.75), bc=0 (none in motor).
+  eval u240: score=0.587 poss=0.70 (up from 0.12) pass/min=0.0 crowd=0.08 push/min=6.6. NEW BEST 0.587.
+  No grad-skip, no crash. Verdict: healthy; poss climbing in motor. NOTE run is FAST (~73s for 280 upd) so stages will fly by; tighten read cadence mentally.
+
+[read 3] python PID76401 ELAPSED~01:43, %cpu=86. STAGE 0 'motor' u380 (t=99s internal).
+  ent oscillating ~6.2-6.75, bc=0 (motor has no BC). eval u360 score=0.486 poss=0.34 crowd=0.12.
+  Still warming up in motor; no gate met yet, no grad-skip, no crash.
+  Verdict: healthy. (Reads 1-3 happened within ~2 real min; pacing timer now enforced for subsequent reads.)
+
+[read 4] STAGE 0 'motor' GATE MET at u480 (score=0.503 poss=0.36 crowd=0.05 gd/ep=0.46 shots/min=8.6).
+  Advancing to STAGE 1 'collect'. ent steady ~6.6, bc=0 (motor). No grad-skip, no crash. PID76401 elapsed 02:12.
+  Verdict: clean stage-0 completion. Watching for collect->firsttouch (crash point was firsttouch u300 last run).
+
+[read 5] STAGE 1 'collect' running (u30). BC ACTIVE: bc=3.74*0.79 -> 2.43*0.77 (loss & coef both annealing).
+  ent dropped 6.6 -> 3.0 (BC anchoring policy, as designed). ovr~0.47-0.49. rew/step positive ~0.006.
+  Stage-0 embedded neural_v1.bin with parity OK. PID76401 elapsed 02:28, alive. No grad-skip, no crash.
+  Verdict: BC anchor engaged cleanly entering self-supervised stages. On track toward firsttouch (crash point).
+
+[read 6] STAGE 1 'collect' u70. bc loss descending 3.74->1.24 (coef 0.79->0.72 annealing as designed).
+  ent settling 4.5->1.57, ovr stable 0.43-0.49, rew/step rising ~0.007-0.010. PID alive, elapsed 02:45.
+  No grad-skip, no crash. Verdict: collect learning steadily under BC anchor. Next milestone: firsttouch stage (last run's crash @ u300).
+
+[read 7] STAGE 1 'collect' u120: score=0.625 NEW BEST. poss=1.00 but crowd=0.88, pass/min=0.0
+  (expected: collect is single-agent ball-fetch drill, not passing). bc annealing 1.21*0.66, ent~1.4, ovr 0.38.
+  PID alive elapsed 03:06. No grad-skip, no crash. Verdict: collect mastered (poss saturated); will gate to firsttouch soon.
+
+[read 8] STAGE 1 'collect' u160. bc 1.11*0.62, ent~1.15, ovr 0.34, rew/step ~0.009 steady.
+  PID alive elapsed 03:24. No grad-skip, no crash. Verdict: stable collect grind toward gate; nothing of concern.
+
+[read 9] STAGE 1 'collect' u200, snapshot snap_s1_00200 written. bc 0.77*0.57 (annealing well), ent 0.98, ovr 0.30, rew/step ~0.011.
+  PID alive elapsed 03:41. No grad-skip, no crash. Verdict: collect healthy; still pre-firsttouch (crash point not yet reached this session).
+
+[read 10] STAGE 1 'collect' GATE MET at u240 (score=0.625). Stage-1 embedded with parity OK.
+  >>> ENTERED STAGE 2 'firsttouch' (B=28, the EXACT stage that NaN-crashed last run at u300). <<<
+  PID alive elapsed 03:59. Now at firsttouch start. CRITICAL WATCH ZONE next.
+
+[2026-06-19 read#1] s7 buildup, upd~1870, python ALIVE (pid 76401).
+ Evals u1320..u1800: pass/min 1.9-2.9 (oscillating, NOT holding >=3 floor), realpass~0.96-1.00, poss 0.87-0.93,
+ crowd 0.63-0.69 (good, <0.85), ownT/O 0.50-0.81 (high turnover), gkbox~0, push/min=0, shots/min 2.7-4.8.
+ Two STUCK? warnings (pass_per_min<2.0 floor at u1320 & u1800). No NEW BEST ships seen. No NaN/traceback.
+ Verdict: BC anchor IS preventing hoard collapse (crowd stays low, realpass~1.0, passes persist) but pass volume
+ stalls near floor 2.0 in self-play buildup. Stage not gating; likely to advance via max_upd(2500). Watch for collapse.
+ Rec: if it advances on max_upd not gate, buildup floor (3.0->2.0 effective) may be too ambitious for self-play; fine.
+
+=== [2026-06-19 read 1] s8 possession just started (key test) ===
+Stage 7 buildup PASSED: score~0.62, pass/min 2.9-3.2, realpass 0.94-0.97, poss 0.89-0.97, crowd 0.63-0.69. neural_v1.bin embedded w/ parity.
+STAGE 8 'possession' (6v5 selfplay, snaps=98) entered at t~9714s. BC anchor active: ovr anneal 0.49->0.26, bc-coef 0.79->0.53.
+First eval [s8:u120] score=0.470 poss=0.80 pass/min=1.1 realpass=0.92 ownT/O=0.82 crowd=0.54 gkbox=0.13 shots/min=7.1 gd/ep=2.39 -> NEW BEST.
+Verdict: too early to call HOLD. pass/min dropped to 1.1 (selfplay reset, expected) but crowd LOW (0.54, not hoarding) and realpass high 0.92 — encouraging. gd/ep 2.39 = dominating the 5-man opponent. Watch pass/min trend: must climb back toward >=6, NOT decay to 0.
+Watchdog: started 11:22PM, 15h window. python alive (pid 76401).

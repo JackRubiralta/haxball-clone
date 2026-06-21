@@ -64,10 +64,16 @@ func (a *AI) onBall(p perception, plan teamPlan) sim.Intent {
 			// (re-leading every tick chased the runner and the aim never converged -> timed out).
 			// Only nudge it if the receiver has drifted far from the committed lead.
 			live := a.leadPoint(p, a.passReceiver)
-			if geom.Dist(live, a.shotTarget) > a.tune.passReceiverSpace {
+			if geom.Dist(live, a.shotTarget) > a.tune.passReleadGap {
 				a.shotTarget = live
-				a.shotDesired = a.passChargeFor(p, a.shotTarget)
 			}
+			// Recompute the charge EVERY tick off the CURRENT ball velocity, not once at decision time.
+			// passChargeFor's velocity-compensation depends on how the ball is moving; if it is committed
+			// while the ball is moving (away/across) and then the ball settles before the kick lines up,
+			// the stale compensation leaves the launch badly over-powered -- the ball rockets past the
+			// receiver (the "way too much power" miss). Re-deriving it each tick keeps the launch
+			// calibrated to the soft arrive speed as the ball settles.
+			a.shotDesired = a.passChargeFor(p, a.shotTarget)
 			a.recordPassIntent(p, a.shotTarget, a.passReceiver) // diagnostics only (write-only)
 		} else if w := a.openDuration(p, p.me.Position()); w < a.tune.shootHurryWindow {
 			dist := geom.Dist(p.me.Position(), p.enemyGoal)
@@ -236,6 +242,44 @@ func (a *AI) bestCorner(p perception) (geom.Vec, float64) {
 	return bot, cb
 }
 
+// shootingThreat reports whether passing to a team-mate AT `target` creates a CLEARLY BETTER shot
+// than the carrier taking it on itself: the receiver is within shoot range of the enemy goal, has
+// an open lane to a goal corner, AND that lane is meaningfully clearer (by assistEdge) than the
+// carrier's OWN current shot lane. This is the cut-back/square ball in an overload -- it only fires
+// once defenders have committed to the carrier (so the carrier's own look is blocked while the free
+// man's is open), never when the carrier already has the better shot (so it does not make the AI
+// pass up its own chances) and never in midfield (the receiver must already be a goal threat), so
+// it does not reopen the loose-recycle failure mode.
+func (a *AI) shootingThreat(p perception, target geom.Vec) bool {
+	if geom.Dist(target, p.enemyGoal) > a.tune.shootRange {
+		return false
+	}
+	recvClear := a.goalShotClearance(p, target)
+	if recvClear <= 0 {
+		return false // receiver's shot is smothered too -- not a real chance
+	}
+	return recvClear > a.goalShotClearance(p, p.ball)+a.tune.assistEdge // clearly better than shooting myself
+}
+
+// goalShotClearance returns the clearance of the more-open shot lane from `from` to a goal corner,
+// using the same corner geometry as bestCorner (so the assist check and the shot share one notion
+// of "an open lane to goal"). Positive = an open-ish shot; the keeper counts as a blocker, so a
+// free man at a wide angle out-rates a carrier the keeper is square to.
+func (a *AI) goalShotClearance(p perception, from geom.Vec) float64 {
+	f := p.view.Field()
+	playable := f.GoalHeight()/2 - sim.GoalPostRadius - p.ballRadius
+	dist := geom.Dist(from, p.enemyGoal)
+	margin := a.tune.cornerInset + a.tune.cornerRangeInset*clampFloat(dist/a.tune.shootRange, 0, 1)
+	half := clampFloat(playable-margin, 0, playable)
+	top := geom.NewVec(p.enemyGoal.X, p.enemyGoal.Y-half)
+	bot := geom.NewVec(p.enemyGoal.X, p.enemyGoal.Y+half)
+	ct := laneClearance(from, top, p.opponents, p.ballRadius)
+	if cb := laneClearance(from, bot, p.opponents, p.ballRadius); cb > ct {
+		return cb
+	}
+	return ct
+}
+
 // laneClearance returns the smallest distance from any player to the segment from->to,
 // minus that player's radius -- how much room the ball has to travel the lane untouched.
 func laneClearance(from, to geom.Vec, players []sim.ObservedView, ballRadius float64) float64 {
@@ -321,7 +365,14 @@ func (a *AI) bestPass(p perception) (geom.Vec, sim.ObservedView, float64) {
 		}
 		advance := p.goalwardness(p.ball, target)
 		forward := advance >= a.tune.passMinAdvance
-		if !forward && !(pressured || trapped || a.tune.recycleFreely || hold > 0) {
+		// An ASSIST pass: a (possibly square/cut-back) ball to a team-mate who is in a clear SHOOTING
+		// position -- within shoot range of goal with an open shot lane. In an overload (2v1/3v1) the
+		// carrier draws the keeper/defender then squares to the free man for an open finish, instead of
+		// shooting into the keeper. It is NOT gated on forwardness (the cut-back is the whole point), but
+		// it only ever fires in the final third with a genuinely open shooter, so it does not turn into
+		// loose midfield square-passing (the recycle gotcha). See AI.shootingThreat.
+		goalChance := a.shootingThreat(p, target)
+		if !forward && !goalChance && !(pressured || trapped || a.tune.recycleFreely || hold > 0) {
 			return // recycle/back passes are an outlet only when we can't go forward, are stuck, or have hoarded the ball
 		}
 		// Prefer an open receiver who will STAY open, with a safe lane; penalise distance a
@@ -331,9 +382,27 @@ func (a *AI) bestPass(p perception) (geom.Vec, sim.ObservedView, float64) {
 		// football instead of one player dribbling forever.
 		openDur := clampFloat(a.openDuration(p, target), 0, 1.5)
 		score := 1.0 + kindBonus + advance*a.tune.passAdvanceWeight + space*a.tune.passSpaceWeight + safety*a.tune.passSafetyWeight + openDur*a.tune.passOpenWeight - dist*a.tune.passDistPenalty
-		if forward {
+		// Settle-before-pass: a pass fired off a ball carrying SIDEWAYS momentum sails off target --
+		// the radial kick can't cancel the ball's perpendicular velocity and the impulse ADDS to it
+		// (the "overshoots / off-target passes" failure). Penalise a candidate by how much
+		// perpendicular pace the ball has across this lane, so the carrier takes a settling touch and
+		// fires a clean ball instead of a wild one. A ball already rolling toward the target (low perp)
+		// is unaffected, so one-touch lay-offs still fire. Weight 0 disables it.
+		if a.tune.passSettleWeight > 0 && a.tune.passSettleSpeed > 0 {
+			if dir := geom.Unit(target.Sub(p.ball)); dir != (geom.Vec{}) {
+				perp := geom.Norm(p.ballVel.Sub(dir.Scale(geom.Dot(p.ballVel, dir))))
+				score -= clampFloat(perp/a.tune.passSettleSpeed, 0, 1) * a.tune.passSettleWeight
+			}
+		}
+		switch {
+		case forward:
 			score += a.tune.passForwardBonus
-		} else {
+		case goalChance:
+			// An assist into a clear shooting position is real chance-creation, not a recycle: exempt it
+			// from the recycle cap and add a standing bonus so it out-rates a contested solo shot (but an
+			// uncontested open shot, which scores far higher, still wins -- we only square it when boxed in).
+			score += a.tune.passAssistBonus
+		default:
 			score = clampFloat(score, 0, a.tune.passRecycleCap) // a recycle never out-rates real progress
 		}
 		if score > best {
@@ -414,7 +483,8 @@ func (a *AI) passChargeFor(p perception, target geom.Vec) float64 {
 	if front <= 0 {
 		return 0.3
 	}
-	want := a.passSpeedFor(p, target)
+	calibrated := a.passSpeedFor(p, target)
+	want := calibrated
 	// The shot impulse ADDS to the ball's current velocity (interaction.shoot:451), so a pass
 	// played off a moving/dribbled ball would launch far faster than passSpeedFor intends -- the
 	// dominant cause of over-hit and too-fast-to-control receptions. Subtract the ball's existing
@@ -422,6 +492,15 @@ func (a *AI) passChargeFor(p perception, target geom.Vec) float64 {
 	// the tap floor below (the kick can't fire softer than MinShootFactor).
 	if dir := geom.Unit(target.Sub(p.ball)); dir != (geom.Vec{}) {
 		want -= a.tune.passLaunchVelComp * geom.Dot(p.ballVel, dir)
+	}
+	// NEVER let the compensation INFLATE the launch above the calibrated speed. When the ball is moving
+	// AWAY from the target the comp tries to wind in a bigger impulse to overcome it -- but that makes
+	// the ball arrive 2-3x too fast and ROCKET PAST the receiver (a trace showed launches of 378-567 on
+	// passes calibrated to ~280-300, arriving at 250-460). A pass that arrives a touch SOFT is catchable;
+	// one that arrives too hot is not. So the comp may only SOFTEN (ball rolling toward the target), not
+	// harden. The settle-before-pass (shootAt) handles the away/across case by controlling the ball first.
+	if want > calibrated {
+		want = calibrated
 	}
 	factor := want / front
 	charge := (factor - p.me.Tuning().MinShootFactor) / (1 - p.me.Tuning().MinShootFactor)
@@ -440,9 +519,10 @@ func (a *AI) bestDribble(p perception) (geom.Vec, float64) {
 	// away from the nearest defender when pressured (you can't beat a marker at equal
 	// speed, so make space and retain). w blends the two by how much pressure we are under.
 	// In the final third we stop peeling and commit toward goal, so attacks come inside for
-	// a real shot instead of dying in the corner.
+	// a real shot instead of dying in the corner. (Its own constant, NOT tied to shootRange:
+	// widening the shoot range to take more shots must not also drag the dribble-commit zone.)
 	w := p.pressureOnMe
-	if geom.Dist(p.me.Position(), p.enemyGoal) < a.tune.shootRange*1.5 {
+	if geom.Dist(p.me.Position(), p.enemyGoal) < a.tune.dribbleCommitRange {
 		w *= 0.25
 	}
 	// Peel away from the nearest marker; with no opponents (nil) there is no pressure (w==0),
@@ -528,7 +608,7 @@ func (a *AI) shield(p perception, in sim.Intent) sim.Intent {
 	mv, th := a.steer(p, confineSlot(p, target), false)
 	in.Move, in.Throttle = mv, th
 	in.Aim = a.aimToward(p, p.me.Position().Add(away)) // face away so the ball stays on the far side
-	in.Trap = true
+	in.Trap = p.myTrap >= a.tune.trapHoldMinEnergy     // shield with trap only while the bar can afford it; the body-shield geometry still works empty, and letting go lets it recharge
 	return in
 }
 
@@ -567,6 +647,11 @@ func (a *AI) dribble(p perception, in sim.Intent, target geom.Vec) sim.Intent {
 	// are receiving (a clean first touch). A merely "unsettled" ball does NOT trigger trap --
 	// that over-used the right click and slowed everything down.
 	bigTurn := geom.AngleBetween(p.me.Facing(), move) > a.tune.turnTrapRad
+	// (The dribble-retention trap is NOT energy-gated: at a near-empty bar trap gives only the
+	// residual aura anyway, and cutting it during normal carrying measurably loosened control and
+	// lowered pass completion. The energy ration is applied where it actually matters -- the
+	// discretionary steal (wantTrapSteal) and the CONTINUOUS holds that block regen, shield and the
+	// recover-scoop.)
 	trap := recovering || bigTurn || a.wantTrapReceive(p)
 
 	throttle := 1.0

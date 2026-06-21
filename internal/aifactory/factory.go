@@ -7,6 +7,7 @@ package aifactory
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"phootball/internal/control"
@@ -15,17 +16,37 @@ import (
 )
 
 var (
-	netOnce sync.Once
-	sharedN *policy.Net
-	netErr  error
+	netOnce     sync.Once
+	sharedN     *policy.Net
+	netErr      error
+	weightsPath string // override source for the neural weights ("" = embedded)
 )
 
-// sharedNet lazily loads and validates the embedded neural-tier weights exactly once. It is a
-// read-only *policy.Net shared across every neural controller (each controller owns its own
-// Workspace, so sharing the net is race-free for the sequential per-tick Intent calls).
+// SetWeightsPath overrides the embedded neural-tier weights with a file on disk, so a player can
+// face a training checkpoint (e.g. training/checkpoints/latest_best.bin) live. It must be called
+// BEFORE the first neural controller is built (the net loads once, lazily). The PHBALL_NEURAL_WEIGHTS
+// environment variable is an equivalent fallback for paths that don't parse CLI flags.
+func SetWeightsPath(path string) { weightsPath = path }
+
+// sharedNet lazily loads and validates the neural-tier weights exactly once: from the override path
+// (SetWeightsPath / PHBALL_NEURAL_WEIGHTS) if set, else the embedded net. It is a read-only
+// *policy.Net shared across every neural controller (each owns its Workspace, so sharing is
+// race-free for the sequential per-tick Intent calls).
 func sharedNet() (*policy.Net, error) {
 	netOnce.Do(func() {
-		sharedN, netErr = policy.LoadDefault()
+		path := weightsPath
+		if path == "" {
+			path = os.Getenv("PHBALL_NEURAL_WEIGHTS")
+		}
+		if path != "" {
+			var f *os.File
+			if f, netErr = os.Open(path); netErr == nil {
+				defer f.Close()
+				sharedN, netErr = policy.Load(f)
+			}
+		} else {
+			sharedN, netErr = policy.LoadDefault()
+		}
 		if netErr == nil {
 			netErr = neural.ValidateNet(sharedN)
 		}

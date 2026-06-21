@@ -89,7 +89,20 @@ type diagResult struct {
 	// Turnovers: a firm possession lost to the opponent. ownHalfTurnovers is the dangerous subset --
 	// the ball given away in the LOSING team's own half (the user wants this much lower).
 	turnovers, ownHalfTurnovers int
-	causes                      [numPassCauses]int
+	// Possession-outcome attribution: when a between-team possession change happens, what was the
+	// LOSING side's last deliberate action? The north-star is that the MAJORITY of changes come from
+	// a SHOT (the attack was finished by shooting), NOT from a give-away (a bad pass or a lost
+	// dribble). endShot/endGoal are the GOOD ends; endBadPass/endLostDribble are the MISTAKE ends;
+	// endClear is a neutral safety boot. These sum to turnovers (+endGoal, which also flips possession
+	// via the kickoff). See the attribution in classifyMatch.
+	endShot, endClear, endBadPass, endLostDribble, endGoal int
+	// Directional speed efficiency: when a player is actively moving, how aligned is its FACING with
+	// its travel direction (the sim's directionalSpeedMul). 1.0 = running flat-out toward its aim;
+	// low = crawling off-axis (the "directional AI goes really slow" complaint). Accumulated over
+	// every moving player-tick. Always ~1.0 under the Standard model (facing is speed-neutral there).
+	speedMulSum   float64
+	speedMulCount int
+	causes        [numPassCauses]int
 	// miscontrol annotations (sub-counts of causeMiscontrol), so a first-touch failure is
 	// attributable to arriving off the capture cone (a FACING failure) vs arriving too fast
 	// head-on (a true over-pace failure). This is the key disambiguation: softening the launch
@@ -114,10 +127,10 @@ type pendingPass struct {
 	laneLen     float64
 	regionR     float64 // radius around the target that counts as "at the destination"
 
-	target       geom.Vec
-	targetKnown  bool
+	target        geom.Vec
+	targetKnown   bool
 	reconstructed bool // target inferred from the launch ray (snapshot was stale)
-	recvID       int
+	recvID        int
 
 	lastSeenToucher     int
 	mateContacted       bool
@@ -140,6 +153,16 @@ type pendingPass struct {
 	recvRelSpeed float64 // |ballVel - recvVel| at closest -- the relative-impact proxy
 	recvOffLine  float64 // receiver's perpendicular distance to the ball's line at closest
 	recvSpeed    float64 // |recvVel| at closest
+
+	// Target-drift diagnostic: did the intended receiver STAY where the pass was aimed, or wander
+	// off it? recvTargetGap0 is the receiver's distance to the aim target at launch; recvTargetGapArr
+	// is its distance to the target when the ball was CLOSEST to that target (i.e. when the pass
+	// "arrived"). A small gap0 with a large gapArr means the receiver abandoned the spot the pass was
+	// aimed at (the over-hit-to-an-empty-spot failure); a large gap0 means the carrier aimed where the
+	// receiver never was.
+	recvTargetGap0   float64
+	recvTargetGapArr float64
+	recvClosing      float64 // dot(unit(recvVel), unit(ball-receiver)) at closest: >0 collecting, <=0 drifting away
 }
 
 // newPending snapshots the state at a pass's release, using the kicker AI's write-only pass
@@ -165,6 +188,12 @@ func newPending(m *sim.Match, ai *AI, kicker int, players map[int]*sim.Player) p
 		pp.target, pp.targetKnown, pp.reconstructed = m.Ball.Position.Add(geom.Unit(v).Scale(200)), true, true
 	}
 	pp.laneLen = geom.Dist(pp.launchPos, pp.target)
+	pp.recvTargetGap0, pp.recvTargetGapArr = math.Inf(1), math.Inf(1)
+	if pp.recvID >= 0 && pp.targetKnown {
+		if r := players[pp.recvID]; r != nil {
+			pp.recvTargetGap0 = geom.Dist(r.Position, pp.target)
+		}
+	}
 	return pp
 }
 
@@ -174,6 +203,13 @@ func (pp *pendingPass) update(m *sim.Match, players map[int]*sim.Player, prevBal
 	if pp.targetKnown {
 		if d := geom.Dist(ball, pp.target); d < pp.minBallDistToTarget {
 			pp.minBallDistToTarget = d
+			// At the moment the ball is closest to where it was aimed, how far is the intended
+			// receiver from that spot? (Did it stay to collect, or wander off?)
+			if pp.recvID >= 0 {
+				if r := players[pp.recvID]; r != nil {
+					pp.recvTargetGapArr = geom.Dist(r.Position, pp.target)
+				}
+			}
 		}
 		for _, pl := range players {
 			if pl.Team.Side == pp.side && pl.PlayerID != pp.kicker && geom.Dist(pl.Position, pp.target) < pp.regionR {
@@ -195,6 +231,11 @@ func (pp *pendingPass) update(m *sim.Match, players map[int]*sim.Player, prevBal
 				pp.recvRelSpeed = geom.Norm(bv.Sub(rv))
 				if geom.Norm(rv) > 1 && geom.Norm(bv) > 1 {
 					pp.recvAlign = geom.Dot(geom.Unit(rv), geom.Unit(bv))
+				}
+				// Is the receiver moving TOWARD the ball (collecting it) or away (drifting/repositioning)?
+				// dot(unit(recvVel), unit(ball-receiver)): >0 = going to get it, <=0 = leaving it.
+				if toBall := geom.Unit(ball.Sub(r.Position)); toBall != (geom.Vec{}) && geom.Norm(rv) > 1 {
+					pp.recvClosing = geom.Dot(geom.Unit(rv), toBall)
 				}
 				if bd := geom.Unit(bv); bd != (geom.Vec{}) {
 					rel := r.Position.Sub(ball)
@@ -277,9 +318,10 @@ func (pp *pendingPass) trace(c passCause) passTrace {
 		oppContacted: pp.oppContacted, recvID: pp.recvID, reconstructed: pp.reconstructed,
 		recvMinDist: pp.recvMinDist, recvAlign: pp.recvAlign, recvRelSpeed: pp.recvRelSpeed,
 		recvOffLine: pp.recvOffLine, recvSpeed: pp.recvSpeed,
+		recvTargetGap0: pp.recvTargetGap0, recvTargetGapArr: pp.recvTargetGapArr, recvClosing: pp.recvClosing,
 	}
 	if pp.mateRecv != nil {
-		tr.capSpeed = pp.mateRecv.Tuning.CaptureSpeedAt(pp.mateImpactAngle) + pp.mateRecv.Tuning.TrapCaptureBonus*pp.mateRecv.TrapAura()
+		tr.capSpeed = pp.mateRecv.Tuning.CaptureSpeedAt(pp.mateRecv.Tuning.CaptureConeRadians, pp.mateImpactAngle) + pp.mateRecv.Tuning.TrapCaptureBonus*pp.mateRecv.TrapAura()
 	}
 	if pp.oppContacted {
 		tr.oppAlong, tr.oppPerp = projectOntoLane(pp.oppContactPos, pp.launchPos, pp.target)
@@ -328,16 +370,17 @@ func diagShotOnTarget(m *sim.Match, player int, players map[int]*sim.Player) boo
 // with the actual physics numbers, in lieu of pixel-watching): the launch pace, the lane
 // length, how close the ball got to the target, and the reception/contest evidence.
 type passTrace struct {
-	cause                          passCause
-	launchSpeed, laneLen, minDist  float64
-	mateContacted                  bool
-	mateImpactSpeed, mateImpactAng float64
-	capSpeed                       float64
-	oppContacted                   bool
-	oppAlong, oppPerp              float64
-	recvID                         int
-	reconstructed                  bool
+	cause                                                        passCause
+	launchSpeed, laneLen, minDist                                float64
+	mateContacted                                                bool
+	mateImpactSpeed, mateImpactAng                               float64
+	capSpeed                                                     float64
+	oppContacted                                                 bool
+	oppAlong, oppPerp                                            float64
+	recvID                                                       int
+	reconstructed                                                bool
 	recvMinDist, recvAlign, recvRelSpeed, recvOffLine, recvSpeed float64
+	recvTargetGap0, recvTargetGapArr, recvClosing                float64
 }
 
 // classifyMatch runs one game and returns its measured outcome with the failed-pass causes.
@@ -421,6 +464,15 @@ func classifyMatch(m *sim.Match, ais map[int]*AI, ticks int, seed int64, tracer 
 			if in[id].Push {
 				res.pushes++ // count middle-click pushes the AI fires
 			}
+			// Directional speed efficiency: for an actively-moving player, how much of its top speed
+			// the directional curve grants given its facing (1.0 = facing its run, low = crawling
+			// off-axis). Skip the carrier (it faces the ball/target to control, which is correct).
+			if pl := players[id]; pl != nil && geom.Norm(in[id].Move) > 0.01 && in[id].Throttle > 0.01 {
+				if c := m.BallCarrier(); c == nil || c.PlayerID != id {
+					res.speedMulSum += m.View().DirectionalSpeedMul(in[id].Move, pl.Facing)
+					res.speedMulCount++
+				}
+			}
 			r := append([]string{ai.LastAction()}, recent[id]...)
 			if len(r) > 4 {
 				r = r[:4]
@@ -449,6 +501,21 @@ func classifyMatch(m *sim.Match, ais map[int]*AI, ticks int, seed int64, tracer 
 				if inOwnHalf(lastFirmSide, m.Ball.Position.X) {
 					res.ownHalfTurnovers++
 				}
+				// Attribute the loss to the LOSING side's last deliberate action (the pending kick is
+				// from a prior tick, so it reflects what the losing side last did). A shot the opponent
+				// gathered = a GOOD end (the attack was finished by shooting); a pass that reached the
+				// opponent = a bad pass; a clear = a safety boot; anything else (no recent kick by the
+				// losing side) = the ball lost while in possession (a dribble/tackle loss).
+				switch {
+				case pendingActive && pendingSide == lastFirmSide && pendingKind == "shoot":
+					res.endShot++
+				case pendingActive && pendingSide == lastFirmSide && pendingKind == "clear":
+					res.endClear++
+				case pendingActive && pendingSide == lastFirmSide && pendingKind == "pass":
+					res.endBadPass++
+				default:
+					res.endLostDribble++
+				}
 			}
 			lastFirmSide = c.Team.Side
 		}
@@ -457,6 +524,7 @@ func classifyMatch(m *sim.Match, ais map[int]*AI, ticks int, seed int64, tracer 
 			if pendingActive && pendingKind == "shoot" {
 				res.scored++
 			}
+			res.endGoal++ // a goal is the ultimate shot-end: the attack finished by scoring (and flips possession via the kickoff)
 			resolvePass(true)
 			prevGoals = g
 			prevSpeed = geom.Norm(m.Ball.Velocity)
@@ -516,7 +584,7 @@ func (res *diagResult) annotateMiscontrol(pp *pendingPass) {
 		res.miscontrolOther++
 		return
 	}
-	capSpeed := r.Tuning.CaptureSpeedAt(pp.mateImpactAngle) + r.Tuning.TrapCaptureBonus*r.TrapAura()
+	capSpeed := r.Tuning.CaptureSpeedAt(r.Tuning.CaptureConeRadians, pp.mateImpactAngle) + r.Tuning.TrapCaptureBonus*r.TrapAura()
 	switch {
 	case pp.mateImpactAngle > r.Tuning.CaptureConeRadians:
 		res.miscontrolOffCone++
@@ -556,15 +624,20 @@ func diagSweep(seeds []int64, skill Skill, mutateTune func(*aiTuning)) []diagRes
 
 // diagStats are the aggregate numbers reported for a sweep.
 type diagStats struct {
-	n                                              int
-	pctMean, pctStd, pctMin, pctMax                float64
-	passesMean, clearsMean, shotsMean              float64
-	onTargetMean, scoredMean, pushesMean           float64
-	maxHoldSecs, meanHoldSecs, longHoldsPerGame    float64 // hoarding metric
-	turnoversMean, ownHalfTurnoversMean            float64 // possession lost to the opponent (and the own-half subset)
-	totPasses, totDone, totFails                   int
-	causes                                         [numPassCauses]int
-	miscontrolOffCone, miscontrolHot, miscontrolOther int
+	n                                           int
+	pctMean, pctStd, pctMin, pctMax             float64
+	passesMean, clearsMean, shotsMean           float64
+	onTargetMean, scoredMean, pushesMean        float64
+	maxHoldSecs, meanHoldSecs, longHoldsPerGame float64 // hoarding metric
+	turnoversMean, ownHalfTurnoversMean         float64 // possession lost to the opponent (and the own-half subset)
+	// Possession-outcome attribution (the north-star). shotEndedFrac = (endShot+endGoal)/ends should
+	// be the MAJORITY; mistakeFrac = (endBadPass+endLostDribble)/ends should fall.
+	endShot, endClear, endBadPass, endLostDribble, endGoal int
+	shotEndedFrac, mistakeFrac                             float64
+	speedEff                                               float64 // mean directional speed multiplier achieved by moving off-ball players (1.0 = run flat-out toward aim; low = crawl off-axis)
+	totPasses, totDone, totFails                           int
+	causes                                                 [numPassCauses]int
+	miscontrolOffCone, miscontrolHot, miscontrolOther      int
 }
 
 func aggregate(results []diagResult) diagStats {
@@ -575,6 +648,8 @@ func aggregate(results []diagResult) diagStats {
 	}
 	pcts := make([]float64, 0, s.n)
 	var sumPasses, sumClears, sumShots, sumOnTarget, sumScored, sumPushes, sumLongHolds, holdSum, holdCount, maxHold, sumTO, sumOwnTO int
+	var speedMulSum float64
+	var speedMulCount int
 	for _, r := range results {
 		pcts = append(pcts, r.passPct())
 		s.totPasses += r.passes
@@ -590,6 +665,13 @@ func aggregate(results []diagResult) diagStats {
 		holdCount += r.holdCount
 		sumTO += r.turnovers
 		sumOwnTO += r.ownHalfTurnovers
+		s.endShot += r.endShot
+		s.endClear += r.endClear
+		s.endBadPass += r.endBadPass
+		s.endLostDribble += r.endLostDribble
+		s.endGoal += r.endGoal
+		speedMulSum += r.speedMulSum
+		speedMulCount += r.speedMulCount
 		if r.maxHoldTicks > maxHold {
 			maxHold = r.maxHoldTicks
 		}
@@ -607,6 +689,13 @@ func aggregate(results []diagResult) diagStats {
 	}
 	s.turnoversMean = float64(sumTO) / float64(s.n)
 	s.ownHalfTurnoversMean = float64(sumOwnTO) / float64(s.n)
+	if speedMulCount > 0 {
+		s.speedEff = speedMulSum / float64(speedMulCount)
+	}
+	if ends := s.endShot + s.endClear + s.endBadPass + s.endLostDribble + s.endGoal; ends > 0 {
+		s.shotEndedFrac = float64(s.endShot+s.endGoal) / float64(ends)
+		s.mistakeFrac = float64(s.endBadPass+s.endLostDribble) / float64(ends)
+	}
 	s.totFails = s.totPasses - s.totDone
 	s.pctMean, s.pctStd = meanStd(pcts)
 	sort.Float64s(pcts)
@@ -648,6 +737,9 @@ func report(t *testing.T, label string, s diagStats) {
 		s.meanHoldSecs, s.maxHoldSecs, s.longHoldsPerGame)
 	t.Logf("  turnovers: %.1f/game (own-half %.1f/game -- the dangerous ones)",
 		s.turnoversMean, s.ownHalfTurnoversMean)
+	t.Logf("  possession ends: shot=%d goal=%d clear=%d badPass=%d lostDribble=%d | shotEnded %.1f%% (NORTH-STAR: majority) mistake %.1f%%",
+		s.endShot, s.endGoal, s.endClear, s.endBadPass, s.endLostDribble, 100*s.shotEndedFrac, 100*s.mistakeFrac)
+	t.Logf("  directional speed-eff: %.3f (1.0 = moving players run flat-out toward their aim; low = crawling off-axis)", s.speedEff)
 	var sum int
 	for c := passCause(0); c < numPassCauses; c++ {
 		sum += s.causes[c]
@@ -725,9 +817,40 @@ func TestPassScrub(t *testing.T) {
 			t.Logf("   launch=%.0f laneLen=%.0f minDist=%.0f | mate=%v impact=%.0f ang=%.2f cap=%.0f | opp=%v along=%.0f perp=%.0f | recv=%d recon=%v",
 				tr.launchSpeed, tr.laneLen, tr.minDist, tr.mateContacted, tr.mateImpactSpeed, tr.mateImpactAng, tr.capSpeed,
 				tr.oppContacted, tr.oppAlong, tr.oppPerp, tr.recvID, tr.reconstructed)
-			t.Logf("        receiver@closest: minDist=%.0f offLine=%.0f recvSpeed=%.0f align=%.2f relSpeed=%.0f",
-				tr.recvMinDist, tr.recvOffLine, tr.recvSpeed, tr.recvAlign, tr.recvRelSpeed)
+			t.Logf("        receiver@closest: minDist=%.0f offLine=%.0f recvSpeed=%.0f align=%.2f relSpeed=%.0f | tgtGap launch=%.0f arrival=%.0f",
+				tr.recvMinDist, tr.recvOffLine, tr.recvSpeed, tr.recvAlign, tr.recvRelSpeed, tr.recvTargetGap0, tr.recvTargetGapArr)
 		}
+	}
+	// Aggregate the target-drift signal across ALL failed passes with a known receiver: was the
+	// receiver near where the pass was aimed at LAUNCH, and did it stay there until ARRIVAL? This
+	// distinguishes "carrier aimed at empty space" (gap0 large) from "receiver abandoned the spot the
+	// pass was aimed at" (gap0 small, gapArr large) -- the two ways a pass misses an OPEN man.
+	var n, onTargetAtLaunch, driftedOff, collecting, drifting int
+	var sumGap0, sumGapArr float64
+	for _, tr := range traces {
+		if tr.recvID < 0 || math.IsInf(tr.recvTargetGap0, 1) {
+			continue
+		}
+		n++
+		sumGap0 += tr.recvTargetGap0
+		if !math.IsInf(tr.recvTargetGapArr, 1) {
+			sumGapArr += tr.recvTargetGapArr
+		}
+		if tr.recvTargetGap0 < 40 {
+			onTargetAtLaunch++
+			if tr.recvTargetGapArr > 60 {
+				driftedOff++
+			}
+		}
+		if tr.recvClosing > 0.2 {
+			collecting++ // moving toward the ball (going to collect it)
+		} else if tr.recvClosing < -0.2 {
+			drifting++ // moving away from the ball (not collecting -- the drift bug)
+		}
+	}
+	if n > 0 {
+		t.Logf("TARGET-DRIFT over %d failed passes: mean gap0=%.0f gapArr=%.0f | on-target@launch=%d/%d drifted-off=%d | at closest: COLLECTING(towards)=%d DRIFTING(away)=%d neutral=%d",
+			n, sumGap0/float64(n), sumGapArr/float64(n), onTargetAtLaunch, n, driftedOff, collecting, drifting, n-collecting-drifting)
 	}
 }
 

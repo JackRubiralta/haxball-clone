@@ -36,6 +36,12 @@ const (
 	ballPushFactor    = 1.5
 )
 
+// seatTaper is the angular band (radians, ~15deg) PAST the reliable capture-cone edge over which a
+// clean capture's seating of the ball's stray sideways momentum eases from full to nothing. Inside
+// the cone a catch seats the ball dead (sticks like a dead-on one); past this band a glancing
+// contact toward the player's side keeps its glide and slides off instead of being magnetised in.
+const seatTaper = 0.26
+
 // centerPullFalloffExp exaggerates how fast the centre-pull weakens with distance: the pull is
 // strongest near the surface and falls off as (1 - t)^centerPullFalloffExp toward the pull-radius
 // edge (t = 0 at the surface, 1 at the edge), so the player only draws in a ball that is already
@@ -110,30 +116,20 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 			// and springs off harder, so the ball flies further. Coefficient 0 = baseline.
 			quality := player.touchCoef
 
-			// Cone factor: 1 inside the reliable capture cone, ramping to 0 over the
-			// soft falloff past it. Outside the cone the effective capture speed drops
-			// to the side/back floor, so the ball bounces off; trapping raises it back.
-			// The team possession buff widens the cone slightly for the owning team (and
-			// narrows it for the conceding team) via the touch coefficient.
+			// Capture speed is FLAT at the front peak inside the reliable capture cone, then follows
+			// the CaptureSpeed curve from the cone edge out to the side/back floor at pi -- exactly
+			// like Stickiness/Control/CenterPull (there is no separate soft-falloff band). So a ball
+			// captured dead-on is captured ANYWHERE in the cone, and only PAST the edge does the
+			// threshold fall and the ball bounce. The team possession buff widens the cone for the
+			// owning team (and narrows it for the conceding team) via the touch coefficient.
 			coneRadians := player.Tuning.CaptureCone(quality, player.trapAura)
+			captureSpeed := player.Tuning.CaptureSpeedAt(coneRadians, angle)
+			// cone: 1 inside the reliable cone, easing to 0 at the back ALONG the same capture curve;
+			// it drives the off-front bounce liveliness (and the impulse split) below.
 			cone := 1.0
-			if over := angle - coneRadians; over > 0 {
-				if player.Tuning.CaptureConeSoft <= 0 {
-					cone = 0
-				} else if cone = 1 - over/player.Tuning.CaptureConeSoft; cone < 0 {
-					cone = 0
-				}
+			if front, back := player.Tuning.CaptureSpeed.Front, player.Tuning.CaptureSpeed.Back; front != back {
+				cone = (captureSpeed - back) / (front - back)
 			}
-
-			// Capture speed is FLAT at the front peak inside the reliable cone (cone == 1), then drops
-			// linearly to the side/back floor across the soft band (cone 1 -> 0), then stays at the
-			// floor. So a ball captured dead-on is captured ANYWHERE in the cone -- it does not start
-			// bouncing just because it is a touch off-centre. (This uses the front peak, NOT
-			// CaptureSpeedAt(angle), which decayed with angle even inside the cone and made an
-			// off-centre touch bounce at the same speed a dead-on one stuck. This mirrors how
-			// Stickiness/Control/CenterPull are full-strength within their cone, then curve from the edge.)
-			side := player.Tuning.CaptureSpeed.Back
-			captureSpeed := side + (player.Tuning.CaptureSpeed.Front-side)*cone
 			captureSpeed *= player.Tuning.TouchQuality.CaptureMul(quality)
 			captureSpeed += player.Tuning.TrapCaptureBonus * player.trapAura
 
@@ -167,6 +163,32 @@ func handleBallToPlayerInteraction(ball *Ball, player *Player, deltaTime float64
 				}
 			}
 			ball.Velocity = ball.Velocity.Sub(normal.Scale((1 + restitution) * relativeNormal * impulseScale))
+
+			// Seat a clean CAPTURE off-centre: removing the inbound NORMAL velocity (above) stops a
+			// dead-on catch dead, but an off-centre catch still carries its TANGENTIAL (glancing)
+			// momentum and would slide off the surface instead of sticking -- so a ball caught a touch
+			// off the dead-on line bounces out where a straight-on one sticks. So a capture also absorbs
+			// the STRAY tangential momentum (the sideways speed the player's own hold did NOT create --
+			// see handleBallToPlayerAttraction's held/stray split). It is absorbed in FULL throughout the
+			// reliable capture cone -- so a catch anywhere in the cone seats like a dead-on one -- then
+			// eased to 0 across a short band PAST the cone edge (seatTaper, NOT the slow CaptureSpeed
+			// curve, which is still ~0.9 well past the cone). So past the cone the glide is left alone: a
+			// fast shot grazing the player's side slides past instead of being magnetised in, and a ball
+			// already being carried keeps its hold-induced orbit (only the stray part is taken).
+			if restitution == 0 {
+				seatFrac := 1.0
+				if over := angle - coneRadians; over > 0 {
+					if seatFrac = 1 - over/seatTaper; seatFrac < 0 {
+						seatFrac = 0
+					}
+				}
+				if seatFrac > 0 {
+					tHat := geom.NewVec(-normal.Y, normal.X) // CCW unit tangent
+					oAct := geom.Dot(ball.Velocity.Sub(player.Velocity), tHat)
+					stray := oAct - clampOrbital(player.heldOrbital, oAct)
+					ball.Velocity = ball.Velocity.Sub(tHat.Scale(stray * seatFrac))
+				}
+			}
 
 			// A really hard hit shoves the player back -- the only place the ball moves the
 			// player. The approach momentum above ballPushThreshold transfers to the player along

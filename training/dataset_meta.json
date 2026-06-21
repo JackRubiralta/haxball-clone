@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "feature_dim": 355,
+  "self_dim": 18,
+  "ball_dim": 8,
+  "global_dim": 12,
+  "ent_dim": 15,
+  "max_teammates": 10,
+  "max_opponents": 11,
+  "head_names": [
+    "move_dir",
+    "throttle",
+    "aim_bin",
+    "ability",
+    "cancel"
+  ],
+  "head_sizes": [
+    9,
+    3,
+    16,
+    4,
+    2
+  ],
+  "aim_arc_max": 0.22689280275926285,
+  "shoot_charge_norm": 0.75,
+  "weights_format_version": 1,
+  "weights_arch_id": 1
+}

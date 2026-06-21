@@ -43,6 +43,24 @@ func BuildWith(teamSize int, seed int64, mutate func(*config.Config), factory fu
 	return Match{M: m, Controllers: ctrls}
 }
 
+// BuildSizedWith is BuildWith with independent per-side roster sizes, for asymmetric drill
+// scenarios (e.g. a 3v1 rondo). The controllers come from factory(playerID, side); positions are
+// the standard formation until the caller repositions them for a scenario.
+func BuildSizedWith(homeSize, awaySize int, seed int64, mutate func(*config.Config), factory func(id int, side sim.Side) control.Controller) Match {
+	cfg := config.Default()
+	cfg.Seed = seed
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	field := sim.NewFieldFromGeometry(cfg.Geometry)
+	m := sim.BuildMatchFromConfigSized(field, homeSize, awaySize, cfg)
+	ctrls := make(map[int]control.Controller, len(m.Players))
+	for _, p := range m.Players {
+		ctrls[p.PlayerID] = factory(p.PlayerID, p.Team.Side)
+	}
+	return Match{M: m, Controllers: ctrls}
+}
+
 // BuildAIMatch builds a match with every player an AI at the given skill.
 func BuildAIMatch(teamSize int, seed int64, skill control.Skill, mutate func(*config.Config)) Match {
 	return BuildWith(teamSize, seed, mutate, func(id int, _ sim.Side) control.Controller {
