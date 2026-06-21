@@ -99,6 +99,36 @@ func (a *AI) desiredCharge(distToGoal float64) float64 {
 	return clampFloat(smoothstep(a.tune.tapRange, a.tune.fullRange, distToGoal), a.tune.minShootCharge, 1)
 }
 
+// passAimWant returns where the carrier should FACE, and the charge it should wind to, so that a PASS
+// leaves the ball travelling straight at a.shotTarget at the calibrated arrive speed -- accounting for
+// the ball's CURRENT velocity. The sim ADDS the kick impulse to the ball's existing velocity (and aims
+// it ~97% along the facing), so facing the target directly sends a moving ball off by its sideways
+// velocity ("passes a bit off") and, off a fast ball, forces the charge to build huge to line up (the
+// "way too much power" rocket). Inverting the launch physics: to land velocity `s*u` at the target, the
+// impulse must supply L = s*u - ballVel; so face unit(L) and charge to |L|. Then launch = ballVel + L =
+// s*u -> on target, soft, at low charge. Uses only observable state (ball pos/vel, own pos/tuning) and
+// reads Shoot.Front/MinShootFactor live, so it auto-calibrates if the physics is retuned. The
+// launchAligned release gate (vs the real target) still fine-tunes the residual aim-assist/radial term.
+func (a *AI) passAimWant(p perception) (aim geom.Vec, charge float64) {
+	u := geom.Unit(a.shotTarget.Sub(p.ball))
+	if u == (geom.Vec{}) {
+		return a.aimToward(p, a.shotTarget), a.shotDesired // degenerate (ball on the target): no compensation
+	}
+	s := a.passSpeedFor(p, a.shotTarget)
+	l := u.Scale(s).Sub(p.ballVel) // the impulse vector the kick must supply
+	dir := geom.Unit(l)
+	if dir == (geom.Vec{}) {
+		dir = u
+	}
+	aim = p.me.Position().Add(dir.Scale(aimProjectDist)) // FACE unit(L)
+	front := p.me.Tuning().Shoot.Front
+	msf := p.me.Tuning().MinShootFactor
+	if front > 0 && msf < 1 {
+		charge = clampFloat((geom.Norm(l)/front-msf)/(1-msf), 0, 1) // power^-1(|L|)
+	}
+	return aim, charge
+}
+
 // shootAt commits to (and continues) a charged shot at target. It faces the target and
 // drives at it so the control force keeps the ball in front and on the shooting line,
 // holds the shoot button to build charge, and releases (firing) once lined up and charged
@@ -114,10 +144,18 @@ func (a *AI) shootAt(p perception, in sim.Intent, target geom.Vec, desired, base
 		a.chargedAt = 0
 	}
 
-	// Face the target smoothly while keeping the ball on the front. If the ball is at our
-	// back this actively scoops it round to the front first (instead of holding a charge and
-	// waiting for it), then lines up the shot -- the same recover-then-turn rule as dribbling.
-	in.Aim = a.aimKeepingBall(p, a.shotTarget)
+	// Face smoothly while keeping the ball on the front (scooping a strayed ball home first). For a
+	// PASS, face the VELOCITY-COMPENSATED direction (passAimWant) and commit the matching low charge, so
+	// the moving ball launches straight at the target at the soft calibrated speed instead of off-by-its-
+	// -sideways-velocity (and without the charge escalating into a rocket). For a shot/clear, face the
+	// target directly as before.
+	aimWant := a.shotTarget
+	if a.passReceiver != nil {
+		w, ch := a.passAimWant(p)
+		aimWant = w
+		a.shotDesired = ch // recompute each tick: tracks the (changing) ball velocity
+	}
+	in.Aim = a.aimKeepingBall(p, aimWant)
 
 	// Capability boundary: a human cannot trap and charge a kick in the same tick (the three mouse
 	// buttons are mutually exclusive). SEQUENCE the two instead of combining them: if the ball has
