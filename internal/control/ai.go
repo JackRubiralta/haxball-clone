@@ -40,6 +40,8 @@ type AI struct {
 	recovering     bool             // hysteretic: facing the ball to scoop it back to the front (anti-jitter)
 	recoverTrap    bool             // previous tick we were trapping to scoop the ball home mid-commit (for the cancel/release sequencing)
 	faceActioning  bool             // hysteretic (faceAim): currently facing the ACTION (ball) vs facing travel direction, with a release band so the directional facing policy doesn't flip-flop and jitter
+	aimTarget      geom.Vec         // off-ball: the DESIRED facing point (uncapped), turned toward at maxTurnRad every tick (incl. reaction-cache ticks) so reaction latency delays the decision, not the turn
+	aimSmooth      bool             // the last decision was an off-ball one whose aim should be smoothly turn-rate-tracked toward aimTarget on cached ticks
 
 	// Diagnostic-only snapshot of the last pass this controller committed to, read ONLY by the
 	// failed-pass classifier in the package's internal tests. It is WRITE-ONLY from the AI's
@@ -101,8 +103,18 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 
 	// Reaction latency: only re-decide every reactTicks ticks, reusing the last intent in
 	// between. This models human reaction time and gives lower skill tiers a real handicap.
+	// The reaction delay applies to the DECISION (what to aim at), NOT to the turning itself: a
+	// human keeps rotating toward their last-decided target at TurnRate every tick. So for off-ball
+	// aims (instant aimToward), keep advancing the facing toward the stored target at maxTurnRad on
+	// the cached ticks too -- otherwise the facing would either snap (cheat) or, if frozen between
+	// decisions, crawl at half the human turn rate (sluggish). The on-ball carrier is left alone (its
+	// aimKeepingBall turn is already modulated for ball control and is replayed as-is).
 	if a.haveCached && view.Tick() < a.nextDecision {
-		return a.cached
+		out := a.cached
+		if a.aimSmooth && a.aimTarget != (geom.Vec{}) {
+			out.Aim = a.turnAimToward(me, a.aimTarget)
+		}
+		return out
 	}
 
 	p := perceive(view, me, a.dt(view))
@@ -138,14 +150,21 @@ func (a *AI) Intent(view sim.View) sim.Intent {
 	in = enforceAbilityExclusivity(in)
 
 	in = a.applyMoveJitter(p, in)
-	// Cap how fast the AI re-orients while it is AWAY from the ball (where it uses instant aimToward
-	// to point around and there is no ball-control feedback), so it can't snap-turn -- this applies
-	// to the KEEPER too, which spends almost all its time off the ball and would otherwise whip
-	// round instantly toward shots and distribution. Near the ball the facing drives the
-	// centre-pull/scoop and is already smoothed by aimKeepingBall; rate-limiting it there fights
-	// that control loop and jitters, so anyone (keeper included) close to the ball stays responsive.
-	if p.gapToBall > aimCapGap {
-		in = a.capAim(p, in)
+	// Capability boundary: the AI's facing is set INSTANTLY in the sim (match.go FaceTowards), unlike a
+	// human whose cursor turn is rate-limited to TurnRate. So the AI must rate-limit its OWN aim, or it
+	// snap-turns (measured: a ~180 deg flip in one tick, both by a presser crowding the ball AND by the
+	// carrier's shield() facing, which uses instant aimToward). Fix uniformly: record the DESIRED aim
+	// target and turn the facing toward it by at most maxTurnRad -- here AND on the cached ticks above --
+	// so the AI tracks at the human rate every tick and never snaps. This is a NO-OP for aims already
+	// within maxTurnRad of the facing (aimKeepingBall's dribble/shoot/pass turn, with its gentler
+	// ball-control modulation, is preserved); it only reins in the instant aimToward paths (shield,
+	// presser, receiver, keeper, off-ball). Reaction latency thus delays the DECISION, not the turn.
+	if in.Aim != (geom.Vec{}) {
+		a.aimTarget = in.Aim
+		a.aimSmooth = true
+		in.Aim = a.turnAimToward(me, in.Aim)
+	} else {
+		a.aimSmooth = false
 	}
 
 	a.cached = in

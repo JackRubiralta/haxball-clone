@@ -360,9 +360,13 @@ func TestBackBallShootRecovers(t *testing.T) {
 			d += 2 * math.Pi
 		}
 		if math.Abs(d) > 0.02 {
-			if s := math.Copysign(1, d); prevSign != 0 && s != prevSign {
-				reversals++
-			} else {
+			// Count a reversal only when the turn DIRECTION flips; always advance prevSign (the
+			// earlier form left prevSign stale after a flip, so it miscounted a long smooth turn -- e.g.
+			// the rate-limited recovery scoop -- as a reversal every tick). Matches TestNoFacingJitter.
+			if s := math.Copysign(1, d); s != 0 {
+				if prevSign != 0 && s != prevSign {
+					reversals++
+				}
 				prevSign = s
 			}
 		}

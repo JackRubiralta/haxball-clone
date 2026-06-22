@@ -266,8 +266,8 @@ Previous values for knobs that were changed, kept here so they can be restored:
 - `PullRange`: `8` (now `5`)
 - `TrapRangeBonus`: `14` (now `6`)
 - `Restitution` (front / back): `0.08 / 0.35` → `0.21 / 0.24` (now `0.19 / 0.22` — baseline lowered another 0.02 so contacts grip a touch more)
-- `CaptureSpeed` (front / back): `494 / 182` (now a uniform `320 / 320` — a ball arriving slower than 320 along the contact normal sticks, faster bounces)
-- `CaptureConeRadians`: `65°` (now `50°` — the reliable-capture cone half-angle)
+- `CaptureSpeed` (front / back): `494 / 182` (now a uniform `230 / 230` — a ball arriving slower than 230 along the contact normal sticks, faster bounces)
+- `CaptureConeRadians`: `65°` (now `42.5°` — the reliable-capture cone half-angle)
 
 ## Physics & player variables
 
@@ -346,13 +346,13 @@ Exponential.
 
 - **Restitution** `0.19 / 0.22` (InvQuad) — bounciness on a *hard* contact; front `0.19` (kept low for a
   firmer front capture so a contact grips rather than springing off the feet); back `0.22`, springier behind.
-- **CaptureSpeed** `320 / 320` (Linear) — impact speed *below which the ball sticks*
-  (restitution 0) instead of bouncing. The threshold is **flat at the front peak `320` everywhere
+- **CaptureSpeed** `230 / 230` (Linear) — impact speed *below which the ball sticks*
+  (restitution 0) instead of bouncing. The threshold is **flat at the front peak `230` everywhere
   inside the reliable capture cone** (so a ball that sticks dead-on also sticks a touch off-centre —
   and a clean in-cone catch now seats the ball's sideways glide too, so an off-centre catch sticks
   like a dead-on one instead of sliding off), then falls toward the side/back floor past the cone, so
   **past the cone** off-front/side hits stick much less. A full-power shot (575) still clears it even at
-  the team buff (×1.25 → 400), so an opponent never captures a blast — it deflects off.
+  the team buff (×1.25 → 288), so an opponent never captures a blast — it deflects off.
 - **CenterPull** `770 / 0` (InvQuad) — spring drawing a near-but-not-touching ball in to
   make contact.
 - **Stickiness** `350 / 30` (InvQuad) — capped adhesion holding a touching ball until a
@@ -383,11 +383,11 @@ strength inside its half-angle, then fades** toward the back. Cones are written 
 **Ball-control cones** (full strength inside the half-angle, then the named angle curve decays to
 its "behind" value — see *angle curves* above for the endpoints):
 
-- **Capture cone — ±50° (`CaptureConeRadians`).** Inside ±50° the ball reliably sticks: the
-  capture-speed threshold is at its front peak (**320**) and a clean catch **seats fully** — even an
+- **Capture cone — ±42.5° (`CaptureConeRadians`).** Inside ±42.5° the ball reliably sticks: the
+  capture-speed threshold is at its front peak (**230**) and a clean catch **seats fully** — even an
   off-centre catch within the cone has its sideways glide absorbed, so it sticks like a dead-on one
   instead of sliding off. Past the cone the threshold follows the `CaptureSpeed` curve toward the
-  side/back floor (currently *flat*, since front == back == `320`), and off-front hits **bounce
+  side/back floor (currently *flat*, since front == back == `230`), and off-front hits **bounce
   livelier** (restitution ×`(1+(1-cone))`, up to 2× — no extra liveliness while that curve is flat).
   Widened by a team **buff +5°** (`ConeBonusRadians`) and a held **trap +20°** (`CaptureConeTrapBonus`);
   **narrowed by a team debuff −16°** (`ConeDebuffRadians` — asymmetric, so a marked opponent catches
@@ -406,7 +406,7 @@ its "behind" value — see *angle curves* above for the endpoints):
 
 - **Fire cone — ±90° (180° total, `fireConeHalfAngle`) — the full front hemisphere.** Whether a shot
   fires at all, *and* where the aim assist applies: a shot only fires within ±90° of facing, and
-  `ShootAimAssist 0.97` steers its launch toward your facing by the same amount everywhere in the
+  `ShootAimAssist 1.0` steers its launch toward your facing by the same amount everywhere in the
   cone. Aim and fire are one and the same region — there is no separate "aim cone".
 - **Full-power cone — ±30° (60° total, `fullPowerHalfAngle`).** *How hard a shot fires.* Full power
   anywhere inside ±30°, then power tapers linearly (`shotFalloffExp 1.0`) to 0 at the ±90° fire-cone
@@ -569,22 +569,22 @@ which scales **CaptureSpeed** and **Restitution** in the ball contact (`TouchQua
 `handleBallToPlayerInteraction`):
 - **Owning team** → `OwnTeamMax·strength` (up to **+1**): capture up, bounce down → clean,
   sticky touches that scale up as the charge builds — a **strengthened** buff: full-charge capture
-  ≈ front × `CaptureBest`, 320 × 1.25 ≈ **400**, so a fully-built possession receives much more firmly.
+  ≈ front × `CaptureBest`, 230 × 1.25 ≈ **288**, so a fully-built possession receives much more firmly.
 - **Other team** → `OtherTeam·strength` (down to **−1.0**): capture down, bounce up (up to
   ×1.43) → the ball springs off them, more so the more possession you've built (a blocked shot flies).
 - **Neither team** (a loose ball) → coefficient 0 = the baseline curves, unchanged.
 - **Capture cone** → scales ASYMMETRICALLY with the coefficient (see `captureConeRadians`):
   the buff WIDENS the owning team's reliable cone (`ConeBonusRadians` ≈5° at full charge — biggest
   cone), while the debuff NARROWS the conceding team's more (`ConeDebuffRadians` ≈16° at full enemy
-  charge — capture cone shrinks to ~34°, well under the 50° baseline). So a debuffed opponent catches
+  charge — capture cone shrinks to ~26.5°, well under the 42.5° baseline). So a debuffed opponent catches
   less off the dead-on line. Dead-on (angle 0) is always inside the cone, so straight-on
   shots/captures are unchanged — only off-axis catching shrinks.
 
 *Variables:* **OwnTeamMax** `+1.0`, **OtherTeam** `−1.0`, and the multiplier endpoints
-(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.628 / 1.25` (buff strengthened from
-`1.1`), **RestitutionWorst/Best** `1.43 / 0.75` (buff deadens a bounce more, from `0.844`). The
-capture band front is `320`, so the buffed/debuffed *absolute* captures scale with it —
-buffed capture ≈ **400** (320 × 1.25), debuffed capture ≈ **201** (320 × 0.628).
+(anchored at 1.0 for coefficient 0) **CaptureWorst/Best** `0.428 / 1.25` (buff strengthened from
+`1.1`, debuff worsened from `0.628`), **RestitutionWorst/Best** `1.43 / 0.75` (buff deadens a bounce
+more, from `0.844`). The capture band front is `230`, so the buffed/debuffed *absolute* captures
+scale with it — buffed capture ≈ **288** (230 × 1.25), debuffed capture ≈ **98** (230 × 0.428).
 
 The two on-screen **test bars** over each player show **player possession** (top, white) and
 the **team charge** (bottom — green while that team is boosted, red while it is the conceding
@@ -646,8 +646,8 @@ A left-click shot is governed by **one cone** (where it fires and aims) and **on
   fires, and where it aims.* The left-click shot works across the whole front hemisphere; a ball at
   or behind ±90° can't be shot (poke it with the middle-click push instead). The **aim assist** lives
   on this same cone — there is no separate aim cone: a shot is kicked along the radial (player→ball),
-  but anywhere in the cone the launch is blended toward your `Facing` by **ShootAimAssist** `0.97`
-  (`0` = raw radial physics, `1` = exactly along the facing, `0.97` = 97% of the way there), applied
+  but anywhere in the cone the launch is blended toward your `Facing` by **ShootAimAssist** `1.0`
+  (`0` = raw radial physics, `1` = exactly along the facing — currently `1.0`, so a shot fires exactly along your facing), applied
   **uniformly** with no angular falloff — so the shot goes where you aim equally well anywhere in
   front, centred or out at the side.
 - **Full-power cone — ±30° (60° total, `fullPowerHalfAngle`).** *How hard it fires.* Power is

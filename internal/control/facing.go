@@ -176,3 +176,23 @@ func (a *AI) capAim(p perception, in sim.Intent) sim.Intent {
 	in.Aim = p.me.Position().Add(capped.Scale(aimProjectDist))
 	return in
 }
+
+// turnAimToward returns an Aim point that rotates the player's current facing toward `target` by at
+// most maxTurnRad, re-projected far. Like capAim but takes the SelfView + target directly so it can run
+// on the reaction-cache ticks (no full perception). Reads only the AI's own facing/position. This is
+// how an off-ball AI turns toward its decided target at the human-capped rate EVERY tick.
+func (a *AI) turnAimToward(me sim.SelfView, target geom.Vec) geom.Vec {
+	facing := me.Facing()
+	desired := geom.Unit(target.Sub(me.Position()))
+	if facing == (geom.Vec{}) || desired == (geom.Vec{}) {
+		return target
+	}
+	// Already within the turn cap (e.g. aimKeepingBall's own modulated turn): pass the aim through
+	// UNCHANGED. Re-projecting it would round-trip through unit->scale->unit and perturb it by a hair,
+	// which is enough to flip the recovery hysteresis and jitter the facing. Only cap when needed.
+	if geom.AngleBetween(facing, desired) <= a.tune.maxTurnRad+1e-6 {
+		return target
+	}
+	capped := rotateToward(facing, desired, a.tune.maxTurnRad)
+	return me.Position().Add(capped.Scale(aimProjectDist))
+}

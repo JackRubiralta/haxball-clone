@@ -30,9 +30,8 @@ func TestShootAimAssist(t *testing.T) {
 		return math.Acos(clamp1(geom.Dot(geom.Unit(b.Velocity), p.Facing)))
 	}
 
-	// Assist is now UNIFORM (0.97) across the whole front hemisphere -- no angular degradation --
-	// so a ball anywhere in front fires within a couple of degrees of the facing. (The launched
-	// offset isn't exactly zero because the assist is 97%, not 100%, leaving a 3% residual.)
+	// Assist is now UNIFORM (1.0 = 100%) across the whole front hemisphere -- no angular degradation --
+	// so a ball anywhere in front fires essentially exactly along the facing (full assist, no residual).
 	for _, off := range []float64{0.244, 0.6, 1.0, 1.4} { // ~14, 34, 57, 80 deg
 		if got := shotAngleOff(off); got > 0.05 { // ~3deg: strongly assisted at every front angle
 			t.Errorf("aim assist should fire ~along the facing across the hemisphere: launched %.3f rad off at ball-offset %.3f rad", got, off)

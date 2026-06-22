@@ -139,7 +139,7 @@ func DefaultPlayerTuning() PlayerTuning {
 		PullRange:       5,                     // base centre-pull reach (the dribble attraction; a held trap extends this)
 		PossessionRange: 5,                     // possession-contest reach: same value as PullRange, but a SEPARATE knob and never trap-extended (see possessionReach)
 		Restitution:     CurveSpec{0.19, 0.22}, // baseline lowered 0.02 (0.21/0.24 -> 0.19/0.22): a hard contact deflects a little softer so it grips more; back 0.22 still springier behind. (NB touchboost_test asserts front > 0.20 -- lower that floor when regenerating sim tests.)
-		CaptureSpeed:    CurveSpec{320, 320}, // uniform 320 capture speed front/back (was 494/182): a ball arriving below 320 along the contact normal sticks, faster bounces. Buffed endpoint 320*1.25=400 stays under a full shot (575), so a point-blank blast still bounces.
+		CaptureSpeed:    CurveSpec{230, 230}, // uniform 230 capture speed front/back (was 494/182): a ball arriving below 230 along the contact normal sticks, faster bounces. Buffed endpoint 230*1.25=288 stays under a full shot (575), so a point-blank blast still bounces.
 		CenterPull:      CurveSpec{770, 0},     // baseline pull trimmed a touch (800 -> 770)
 		Stickiness:      CurveSpec{350, 30},    // front 350 baseline sticky hold; back 30 small hold behind the player
 		Control:         CurveSpec{1200, 320},  // roll-to-front: baseline front 1200, back 320; a held trap multiplies it by (1+TrapControlBonus)
@@ -147,7 +147,7 @@ func DefaultPlayerTuning() PlayerTuning {
 		ControlDamping:  11,
 		OrbitStick:      8,
 
-		CaptureConeRadians: 0.8726646259971648, // 50deg reliable-capture cone (was 65deg): full capture within it, then past the edge the ball bounces (restitution) -- the off-cone bounce-liveliness boost is keyed to this same cone
+		CaptureConeRadians: 0.7417649320975948, // 42.5deg reliable-capture cone (reduced 15% from 50deg): full capture within it, then past the edge the ball bounces (restitution) -- the off-cone bounce-liveliness boost is keyed to this same cone
 
 		ControlConeRadians:         0.3839724354387525,  // 22deg: full roll-to-front control within this cone (44deg total)
 		ControlConePossessionBonus: 0.08726646259971647, // +5deg at full player possession (-> 27deg)
@@ -175,7 +175,7 @@ func DefaultPlayerTuning() PlayerTuning {
 		ShootSpeedFactor: 0.35,
 		ShootAccelFactor: 0.4,
 
-		ShootAimAssist: 0.97, // blend 97% from the ball's radial toward the facing, uniformly across the front hemisphere
+		ShootAimAssist: 1.0, // blend 100% from the ball's radial toward the facing, uniformly across the front hemisphere -- a shot fires exactly along the facing regardless of where the ball sits
 
 		TrapPullBonus:         0.2, // a held trap strengthens the centre-pull a little (up to +20% at full trap)
 		TrapRangeBonus:        6,
@@ -195,7 +195,7 @@ func DefaultPlayerTuning() PlayerTuning {
 		TouchQuality: TouchQuality{
 			OwnTeamMax:        1.0,                 // owning team at full charge -> the cleanest touch
 			OtherTeam:         -1.0,                // other team at the owner's full charge -> worst-case touch (ball flies off)
-			CaptureWorst:      0.628,               // debuffed front capture ~310 (494*0.628): a conceding opponent absorbs even less, so the ball bounces off it sooner
+			CaptureWorst:      0.428,               // debuffed capture mult lowered 0.2 (0.628 -> 0.428): a conceding opponent absorbs much less (capture ~98 at the 230 front), so the ball bounces off it sooner
 			CaptureBest:       1.25,                // STRONGER buff (1.1 -> 1.25): a buffed teammate captures much firmer balls (capture front x1.25 = 400 at the current 320). Stays under a full shot (575) so it still bounces a point-blank blast. (Keep capture front below ~460 for this to hold: front*1.25 must stay < 575.)
 			RestitutionWorst:  1.43,                // debuffed front bounce ~0.27 (0.19*1.43): a conceding team deflects the ball off harder, springier than the neutral 0.19
 			RestitutionBest:   0.75,                // STRONGER buff (0.844 -> 0.75): a buffed teammate deadens a bounce more (front bounce ~0.14 = 0.19*0.75), so the ball stays with the buffed team better (still bounces a full blast)

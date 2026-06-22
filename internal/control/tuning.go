@@ -74,6 +74,7 @@ type aiTuning struct {
 	passSafetyMin     float64 // minimum lane-safety margin (seconds) to attempt a pass
 	passReceiverSpace float64 // receiver must have at least this much space to be worth a pass
 	passReleadGap     float64 // while a pass is charging/settling, re-aim it at the receiver's current spot once the committed aim is more than this far from it -- tracks a moving receiver so the ball is not fired at where it WAS (the "arrives a player-length off the open man" miss). Decoupled from passReceiverSpace so the aim can track tightly without changing the openness gate; not so tight that the aim never converges (timeout).
+	passAimConeRad    float64 // max angle the velocity-compensated pass facing may swing off the ball's radial (keeps the kick inside the fire cone so it fires this tick rather than the carrier repositioning)
 	throughDist       float64 // how far ahead of a runner a through ball is played (world units)
 	passArriveSpeed   float64 // target ball speed at the receiver -- passes are calibrated to arrive this soft
 	passSpeedMin      float64 // clamp on a calibrated pass launch speed (min)
@@ -231,6 +232,7 @@ func defaultAITuning() aiTuning {
 		passSafetyMin:     0.16,
 		passReceiverSpace: 30,
 		passReleadGap:     14, // re-aim the charging pass once the committed spot is >14u (under a player-length) from the receiver's current position -- keeps the ball tracking a moving receiver so it does not arrive where the receiver WAS. Tighter than the old 30 (which let the aim lag ~a player-length).
+		passAimConeRad:    0.7, // ~40 deg: cap on how far the velocity-compensated pass facing (passAimWant) may swing off the ball's radial, so the kick stays inside the fire cone and FIRES this tick instead of the carrier repositioning behind the ball (which showed up as longer holds). Forward passes need no clamp (radial already points at the target); only awkward back/across passes get partial compensation.
 		throughDist:       110,
 		passArriveSpeed:   175, // a pass arrives gently here, well under the live ~276 capture, so it STICKS on the receiver's first touch instead of skidding through. Kept at 175 (not softened further): with the buffed capture a firm-ish ball already sticks, and a robust 30-seed sweep showed softening the LAUNCH actually LOWERS completion (a slower ball spends longer in the lane, so it is more interceptable -- see laneSafe). The soft FEEL of a short ball instead comes from the RECEIVER meeting it deeper on its path (receivePoint) where it has slowed. NOTE the hard launch floor: a charged kick can't fire slower than the ~201 tap (Shoot.Front*MinShootFactor=575*0.35), so a SHORT pass fires at that floor regardless of this value. (TestPassCompletionLargeMap's 6-seed metric is chaotic -- validate tuning over >=30 seeds.)
 		passSpeedMin:      150, // floor on the calibrated launch speed; moot below the ~201 tap floor (the kick can't fire slower than a tap), kept as a sane lower bound

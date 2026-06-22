@@ -98,8 +98,17 @@ func TestPassOnTarget(t *testing.T) {
 		len(minDists), reachRadius, reached, len(minDists), 100*float64(reached)/float64(len(minDists)))
 	t.Logf("  ball-to-receiver minDist: median=%.0f p90=%.0f mean=%.0f", pct(minDists, 0.5), pct(minDists, 0.9), mean(minDists))
 	t.Logf("  receiver off the ball-line: median=%.0f p90=%.0f mean=%.0f", pct(offLines, 0.5), pct(offLines, 0.9), mean(offLines))
+	reachRate := 100 * float64(reached) / float64(len(minDists))
 	if len(launchErrDeg) > 0 {
 		sort.Float64s(launchErrDeg)
 		t.Logf("  LAUNCH aim error (deg, ball vs target-at-launch): median=%.1f p90=%.1f mean=%.1f", pct(launchErrDeg, 0.5), pct(launchErrDeg, 0.9), mean(launchErrDeg))
+	}
+	// Drift-robust floors (capture physics is edited live, so keep generous margins below the measured
+	// ~89% reach / ~2.6deg median): catch a real regression of the pass aim, not physics noise.
+	if reachRate < 78 {
+		t.Errorf("passes reaching the intended man dropped to %.0f%% (want >= 78%%) -- pass aim/collect regressed", reachRate)
+	}
+	if med := pct(launchErrDeg, 0.5); med > 5 {
+		t.Errorf("median launch aim error %.1f deg > 5 deg -- the velocity-compensated aim regressed", med)
 	}
 }

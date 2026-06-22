@@ -109,24 +109,35 @@ func (a *AI) desiredCharge(distToGoal float64) float64 {
 // s*u -> on target, soft, at low charge. Uses only observable state (ball pos/vel, own pos/tuning) and
 // reads Shoot.Front/MinShootFactor live, so it auto-calibrates if the physics is retuned. The
 // launchAligned release gate (vs the real target) still fine-tunes the residual aim-assist/radial term.
-func (a *AI) passAimWant(p perception) (aim geom.Vec, charge float64) {
+func (a *AI) passAimWant(p perception) (aim geom.Vec, charge float64, ok bool) {
 	u := geom.Unit(a.shotTarget.Sub(p.ball))
 	if u == (geom.Vec{}) {
-		return a.aimToward(p, a.shotTarget), a.shotDesired // degenerate (ball on the target): no compensation
+		return geom.Vec{}, 0, false // degenerate (ball on the target)
 	}
 	s := a.passSpeedFor(p, a.shotTarget)
 	l := u.Scale(s).Sub(p.ballVel) // the impulse vector the kick must supply
 	dir := geom.Unit(l)
 	if dir == (geom.Vec{}) {
-		dir = u
+		return geom.Vec{}, 0, false
 	}
-	aim = p.me.Position().Add(dir.Scale(aimProjectDist)) // FACE unit(L)
+	// Only compensate when unit(L) sits inside the fire cone of the ball (within passAimConeRad of the
+	// radial player->ball), i.e. the carrier can fire the compensated kick THIS tick. For a normal
+	// forward pass the radial already points down the lane so this holds and the ball launches exactly
+	// on target. For an awkward across/back pass unit(L) swings off the cone; compensating there would
+	// either make the carrier reposition (a long hold) or, if forced, fire partly-compensated and OFF
+	// target -- both measured WORSE than baseline. So bail (ok=false) and let shootAt fall back to the
+	// plain face-the-target path, which reaches the man ~90% on those.
+	if radial := geom.Unit(p.ball.Sub(p.me.Position())); radial == (geom.Vec{}) || geom.AngleBetween(dir, radial) > a.tune.passAimConeRad {
+		return geom.Vec{}, 0, false
+	}
 	front := p.me.Tuning().Shoot.Front
 	msf := p.me.Tuning().MinShootFactor
-	if front > 0 && msf < 1 {
-		charge = clampFloat((geom.Norm(l)/front-msf)/(1-msf), 0, 1) // power^-1(|L|)
+	if front <= 0 || msf >= 1 {
+		return geom.Vec{}, 0, false
 	}
-	return aim, charge
+	aim = p.me.Position().Add(dir.Scale(aimProjectDist))        // FACE unit(L): launch = ballVel + |L|*unit(L) = s*u
+	charge = clampFloat((geom.Norm(l)/front-msf)/(1-msf), 0, 1) // power^-1(|L|): launch speed stays s (capture-safe)
+	return aim, charge, true
 }
 
 // shootAt commits to (and continues) a charged shot at target. It faces the target and
@@ -151,9 +162,11 @@ func (a *AI) shootAt(p perception, in sim.Intent, target geom.Vec, desired, base
 	// target directly as before.
 	aimWant := a.shotTarget
 	if a.passReceiver != nil {
-		w, ch := a.passAimWant(p)
-		aimWant = w
-		a.shotDesired = ch // recompute each tick: tracks the (changing) ball velocity
+		if w, ch, ok := a.passAimWant(p); ok {
+			aimWant = w           // velocity-compensated facing (recomputed each tick)
+			a.shotDesired = ch    // matching low charge (no rocket)
+		}
+		// else: off the fire cone -- fall back to facing the target with the committed charge (baseline)
 	}
 	in.Aim = a.aimKeepingBall(p, aimWant)
 
